@@ -1,0 +1,240 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║              GUÍA VISUAL - INTERFAZ MEJORADA DE REMITOS                    ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+ANTES vs DESPUÉS
+════════════════════════════════════════════════════════════════════════════
+
+FORMULARIO - ANTES:
+──────────────────
+Orden de Trabajo: [Selector]
+Obra: [Obra GGO-001]
+Fecha de Remito: [2026-04-07]
+Piezas Aprobadas:
+  ☑ A1 - (18.0)
+  ☑ T21 - (1.0) ARRIOSTRAMIENTO
+  [Botón Generar Remito]
+
+
+FORMULARIO - DESPUÉS:
+─────────────────────
+Orden de Trabajo: [Selector]
+Obra: [Obra GGO-001]
+Fecha de Remito: [2026-04-07]
+Transporte: [Empresa XYZ]  ← NUEVO
+Piezas Aprobadas:
+┌─────────────────────────────────────────────────────────────────┐
+│ ✓ │Posición│ Total │A Enviar│Perfil     │Peso  │Descrip...    │
+├─────────────────────────────────────────────────────────────────┤
+│ ☑ │ A1    │ 18    │ [5]    │PL9.5*85   │ 2.35 │RIGIDIZADOR   │
+│ ☑ │ T21   │ 1     │ [1]    │L63.5X4.8  │15.92 │ARROSTRAM...  │
+└─────────────────────────────────────────────────────────────────┘
+  [Botón Generar Remito]
+
+════════════════════════════════════════════════════════════════════════════
+
+TABLA DE PIEZAS - DETALLES
+══════════════════════════════════════════════════════════════════════════
+
+ANTES (Checkboxes simples):
+──────────────────────────
+Piezas Aprobadas en Despacho:
+  ☑ A1 - (18.0)
+  ☑ T21 - (1.0) ARRIOSTRAMIENTO
+
+
+DESPUÉS (Tabla profesional):
+──────────────────────────
+Piezas Aprobadas en Despacho:
+┌──────────────────────────────────────────────────────────────────────────┐
+│ ✓ │ Posición │ Total │ A Enviar │ Perfil     │ Peso │ Descripción    │ Obs│
+├──────────────────────────────────────────────────────────────────────────┤
+│ ☑ │   A1    │  18   │ [  5  x] │ PL9.5*85   │ 2.35 │ RIGIDIZADOR    │ [ ]│
+│ ☑ │   T21   │  1    │ [  1  x] │ L63.5X4.8  │ 15.92│ ARRIOSTRAMIENTO│ [ ]│
+└──────────────────────────────────────────────────────────────────────────┘
+
+Leyenda:
+  ✓ = Checkbox para seleccionar/deseleccionar
+  Posición = Código de pieza (A1, T21, etc)
+  Total = Cantidad disponible (SIN DECIMALES) ← CAMBIO 2️⃣
+  A Enviar = Input editable (ej: 5 de 18) ← CAMBIO 1️⃣
+  Perfil = Tipo de perfil de la pieza
+  Peso = Peso en kg
+  Descripción = Descripción de la pieza
+  Obs = Campo para observaciones
+
+════════════════════════════════════════════════════════════════════════════
+
+EXAMPLES DE USO
+════════════════════════════════════════════
+
+ESCENARIO 1: Envío Parcial
+──────────────────────────
+Total disponible:
+  A1: 18 unidades
+
+Usuario ingresa en "A Enviar": 5
+
+Resultado en PDF:
+  POS. │ TOTAL │ ENVIADO │ DESCRIPCIÓN
+  A1   │  18   │   5     │ RIGIDIZADOR COL EXIST
+
+
+ESCENARIO 2: Envío Completo
+────────────────────────────
+Total disponible:
+  T21: 1 unidad
+
+Usuario deja el valor por defecto: 1
+
+Resultado en PDF:
+  POS. │ TOTAL │ ENVIADO │ DESCRIPCIÓN
+  T21  │  1    │   1     │ ARRIOSTRAMIENTO
+
+
+ESCENARIO 3: Observaciones + Cantidades Personalizadas
+───────────────────────────────────────────────────────
+Usuario ingresa:
+  A1: Cantidad=5, Observación="Chequear calidad"
+  T21: Cantidad=1, Observación="Urgente"
+
+Resultado en PDF:
+  POS. │ TOTAL │ ENVIADO │ DESCRIPCIÓN      │ OBSERVACIONES
+  A1   │  18   │   5     │ RIGIDIZADOR...   │ Chequear calidad
+  T21  │  1    │   1     │ ARRIOSTRAMIENTO  │ Urgente
+
+════════════════════════════════════════════════════════════════════════════
+
+PDF RESULTANTE
+════════════════════════════════════════════════════════════════════════════
+
+REMITO DE ENTREGA
+
+OT: 2 | Cliente: green global | Obra: GGO-001 | Fecha: 2026-04-07
+Transporte: Empresa XYZ
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│POS. │TOTAL │ENVIADO│PERFIL      │PESO  │DESCRIPCIÓN          │OBSERVACIONES │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ A1  │ 18   │  5    │ PL9.5*85   │ 2.35 │ RIGIDIZADOR COL EXIST│ Chequear cal.│
+│ T21 │  1   │  1    │ L63.5X4.8  │15.92 │ ARRIOSTRAMIENTO      │ Urgente      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Responsable: ___________________     Fecha: ___________________
+
+════════════════════════════════════════════════════════════════════════════
+
+CÓMO USAR LA INTERFAZ MEJORADA
+═══════════════════════════════════════════════════════════════════════════
+
+PASO 1: Seleccionar OT
+──────────────────────
+□ En el dropdown, selecciona "2 - green global / GGO-001"
+□ La obra se auto-completa automáticamente
+
+
+PASO 2: Ingresar Fecha
+──────────────────────
+□ Haz clic en el campo "Fecha de Remito"
+□ Selecciona la fecha deseada (ej: 2026-04-07)
+□ Se muestra automáticamente en el campo
+
+
+PASO 3: Ingresar Transporte (NUEVO)
+────────────────────────────────────
+□ En el campo "Transporte", escribe el medio de transporte
+   Ejemplos:
+   - "Empresa XYZ"
+   - "Auto particular"
+   - "Camión de logística"
+   - "Entrega personal"
+□ Este dato aparecerá en el PDF
+
+
+PASO 4: Revisar y Editar Tabla de Piezas
+──────────────────────────────────────────
+□ Se muestra tabla con todas las piezas
+□ Columna "Total": Cantidad disponible (sin decimales)
+□ Columna "A Enviar": Input editable
+
+Ejemplo: Pieza A1 con 18 unidades disponibles
+  • Por defecto muestra: 18
+  • Usuario puede cambiar a: 5, 10, 15, etc.
+  • Máximo permitido: 18 (no puede exceder total)
+
+
+PASO 5: Agregar Observaciones (OPCIONAL)
+─────────────────────────────────────────
+□ En la columna "Observaciones", escribe notas en el TextArea
+   Ejemplos:
+   - "Revisar soldadura"
+   - "Entregar con urgencia"
+   - "Verificar calidad de pintura"
+□ Estas observaciones aparecerán en el PDF
+
+
+PASO 6: Seleccionar Piezas a Incluir
+──────────────────────────────────────
+□ Todos los checkboxes están marcados por defecto
+□ Puedes desmarcar alguno si no quieres incluirlo en el remito
+
+
+PASO 7: Generar PDF
+───────────────────
+□ Haz clic en "📄 Generar Remito PDF"
+□ Se genera el PDF con:
+   ✓ OT, Cliente, Obra, Fecha
+   ✓ Transporte (si ingresaste)
+   ✓ Tabla con: POS, TOTAL, ENVIADO, PERFIL, PESO, DESC, OBS
+   ✓ Espacio para firmas
+
+
+PASO 8: Descargar PDF
+─────────────────────
+□ Se abre automáticamente la descarga del PDF
+□ El archivo se guarda con nombre: remito_OT_YYYY-MM-DD_HH:MM:SS.pdf
+□ Ejemplo: remito_2_20260407_143022.pdf
+
+════════════════════════════════════════════════════════════════════════════
+
+VALIDACIONES Y RESTRICCIONES
+════════════════════════════════════════════════════════════════════════════
+
+Campo "A Enviar":
+  ✓ Solo acepta números enteros
+  ✓ Mínimo: 0
+  ✓ Máximo: Cantidad total disponible
+  ✓ Si ingresas más del máximo, se limita al máximo disponible
+
+Campo "Transporte":
+  ✓ Opcional (no es requerido)
+  ✓ Acepta texto libre
+  ✓ Máximo 255 caracteres
+
+Piezas:
+  ✓ Al menos una pieza debe estar marcada para generar remito
+  ✓ Si todas están desmarcadas, mostrará error
+
+════════════════════════════════════════════════════════════════════════════
+
+CAMBIOS TÉCNICOS IMPLEMENTADOS
+═══════════════════════════════════════════════════════════════════════════
+
+1. CANTIDADES SIN DECIMALES:
+   JavaScript: parseInt(parseFloat(pieza.cantidad) || 0)
+   Python: int(float(cantidad) if cantidad else 0)
+
+2. COLUMNA "A ENVIAR":
+   HTML: <input type="number" name="cant_${pieza.id}" 
+         value="${cantidadTotal}" min="0" max="${cantidadTotal}">
+
+3. CAMPO TRANSPORTE:
+   HTML: <input type="text" name="transporte" 
+         placeholder="Ej: Empresa XYZ, Auto particular, etc.">
+
+4. CAPTURA EN PDF:
+   - Se envía: cant_${pieza_id} con cantidad personalizada
+   - Se envía: transporte con empresa/vehículo
+   - Se renderiza en tabla: TOTAL | ENVIADO (personalizado)
+
+════════════════════════════════════════════════════════════════════════════

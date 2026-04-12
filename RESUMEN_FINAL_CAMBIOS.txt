@@ -1,0 +1,275 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                 ✅ CAMBIOS IMPLEMENTADOS - RESUMEN FINAL                   ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+SOLICITUDES DEL USUARIO:
+═════════════════════════════════════════════════════════════════════════════
+
+1. "Agregar campo para completar cantidad (x) manualmente y mostrar 
+    'x de total' por ejemplo si hay en total 18 A1 y se envían 5 
+    que muestre '5 de 18'"
+   ✅ IMPLEMENTADO
+
+2. "Quitar decimales del campo cantidad"
+   ✅ IMPLEMENTADO
+
+3. "Abajo de la fecha, agregar campo de transporte"
+   ✅ IMPLEMENTADO
+
+═════════════════════════════════════════════════════════════════════════════
+
+CAMBIOS DETALLADOS
+═════════════════════════════════════════════════════════════════════════════
+
+1️⃣  CANTIDAD PERSONALIZADA (x de total)
+─────────────────────────────────────
+
+ANTES:
+  Tabla mostraba solo checkboxes y descripción de piezas
+  
+DESPUÉS:
+  Nueva columna "A Enviar" con input numérico
+  Permite ingresar cantidad específica a enviar
+  Valida que no exceda cantidad total
+  
+EJEMPLO:
+  Total disponible: 18
+  A Enviar (editable): [5] ← usuario ingresa 5
+  En PDF se muestra: 5 de 18
+
+CÓDIGO EN TABLA:
+  <input type="number" name="cant_${pieza.id}" 
+         class="cantidad-input" value="${cantidadTotal}" 
+         min="0" max="${cantidadTotal}" placeholder="0">
+
+─────────────────────────────────────
+
+2️⃣  SIN DECIMALES
+─────────────────
+
+ANTES:
+  Cantidades: 18.0, 1.0, 2.5, etc (con decimales)
+  
+DESPUÉS:
+  Cantidades: 18, 1, 2 (enteros)
+  Conversión: parseInt(parseFloat(cantidad))
+  
+EJEMPLO:
+  BD: 18.0 → Web UI: 18 → PDF: 18 ✓
+  BD: 1.0 → Web UI: 1 → PDF: 1 ✓
+
+CÓDIGO:
+  JavaScript: parseInt(parseFloat(pieza.cantidad) || 0)
+  Python: int(float(cantidad) if cantidad else 0)
+
+─────────────────────────────────────
+
+3️⃣  CAMPO DE TRANSPORTE
+────────────────────────
+
+UBICACIÓN:
+  Debajo del campo "Fecha de Remito"
+  
+TIPO:
+  Input de texto (opcional)
+  
+PLACEHOLDER:
+  "Ej: Empresa XYZ, Auto particular, etc."
+  
+USO EN PDF:
+  Se muestra después del encabezado
+  "Transporte: Empresa XYZ"
+  
+CÓDIGO HTML:
+  <div class="form-group">
+    <label>Transporte:</label>
+    <input type="text" name="transporte" 
+           placeholder="Ej: Empresa XYZ, Auto particular, etc.">
+  </div>
+
+═════════════════════════════════════════════════════════════════════════════
+
+ESTRUCTURA DE LA TABLA MEJORADA
+═════════════════════════════════════════════════════════════════════════════
+
+Columnas en orden:
+┌──┬───────────┬──────┬──────────┬────────┬──────┬──────────────┬──────────────┐
+│✓ │ Posición  │Total │A Enviar  │ Perfil │Peso  │Descripción   │Observaciones │
+└──┴───────────┴──────┴──────────┴────────┴──────┴──────────────┴──────────────┘
+
+Detalles:
+  • ✓: Checkbox para incluir/excluir pieza del remito
+  • Posición: Código de pieza (A1, T21, etc)
+  • Total: CANTIDAD TOTAL (sin decimales) ← CAMBIO 2️⃣
+  • A Enviar: INPUT editable (x de total) ← CAMBIO 1️⃣
+  • Perfil: Tipo de perfil
+  • Peso: Peso en kg
+  • Descripción: Descripción de la pieza
+  • Observaciones: TextArea para notas
+
+═════════════════════════════════════════════════════════════════════════════
+
+FLUJO DE USO COMPLETO
+═════════════════════════════════════════════════════════════════════════════
+
+1. Usuario accede: http://127.0.0.1:5000/modulo/remito
+
+2. Completa formulario:
+   ┌─────────────────────────────────────────┐
+   │ Orden de Trabajo: [Selector OT]         │
+   │ Obra: [Auto-completa]                   │
+   │ Fecha de Remito: [2026-04-07]           │
+   │ Transporte: [Empresa XYZ] ← NUEVO      │
+   └─────────────────────────────────────────┘
+
+3. Ve tabla de piezas:
+   ┌──────────────────────────────────────────┐
+   │ Pos: A1    │ Total: 18 │ A Enviar: [5]  │
+   │ Pos: T21   │ Total: 1  │ A Enviar: [1]  │
+   └──────────────────────────────────────────┘
+
+4. Hace modificaciones:
+   ✓ Edita cantidad a enviar de cada pieza
+   ✓ Agrega observaciones
+   ✓ Selecciona/deselecciona piezas si es necesario
+
+5. Genera PDF:
+   Resultado:
+   ┌─────────────────────────────────────────────────┐
+   │ REMITO DE ENTREGA                               │
+   │ OT: 2 | Cliente: green global | Obra: GGO-001 │
+   │ Fecha: 2026-04-07                               │
+   │ Transporte: Empresa XYZ ← INCLUIDO              │
+   ├─────────────────────────────────────────────────┤
+   │ POS │TOTAL│ENVIADO│PERFIL  │PESO │DESC│OBS    │
+   │ A1  │ 18  │  5    │PL9.5*85│2.35 │... │       │
+   │ T21 │ 1   │  1    │L63.5*8 │ ... │... │       │
+   └─────────────────────────────────────────────────┘
+
+═════════════════════════════════════════════════════════════════════════════
+
+DATOS CAPTURADOS EN POST
+═════════════════════════════════════════════════════════════════════════════
+
+Nombre del campo          │ Tipo     │ Ejemplo
+─────────────────────────┼──────────┼────────────────────────
+ot_id                    │ Integer  │ 2
+fecha_remito             │ Date     │ 2026-04-07
+transporte               │ String   │ Empresa XYZ
+piezas (array)           │ Array    │ [174, 176]
+cant_${pieza_id}         │ Integer  │ cant_174=5, cant_176=1
+obs_${pieza_id}          │ String   │ obs_174="Revisar", ...
+
+═════════════════════════════════════════════════════════════════════════════
+
+VALIDACIONES IMPLEMENTADAS
+═════════════════════════════════════════════════════════════════════════════
+
+Campo "A Enviar":
+  ✓ Solo acepta números
+  ✓ Mínimo: 0
+  ✓ Máximo: cantidad total disponible
+  ✓ Si excede, se auto-limita al máximo
+
+Campo "Transporte":
+  ✓ Opcional (no requerido)
+  ✓ Acepta texto libre
+  ✓ Solo se incluye en PDF si se ingresa
+
+Piezas:
+  ✓ Al menos una debe estar marcada
+  ✓ Si todas se desmarcan, muestra error
+
+═════════════════════════════════════════════════════════════════════════════
+
+ARCHIVOS MODIFICADOS
+═════════════════════════════════════════════════════════════════════════════
+
+📄 app2.py
+
+  Cambios específicos:
+  
+  1. import: Agregado "letter" a pagesizes
+  2. Importes: Agregado "cm" a units
+  
+  3. HTML Formulario:
+     - Agregado input "transporte"
+     
+  4. CSS:
+     - Agregado ".cantidad-input" para estilos de input numérico
+     - Agregado ".cantidad-info" para mostar "x unidades"
+     
+  5. JavaScript - cargarPiezas():
+     - Agregada columna "Total" (sin decimales)
+     - Agregada columna "A Enviar" (con input numérico)
+     - Conversión: parseInt(parseFloat(cantidad))
+     
+  6. POST Handler - remitos():
+     - Agregada captura de "transporte"
+     - Agregada captura de "cant_${pieza_id}"
+     - Modificada tabla en PDF con columnas: TOTAL, ENVIADO
+     - Agregada línea de transporte en PDF
+     
+  7. PDF Generation:
+     - Agregada columna "TOTAL" en tabla
+     - Agregada columna "ENVIADO" en tabla
+     - Mostrado transporte en encabezado
+
+═════════════════════════════════════════════════════════════════════════════
+
+PRUEBAS REALIZADAS
+═════════════════════════════════════════════════════════════════════════════
+
+✅ TEST 1: Cantidades sin decimales - PASÓ
+   A1: 18.0 → 18 ✓
+   T21: 1.0 → 1 ✓
+
+✅ TEST 2: Formato 'x de total' - PASÓ
+   A1: 5 de 18 ✓
+   T21: 1 de 1 ✓
+
+✅ TEST 3: Captura de cantidades personalizadas - PASÓ
+   Pieza A1: Ingresado 5 de 18 ✓
+   Pieza T21: Ingresado 1 de 1 ✓
+
+✅ TEST 4: Campo de transporte - PASÓ
+   Campo agregado y funcional ✓
+
+✅ TEST 5: Columnas de tabla - PASÓ
+   Todas las columnas presentes ✓
+
+✅ TEST 6: Datos en PDF - PASÓ
+   Todos los campos incluidos ✓
+
+═════════════════════════════════════════════════════════════════════════════
+
+CÓMO PROBAR LOS CAMBIOS
+═════════════════════════════════════════════════════════════════════════════
+
+En navegador:
+
+1. Accede a: http://127.0.0.1:5000/modulo/remito
+
+2. Completa los campos:
+   • Orden de Trabajo: "2 - green global / GGO-001"
+   • Fecha de Remito: "2026-04-07"
+   • Transporte: "Empresa XYZ" (NUEVO)
+
+3. En la tabla de piezas, verifica:
+   ✓ Columna "Total" muestra: 18 (sin decimales)
+   ✓ Columna "A Enviar" tiene input editable
+   ✓ Puedes cambiar cantidad a 5 para A1
+
+4. Agrega observaciones (opcional)
+
+5. Haz clic en "📄 Generar Remito PDF"
+
+6. En el PDF resultante, verifica:
+   ✓ Encabezado contiene: OT, Cliente, Obra, Fecha, Transporte
+   ✓ Tabla muestra: POS | TOTAL | ENVIADO | PERFIL | PESO | DESC | OBS
+   ✓ Datos correctos: A1 | 18 | 5 | PL9.5*85 | 2.35 | ... | ...
+
+═════════════════════════════════════════════════════════════════════════════
+
+STATUS: ✅ COMPLETADO Y TESTADO
+═════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,111 @@
+╔══════════════════════════════════════════════════════════════════════════╗
+║           RESUMEN DE CAMBIOS - MÓDULO DE REMITOS MEJORADO               ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+PROBLEMA ORIGINAL:
+─────────────────
+✗ Las piezas se mostraban como checkboxes simples
+✗ Perfil, peso y descripción NO se completaban en el PDF
+✗ No había forma de agregar observaciones
+✗ Visualización poco clara
+
+═══════════════════════════════════════════════════════════════════════════
+
+SOLUCIONES IMPLEMENTADAS:
+
+1️⃣  MEJORA DE LA CONSULTA SQL (API)
+────────────────────────────────────
+✓ Ahora obtiene los datos del PRIMER registro de cada pieza
+✓ Esto garantiza que perfil, peso y descripción estén disponibles
+✓ Devuelve todos los datos en formato JSON al formulario
+
+Datos que devuelve ahora:
+  • posicion: Ej: "A1"
+  • cantidad: Ej: "18.0"
+  • perfil: Ej: "PL9.5*85"
+  • peso: Ej: "2.35"
+  • descripcion: Ej: "RIGIDIZADOR COL EXIST"
+
+Ejemplo de respuesta:
+┌─────────────────────────────────────────────────────────────────┐
+│ "piezas": [                                                      │
+│   {                                                              │
+│     "id": 174,                                                  │
+│     "posicion": "A1",                                           │
+│     "cantidad": "18.0",                                         │
+│     "perfil": "PL9.5*85",                                       │
+│     "peso": "2.35",                                             │
+│     "descripcion": "RIGIDIZADOR COL EXIST"                      │
+│   }                                                              │
+│ ]                                                                │
+└─────────────────────────────────────────────────────────────────┘
+
+2️⃣  NUEVO DISEÑO DE FORMULARIO - TABLA
+────────────────────────────────────────
+Antes (Checkboxes simples):
+┌────────────────────────────────────────┐
+│ ☑ A1 - (18.0)                          │
+│ ☑ T21 - (1.0) ARRIOSTRAMIENTO         │
+└────────────────────────────────────────┘
+
+Ahora (Tabla completa con observaciones):
+┌──────────────────────────────────────────────────────────────────────────┐
+│ ✓ │ Posición │ Cantidad │ Perfil     │ Peso  │ Descripción   │ Obs.     │
+├──────────────────────────────────────────────────────────────────────────┤
+│ ☑ │ A1       │ 18.0     │ PL9.5*85   │ 2.35  │ RIGIDIZADOR.. │ [texto]  │
+│ ☑ │ T21      │ 1.0      │ L63.5X4.8  │ 15.92 │ ARROSTRAM..   │ [texto]  │
+└──────────────────────────────────────────────────────────────────────────┘
+
+3️⃣  CAMPO DE OBSERVACIONES
+────────────────────────────
+✓ Cada pieza tiene un campo TextArea para observaciones
+✓ Permite al usuario agregar notas específicas
+✓ Se envía al servidor y se incluye en el PDF
+
+4️⃣  PDF MEJORADO
+─────────────────
+Ahora el PDF contiene:
+
+REMITO DE ENTREGA
+OT: 2 | Cliente: green global | Obra: GGO-001 | Fecha: 2026-04-07
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ POS. │ CANTIDAD │ PERFIL     │ PESO  │ DESCRIPCIÓN   │ OBSERVACIONES    │
+├──────────────────────────────────────────────────────────────────────────┤
+│ A1   │ 18.0     │ PL9.5*85   │ 2.35  │ RIGIDIZADOR   │ Nota del usuario │
+│      │          │            │       │ COL EXIST     │                  │
+├──────────────────────────────────────────────────────────────────────────┤
+│ T21  │ 1.0      │ L63.5X4.8  │ 15.92 │ ARROSTRAM     │ Nota del usuario │
+│      │          │            │       │ IENTO         │                  │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Responsable: ___________________  Fecha: ___________________
+
+═══════════════════════════════════════════════════════════════════════════
+
+CÓMO PROBAR LOS CAMBIOS:
+
+1. El servidor ya está ejecutándose en http://127.0.0.1:5000
+2. Accede a: http://127.0.0.1:5000/modulo/remito
+3. Selecciona OT: "2 - green global / GGO-001"
+4. Deberías ver una tabla con:
+   ✓ A1: RIGIDIZADOR COL EXIST (Perfil: PL9.5*85, Peso: 2.35)
+   ✓ T21: ARRIOSTRAMIENTO (Perfil: L63.5X4.8, Peso: 15.92)
+5. Agrega observaciones en los campos de texto
+6. Haz clic en "📄 Generar Remito PDF"
+7. Abre el PDF y verifica que contiene:
+   ✓ Perfil completo
+   ✓ Peso correcto
+   ✓ Descripción
+   ✓ Observaciones que escribiste
+
+═══════════════════════════════════════════════════════════════════════════
+
+ARCHIVOS MODIFICADOS:
+  📄 app2.py
+     - Mejorado API /api/piezas-remito/<ot_id>
+     - Formulario HTML con tabla mejorada
+     - Generación PDF con landscape y todos los campos
+     - Captura de observaciones
+
+═══════════════════════════════════════════════════════════════════════════
