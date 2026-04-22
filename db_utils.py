@@ -4,8 +4,144 @@ import sqlite3
 import unicodedata
 from urllib.parse import quote, unquote
 
+try:
+    from drive_utils import subir_pdf_a_drive as _drive_subir_pdf
+except Exception:
+    _drive_subir_pdf = None  # type: ignore
+
+try:
+    import pymysql
+except Exception:  # pragma: no cover - fallback when MySQL dependency is missing
+    pymysql = None
+
+
+DB_ENGINE = os.getenv("DB_ENGINE", "sqlite").strip().lower()
+
+
+class _StaticCursor:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+def _convert_qmarks_to_format(sql):
+    out = []
+    in_single = False
+    in_double = False
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            out.append(ch)
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+            out.append(ch)
+        elif ch == "?" and not in_single and not in_double:
+            out.append("%s")
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _normalize_sql_for_mysql(sql):
+    sql_out = str(sql)
+    # SQLite-style autoincrement keyword is not accepted by MySQL parser.
+    sql_out = re.sub(r"\bAUTOINCREMENT\b", "AUTO_INCREMENT", sql_out, flags=re.IGNORECASE)
+    # MySQL does not allow DEFAULT on TEXT columns.
+    if re.match(r"^\s*CREATE\s+TABLE", sql_out, flags=re.IGNORECASE):
+        sql_out = re.sub(r"\bTEXT\s+DEFAULT\b", "VARCHAR(255) DEFAULT", sql_out, flags=re.IGNORECASE)
+    return sql_out
+
+
+def _parse_pragma_table_info(sql):
+    m = re.match(r"^\s*PRAGMA\s+table_info\(([^)]+)\)\s*;?\s*$", sql, flags=re.IGNORECASE)
+    if not m:
+        return None
+    raw = m.group(1).strip().strip("`\"'")
+    return raw
+
+
+class MySQLCompatConnection:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=()):
+        table_name = _parse_pragma_table_info(sql)
+        if table_name:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, EXTRA, ORDINAL_POSITION
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s
+                    ORDER BY ORDINAL_POSITION
+                    """,
+                    (table_name,),
+                )
+                rows = cur.fetchall()
+
+            pragma_rows = []
+            for col_name, col_type, is_nullable, col_default, col_key, extra, ord_pos in rows:
+                pk = 1 if str(col_key or "").upper() == "PRI" else 0
+                notnull = 0 if str(is_nullable or "").upper() == "YES" else 1
+                dflt = None if col_default is None else str(col_default)
+                pragma_rows.append((int(ord_pos) - 1, col_name, col_type, notnull, dflt, pk))
+
+            return _StaticCursor(pragma_rows)
+
+        sql_mysql = _normalize_sql_for_mysql(_convert_qmarks_to_format(sql))
+        cur = self._conn.cursor()
+        cur.execute(sql_mysql, params or ())
+        return cur
+
+    def executemany(self, sql, seq_of_params):
+        sql_mysql = _normalize_sql_for_mysql(_convert_qmarks_to_format(sql))
+        cur = self._conn.cursor()
+        cur.executemany(sql_mysql, seq_of_params)
+        return cur
+
+    def commit(self):
+        return self._conn.commit()
+
+    def rollback(self):
+        return self._conn.rollback()
+
+    def close(self):
+        return self._conn.close()
+
+
+class DBIntegrityError(Exception):
+    pass
+
+
+def is_integrity_error(exc):
+    mysql_cls = ()
+    if pymysql is not None:
+        mysql_cls = (pymysql.IntegrityError,)
+    return isinstance(exc, (sqlite3.IntegrityError,) + mysql_cls)
+
 
 def get_db():
+    if DB_ENGINE == "mysql":
+        if pymysql is None:
+            raise RuntimeError("PyMySQL is not installed. Install it with: pip install pymysql")
+        mysql_conn = pymysql.connect(
+            host=os.getenv("MYSQL_HOST", "127.0.0.1"),
+            port=int(os.getenv("MYSQL_PORT", "3306")),
+            user=os.getenv("MYSQL_USER", "appuser"),
+            password=os.getenv("MYSQL_PASSWORD", "App1234!"),
+            database=os.getenv("MYSQL_DB", "gestion_produccion"),
+            charset="utf8mb4",
+            autocommit=False,
+        )
+        return MySQLCompatConnection(mysql_conn)
     return sqlite3.connect("database.db")
 
 
@@ -157,6 +293,24 @@ def _guardar_pdf_databook(obra, seccion_key, filename, pdf_bytes, databooks_dir,
 
     with open(destino_path, "wb") as f:
         f.write(pdf_bytes)
+
+    # Subir también a Google Drive si está configurado
+    try:
+        if _drive_subir_pdf is not None:
+            # Nombre legible de la sección para la carpeta en Drive
+            seccion_nombre = seccion_rel.replace(os.sep, "/").split("/")[-1] if seccion_rel else seccion_key
+            ot_subfolder_drive = None
+            if seccion_key in _SECCIONES_CON_SUBCARPETA_OT and ot_id is not None:
+                ot_subfolder_drive = _resolver_carpeta_ot(ot_id, obra)
+            _drive_subir_pdf(
+                pdf_bytes,
+                safe_filename,
+                _normalizar_nombre_carpeta(obra),
+                seccion_nombre,
+                ot_subfolder=ot_subfolder_drive,
+            )
+    except Exception as _e:
+        print(f"[Drive] Error al subir {safe_filename}: {_e}")
 
     return destino_path
 

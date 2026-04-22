@@ -1301,7 +1301,7 @@ def generar_etiquetas_qr(excel_file, logo_path, cargar_bd_excel=False):
                         if peso:
                             qr_params["peso"] = peso
                         
-                        qr_text = f"http://192.168.0.134:5000/pieza/{quote(pos)}"
+                        qr_text = f"https://web-production-5edf5c.up.railway.app/pieza/{quote(pos)}"
                         if qr_params:
                             qr_text += f"?{urlencode(qr_params)}"
                         qr_path = f"{qr_temp_dir}/qr_{i}.png"
