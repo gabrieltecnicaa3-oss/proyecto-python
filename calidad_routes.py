@@ -3620,6 +3620,8 @@ def generar_pdf_control(control_id):
     doc.build(elements)
     pdf_buffer.seek(0)
     filename = f"Control_Pintura_{obra}_ID{control_id}_{date.today().isoformat()}.pdf".replace(" ", "_")
+    _guardar_pdf_databook(obra, "calidad_pintura", filename, pdf_buffer.getvalue(), ot_id=None)
+    pdf_buffer.seek(0)
     return send_file(pdf_buffer, mimetype='application/pdf', as_attachment=True, download_name=filename)
 
 # ======================
@@ -3816,6 +3818,8 @@ def editar_control_pintura(control_id):
         doc.build(elements)
         pdf_buffer.seek(0)
         filename = f"Control_Pintura_{obra}_ID{control_id}_EDITADO_{date.today().isoformat()}.pdf".replace(" ", "_")
+        _guardar_pdf_databook(obra, "calidad_pintura", filename, pdf_buffer.getvalue(), ot_id=None)
+        pdf_buffer.seek(0)
         return send_file(pdf_buffer, mimetype='application/pdf', as_attachment=True, download_name=filename)
     opciones_resp = '<option value="">Sel...</option>' + "".join(f'<option value="{html_lib.escape(k)}">{html_lib.escape(k)}</option>' for k in sorted(responsables_control.keys()))
     med_html = ""

@@ -146,6 +146,43 @@ body {
     background: #7c2d12; display: inline-flex; align-items: center; gap: 6px;
 }
 .btn-pdf:hover { background: #9a3412; }
+.filter-card {
+    background: rgba(255,255,255,0.88);
+    border-radius: 12px;
+    padding: 14px 18px;
+    border: 1px solid #fdba74;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 12px rgba(154,52,18,0.08);
+}
+.filter-fecha {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.filter-fecha input[type="date"] {
+    padding: 8px 10px;
+    border: 1px solid #fdba74;
+    border-radius: 6px;
+    color: #7c2d12;
+}
+.filter-fecha button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+}
+.compare-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+.compare-variations {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 12px;
+}
 .pdf-export .top-title img {
     width: 96px;
     height: 56px;
@@ -162,7 +199,50 @@ body {
         height: 56px;
     }
 }
-@media (max-width: 768px) { .charts-row { grid-template-columns: 1fr; } }
+@media (max-width: 900px) {
+    .top-bar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+    .top-actions {
+        width: 100%;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+    }
+    .compare-grid {
+        grid-template-columns: 1fr;
+    }
+    .compare-variations {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+@media (max-width: 768px) {
+    .charts-row { grid-template-columns: 1fr; }
+    .period-bar {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+    .fecha-desde {
+        margin-left: 0;
+    }
+    .filter-fecha {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+    .filter-fecha button,
+    .filter-fecha input[type="date"] {
+        width: 100%;
+    }
+}
+@media (max-width: 520px) {
+    body { padding: 12px; }
+    .top-title h2 { font-size: 1.15em; }
+    .compare-variations { grid-template-columns: 1fr; }
+    .kpi-row { grid-template-columns: 1fr 1fr; }
+}
 </style>
 </head>
 <body>
@@ -200,17 +280,17 @@ body {
         <div class="tipo-desc" id="tipo-desc-text">Seleccione un tipo para ver la descripción.</div>
   </div>
   
-  <div style="background:rgba(255,255,255,0.88); border-radius:12px; padding:14px 18px; border:1px solid #fdba74; margin-bottom:20px; display:flex; gap:12px; align-items:center; box-shadow:0 4px 12px rgba(154,52,18,0.08);">
+    <div class="filter-card filter-fecha">
     <span style="font-weight:bold; color:#9a3412; margin-right:8px;">📅 Filtro por fechas:</span>
     <label style="color:#9a3412; font-weight:bold;">Desde:</label>
-    <input type="date" id="filtro-fecha-inicio" style="padding:8px 10px; border:1px solid #fdba74; border-radius:6px; color:#7c2d12;">
+    <input type="date" id="filtro-fecha-inicio">
     <label style="color:#9a3412; font-weight:bold; margin-left:8px;">Hasta:</label>
-    <input type="date" id="filtro-fecha-fin" style="padding:8px 10px; border:1px solid #fdba74; border-radius:6px; color:#7c2d12;">
-    <button onclick="aplicarFiltroFechas()" style="margin-left:8px; padding:8px 16px; background:#f97316; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:bold;">Aplicar</button>
-    <button onclick="limpiarFiltroFechas()" style="padding:8px 16px; background:#999; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:bold;">Limpiar</button>
+        <input type="date" id="filtro-fecha-fin">
+        <button onclick="aplicarFiltroFechas()" style="margin-left:8px; background:#f97316; color:white;">Aplicar</button>
+        <button onclick="limpiarFiltroFechas()" style="background:#999; color:white;">Limpiar</button>
   </div>
   
-  <div style="background:rgba(255,255,255,0.88); border-radius:12px; padding:14px 18px; border:1px solid #fdba74; margin-bottom:20px; box-shadow:0 4px 12px rgba(154,52,18,0.08);">
+    <div class="filter-card">
     <label style="color:#9a3412; font-weight:bold; margin-right:16px;">📊 Comparar Períodos:</label>
     <select id="comparar-periodo-selector" onchange="mostrarComparacion()" style="padding:8px 12px; border:1px solid #fdba74; border-radius:6px; color:#7c2d12; font-weight:bold;">
       <option value="none">Sin comparación</option>
@@ -222,7 +302,7 @@ body {
   
   <div id="comparacion-seccion" style="display:none; background:rgba(255,255,255,0.88); border-radius:12px; padding:20px; border:2px solid #f97316; margin-bottom:20px; box-shadow:0 6px 18px rgba(154,52,18,0.1);">
     <h3 style="color:#7c2d12; margin-bottom:16px; text-align:center;">📈 Comparación de Períodos</h3>
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+    <div class="compare-grid">
       <div>
         <h4 style="color:#9a3412; text-align:center; margin-bottom:12px;" id="periodo-1-label">Período 1</h4>
         <div style="background:#fff7ed; padding:14px; border-radius:8px; border-left:4px solid #f97316;">
@@ -272,7 +352,7 @@ body {
     </div>
     <div style="background:#fff; padding:14px; border-radius:8px; margin-top:16px; border:1px solid #fdba74;">
       <h4 style="color:#7c2d12; margin-bottom:10px;">📊 Variación (Período 2 vs Período 1)</h4>
-      <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:12px;">
+    <div class="compare-variations">
         <div style="text-align:center;">
           <div style="font-size:0.8em; color:#9a3412; font-weight:bold;">HS Var. %</div>
           <div style="font-size:1.4em; font-weight:bold;" id="var-hs-pct">—</div>

@@ -1,7 +1,6 @@
 import os
 import json
 import html as html_lib
-import sqlite3
 from io import BytesIO
 from datetime import datetime
 from urllib.parse import quote
@@ -13,6 +12,7 @@ from reportlab.lib.units import mm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from db_utils import (
     get_db,
+    is_integrity_error,
     _resolver_imagen_firma_empleado as _db_resolver_imagen_firma_empleado,
 )
 
@@ -68,7 +68,9 @@ def parte_semanal():
                         """,
                         (nombre_emp, puesto_emp, firma_emp, firma_imagen_rel)
                     )
-                except sqlite3.IntegrityError:
+                except Exception as exc:
+                    if not is_integrity_error(exc):
+                        raise
                     return redirect("/modulo/parte?mensaje=" + quote("⚠️ Ya existe un empleado con ese nombre"))
                 mensaje = "✅ Empleado cargado"
 
@@ -97,7 +99,9 @@ def parte_semanal():
                     """,
                     (nombre_emp, puesto_emp, firma_emp, firma_imagen_rel, int(empleado_id))
                 )
-            except sqlite3.IntegrityError:
+            except Exception as exc:
+                if not is_integrity_error(exc):
+                    raise
                 return redirect("/modulo/parte?mensaje=" + quote("⚠️ Ya existe un empleado con ese nombre"))
 
             db.commit()
@@ -584,7 +588,9 @@ def parte_carga_empleados():
                         """,
                         (nombre_emp, puesto_emp, firma_emp, firma_imagen_rel)
                     )
-                except sqlite3.IntegrityError:
+                except Exception as exc:
+                    if not is_integrity_error(exc):
+                        raise
                     return redirect("/modulo/parte/carga-empleados?mensaje=" + quote("⚠️ Ya existe un empleado con ese nombre"))
                 mensaje = "✅ Empleado cargado"
 
@@ -613,7 +619,9 @@ def parte_carga_empleados():
                     """,
                     (nombre_emp, puesto_emp, firma_emp, firma_imagen_rel, int(empleado_id))
                 )
-            except sqlite3.IntegrityError:
+            except Exception as exc:
+                if not is_integrity_error(exc):
+                    raise
                 return redirect("/modulo/parte/carga-empleados?mensaje=" + quote("⚠️ Ya existe un empleado con ese nombre"))
 
             db.commit()
