@@ -1,22 +1,20 @@
 """
-Utilidades para subir archivos a Google Drive usando la API con cuenta de servicio.
+Utilidades para subir archivos a Google Drive usando la API.
 
-Configuración requerida (variables de entorno en Railway):
-  GOOGLE_CREDENTIALS_JSON  - contenido completo del JSON de la cuenta de servicio
-  GOOGLE_DRIVE_FOLDER_ID   - ID de la carpeta raíz en Drive (carpeta "08 Reportes Produccion")
+Configuracion soportada (variables de entorno en Railway):
 
-Para obtener GOOGLE_DRIVE_FOLDER_ID:
-  1. Abrí la carpeta "08 Reportes Produccion" en drive.google.com
-  2. El ID es la parte de la URL después de /folders/
-     Ej: https://drive.google.com/drive/folders/1ABC123... → ID = 1ABC123...
+1) Cuenta de servicio (recomendado si se usa Unidad Compartida)
+    GOOGLE_CREDENTIALS_JSON  - contenido completo del JSON de la cuenta de servicio
+    GOOGLE_DRIVE_FOLDER_ID   - ID de la carpeta raiz en Drive
 
-Para crear la cuenta de servicio:
-  1. console.cloud.google.com → Crear proyecto
-  2. Habilitar "Google Drive API"
-  3. IAM y Admin → Cuentas de servicio → Crear cuenta de servicio
-  4. Crear clave JSON → descargar
-  5. Compartir la carpeta de Drive con el email de la cuenta de servicio
-  6. Pegar el contenido del JSON como variable GOOGLE_CREDENTIALS_JSON en Railway
+2) OAuth de usuario (alternativa si NO hay Unidad Compartida)
+    GOOGLE_OAUTH_CLIENT_ID
+    GOOGLE_OAUTH_CLIENT_SECRET
+    GOOGLE_OAUTH_REFRESH_TOKEN
+    GOOGLE_DRIVE_FOLDER_ID
+
+Nota: las cuentas de servicio no tienen cuota en Mi unidad. Si no podes usar
+Unidad Compartida, usa OAuth de usuario para subir con tu propia cuota.
 """
 
 import os
@@ -34,15 +32,34 @@ def _get_drive_service():
     _drive_init_attempted = True
 
     credentials_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
-    if not credentials_json:
-        return None
+    oauth_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    oauth_client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+    oauth_refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN", "").strip()
 
     try:
         from google.oauth2 import service_account
+        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
-        info = json.loads(credentials_json)
         scopes = ["https://www.googleapis.com/auth/drive"]
+
+        # Si hay OAuth de usuario, priorizarlo para permitir subir a Mi unidad.
+        if oauth_client_id and oauth_client_secret and oauth_refresh_token:
+            creds = Credentials(
+                token=None,
+                refresh_token=oauth_refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=oauth_client_id,
+                client_secret=oauth_client_secret,
+                scopes=scopes,
+            )
+            _drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
+            return _drive_service
+
+        if not credentials_json:
+            return None
+
+        info = json.loads(credentials_json)
         creds = service_account.Credentials.from_service_account_info(info, scopes=scopes)
         _drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
     except Exception as e:
