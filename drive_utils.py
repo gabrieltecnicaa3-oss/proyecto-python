@@ -72,6 +72,8 @@ def _buscar_o_crear_carpeta(service, nombre, parent_id):
             fields="files(id, name)",
             spaces="drive",
             pageSize=1,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
         ).execute()
         files = results.get("files", [])
         if files:
@@ -86,7 +88,7 @@ def _buscar_o_crear_carpeta(service, nombre, parent_id):
             "mimeType": "application/vnd.google-apps.folder",
             "parents": [parent_id],
         }
-        folder = service.files().create(body=metadata, fields="id").execute()
+        folder = service.files().create(body=metadata, fields="id", supportsAllDrives=True).execute()
         return folder["id"]
     except Exception as e:
         print(f"[Drive] Error creando carpeta '{nombre}': {e}")
@@ -142,6 +144,7 @@ def subir_pdf_a_drive(pdf_bytes, filename, obra, seccion_nombre, ot_subfolder=No
             body=file_metadata,
             media_body=media,
             fields="id, webViewLink",
+            supportsAllDrives=True,
         ).execute()
 
         link = uploaded.get("webViewLink", "")
