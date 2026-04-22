@@ -1328,17 +1328,12 @@ def calidad_escaneo_qr():
 
         html5QrcodeScanner = new Html5Qrcode("qr-reader");
 
-        Html5Qrcode.getCameras().then(devices => {
-            if (devices && devices.length) {
-                const cameraId = devices[0].id;
-                html5QrcodeScanner.start(
-                    cameraId,
-                    { fps: 10, qrbox: 250 },
-                    onQRCodeScanned,
-                    onQRCodeError
-                );
-            }
-        }).catch(err => {
+        html5QrcodeScanner.start(
+            { facingMode: "environment" },
+            { fps: 10, qrbox: 250 },
+            onQRCodeScanned,
+            onQRCodeError
+        ).catch(err => {
             showError('Error al acceder a la cámara: ' + err);
             stopQRScan();
         });
