@@ -278,48 +278,53 @@ def _buscar_excels_en_produccion(obra):
 @generador_bp.route("/modulo/generador", methods=["GET", "POST"])
 def generador_qr_main():
     import html as html_lib
+    from io import BytesIO
 
     db = get_db()
-    error = ""
     error_html = ""
-    opciones_ot = '<option value="">-- Seleccionar OT --</option>'
-    bloque_excels = ""
-    # Obtener OTs activas CON al menos un Excel adjunto en Producción
+
+    # Obtener todas las OTs activas (sin filtro de filesystem)
     ots_all = db.execute(
         "SELECT id, obra, titulo FROM ordenes_trabajo WHERE fecha_cierre IS NULL ORDER BY id DESC"
     ).fetchall()
 
-    ots = []
-    ots_excels = {}
-    # Solo considerar OTs cuya carpeta tiene al menos un Excel de armado
-    for ot in ots_all:
-        obra = ot[1] or ""
-        excels = _buscar_excels_en_produccion(obra)
-        if excels:
-            ots.append(ot)
-            ots_excels[ot[0]] = excels
-
-    # Construir opciones del select SOLO para OTs con Excel
     opciones_ot = '<option value="">-- Seleccionar OT --</option>'
-    for ot in ots:
+    for ot in ots_all:
         label = f"OT {ot[0]} | {ot[1] or ''} - {ot[2] or ''}"
         opciones_ot += f'<option value="{ot[0]}">{html_lib.escape(label)}</option>'
 
-    # Procesar POST para generar PDF solo si la OT seleccionada tiene Excel
+    # Procesar POST: se requiere OT y archivo Excel subido
     if request.method == "POST":
-        ot_id = request.form.get("ot_id")
-        if ot_id and ot_id.isdigit() and int(ot_id) in ots_excels:
-            excels = ots_excels[int(ot_id)]
-            # Si hay más de un Excel, tomar el primero (o podrías mostrar selección)
-            excel_path = excels[0][1]
-            nombre_obra = None
-            for ot in ots:
-                if ot[0] == int(ot_id):
+        ot_id_txt = (request.form.get("ot_id") or "").strip()
+        excel_file = request.files.get("excel_file")
+
+        if not ot_id_txt or not ot_id_txt.isdigit():
+            error_html = '<div style="background:#fee2e2;border:1px solid #fca5a5;color:#b91c1c;padding:12px;border-radius:6px;margin-bottom:14px;">❌ Seleccioná una OT válida.</div>'
+        elif not excel_file or excel_file.filename == "":
+            error_html = '<div style="background:#fee2e2;border:1px solid #fca5a5;color:#b91c1c;padding:12px;border-radius:6px;margin-bottom:14px;">❌ Adjuntá el archivo Excel con las piezas.</div>'
+        elif not excel_file.filename.lower().endswith((".xls", ".xlsx")):
+            error_html = '<div style="background:#fee2e2;border:1px solid #fca5a5;color:#b91c1c;padding:12px;border-radius:6px;margin-bottom:14px;">❌ El archivo debe ser .xls o .xlsx.</div>'
+        else:
+            ot_id = int(ot_id_txt)
+            nombre_obra = ""
+            for ot in ots_all:
+                if ot[0] == ot_id:
                     nombre_obra = ot[1] or ""
                     break
             try:
-                logo_path = os.path.join(_APP_DIR, "LOGO.png")
-                pdf_buffer = generar_etiquetas_qr(excel_path, logo_path)
+                import tempfile, os as _os
+                suffix = ".xlsx" if excel_file.filename.lower().endswith(".xlsx") else ".xls"
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp_path = tmp.name
+                    excel_file.save(tmp_path)
+                try:
+                    logo_path = _os.path.join(_APP_DIR, "LOGO.png")
+                    pdf_buffer = generar_etiquetas_qr(tmp_path, logo_path)
+                finally:
+                    try:
+                        _os.unlink(tmp_path)
+                    except Exception:
+                        pass
                 nombre_archivo_obra = nombre_obra.replace(' ', '_').replace('/', '_').replace('\\', '_') if nombre_obra else "SIN_NOMBRE"
                 pdf_filename = f"ETIQUETAS_A3_{nombre_archivo_obra}.pdf"
                 return send_file(
@@ -330,8 +335,6 @@ def generador_qr_main():
                 )
             except Exception as e:
                 error_html = f'<div style="background:#fee2e2;border:1px solid #fca5a5;color:#b91c1c;padding:12px;border-radius:6px;margin-bottom:14px;">❌ Error al generar PDF: {html_lib.escape(str(e))}</div>'
-        else:
-            error_html = f'<div style="background:#fee2e2;border:1px solid #fca5a5;color:#b91c1c;padding:12px;border-radius:6px;margin-bottom:14px;">❌ Debe seleccionar una OT válida con Excel adjunto.</div>'
 
     html = f"""
     <html>
@@ -344,7 +347,7 @@ def generador_qr_main():
     h1 {{ color: #333; margin-bottom: 18px; }}
     .card {{ background: white; padding: 22px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; }}
     label {{ display: block; margin-bottom: 8px; font-weight: bold; color: #333; }}
-    select {{ width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }}
+    select, input[type=file] {{ width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; margin-bottom: 14px; }}
     .btn {{ display: block; width: 100%; padding: 12px; background: #43e97b; color: white;
             border: none; border-radius: 6px; font-weight: bold; font-size: 15px; cursor: pointer; margin-top: 14px; text-align:center; text-decoration:none; }}
     .btn:hover {{ background: #2cc96e; }}
@@ -357,18 +360,18 @@ def generador_qr_main():
     <div class="container">
         <h1>🏷️ Generador de Etiquetas QR A3</h1>
         {error_html}
-        <div class="info">Seleccioná la OT para buscar automáticamente el Excel adjunto en su carpeta de Producción.</div>
+        <div class="info">Seleccioná la OT y subí el archivo Excel (.xls / .xlsx) con las piezas para generar las etiquetas.</div>
         <div class="card">
-            <form method="post">
+            <form method="post" enctype="multipart/form-data">
                 <label>Orden de Trabajo:</label>
                 <select name="ot_id" required>
                     {opciones_ot}
                 </select>
-                {bloque_excels}
-                {'' if bloque_excels else '<button type="submit" class="btn">🏷️ Generar Etiquetas PDF</button>'}
+                <label>Archivo Excel con piezas:</label>
+                <input type="file" name="excel_file" accept=".xls,.xlsx" required>
+                <button type="submit" class="btn">🏷️ Generar Etiquetas PDF</button>
             </form>
         </div>
-        <!-- Botón de descarga de plantilla eliminado -->
         <a href="/" class="btn btn-sec">← Volver al Inicio</a>
     </div>
     </body>

@@ -1730,7 +1730,7 @@ def dashboard():
     }
     .modules-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
         gap: 20px;
         margin-bottom: 20px;
     }
@@ -1806,6 +1806,15 @@ def dashboard():
             max-width: 260px;
             margin: 0 auto;
         }
+    }
+    @media (max-width: 500px) {
+        body { padding: 10px; }
+        .modules-grid { grid-template-columns: 1fr; gap: 12px; }
+        .header h1 { font-size: 1.5em; }
+        .module-card { padding: 18px; }
+        .module-icon { font-size: 2.2em; margin-bottom: 10px; }
+        .module-card h3 { font-size: 1.1em; }
+        div[style*="text-align: right"] { text-align: center !important; }
     }
     </style>
     </head>
@@ -5067,6 +5076,36 @@ def api_buscar():
             })
     
     return jsonify(resultados)
+
+
+# ====================== DIAGNÓSTICO DRIVE ======================
+@app.route("/drive/status")
+def drive_status():
+    if not _is_admin_session():
+        return jsonify({"error": "no autorizado"}), 403
+    import os as _os
+    try:
+        from drive_utils import _get_drive_service, drive_disponible
+        svc = _get_drive_service()
+        disponible = svc is not None
+        folder_id = _os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
+        creds_len = len(_os.environ.get("GOOGLE_CREDENTIALS_JSON", ""))
+        msg = "Drive OK" if disponible else "Drive NO disponible"
+        if disponible and folder_id:
+            try:
+                meta = svc.files().get(fileId=folder_id, fields="id,name").execute()
+                folder_name = meta.get("name", "?")
+                msg = f"Drive OK - Carpeta: {folder_name}"
+            except Exception as e:
+                msg = f"Drive conectado pero error accediendo carpeta: {e}"
+        return jsonify({
+            "status": msg,
+            "disponible": disponible,
+            "folder_id_set": bool(folder_id),
+            "credentials_len": creds_len,
+        })
+    except Exception as e:
+        return jsonify({"status": f"Error: {e}", "disponible": False})
 
 
 # ======================

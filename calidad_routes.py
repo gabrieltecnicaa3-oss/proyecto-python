@@ -488,7 +488,7 @@ def calidad_recepcion():
     
     <form method="post">
         <label>Obra:</label>
-        <select name="obra" required>
+        <select name="obra" id="obra_recepcion" onchange="cargarOTsRecepcion()" required>
             <option value="">Seleccionar obra...</option>
     """
     
@@ -585,11 +585,34 @@ def calidad_recepcion():
         responsableSel.addEventListener('change', syncResponsable);
         syncResponsable();
     })();
+
+    (function() {
+        const mapaObraOtsRec = {mapa_obra_ots_recepcion_json};
+        const obraRecSel = document.getElementById('obra_recepcion');
+        const otRecSel = document.getElementById('ot_id_recepcion');
+        function cargarOTsRecepcion() {
+            const obra = obraRecSel ? obraRecSel.value : '';
+            const ots = (mapaObraOtsRec[obra] || []);
+            if (!otRecSel) return;
+            otRecSel.innerHTML = '<option value="">Seleccionar OT...</option>';
+            ots.forEach(function(ot) {
+                const opt = document.createElement('option');
+                opt.value = ot.id;
+                opt.textContent = 'OT ' + ot.id + (ot.titulo ? ' - ' + ot.titulo : '');
+                otRecSel.appendChild(opt);
+            });
+            if (ots.length === 1) otRecSel.value = ots[0].id;
+        }
+        window.cargarOTsRecepcion = cargarOTsRecepcion;
+        if (obraRecSel) obraRecSel.addEventListener('change', cargarOTsRecepcion);
+        cargarOTsRecepcion();
+    })();
     </script>
     </body>
     </html>
     """
     html = html.replace("{opciones_responsables}", opciones_responsables)
+    html = html.replace("{mapa_obra_ots_recepcion_json}", json.dumps(mapa_obra_ots, ensure_ascii=False))
     html = html.replace("{json.dumps(firmas_responsables, ensure_ascii=False)}", json.dumps(firmas_responsables, ensure_ascii=False))
     html = html.replace("{json.dumps(imagenes_responsables, ensure_ascii=False)}", json.dumps(imagenes_responsables, ensure_ascii=False))
     return html
