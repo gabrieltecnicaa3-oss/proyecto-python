@@ -302,13 +302,15 @@ def _guardar_pdf_databook(obra, seccion_key, filename, pdf_bytes, databooks_dir,
             ot_subfolder_drive = None
             if seccion_key in _SECCIONES_CON_SUBCARPETA_OT and ot_id is not None:
                 ot_subfolder_drive = _resolver_carpeta_ot(ot_id, obra)
-            _drive_subir_pdf(
+            link_drive = _drive_subir_pdf(
                 pdf_bytes,
                 safe_filename,
                 _normalizar_nombre_carpeta(obra),
                 seccion_nombre,
                 ot_subfolder=ot_subfolder_drive,
             )
+            if not link_drive:
+                print(f"[Drive] No se obtuvo link de subida para {safe_filename}")
     except Exception as _e:
         print(f"[Drive] Error al subir {safe_filename}: {_e}")
 

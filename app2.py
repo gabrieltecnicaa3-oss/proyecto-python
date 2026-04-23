@@ -5085,11 +5085,18 @@ def drive_status():
         return jsonify({"error": "no autorizado"}), 403
     import os as _os
     try:
-        from drive_utils import _get_drive_service, drive_disponible
-        svc = _get_drive_service()
+        import drive_utils as _du
+        # Forzar reintento de inicialización para diagnóstico
+        _du._drive_service = None
+        _du._drive_init_attempted = False
+        _du._drive_last_error = None
+        svc = _du._get_drive_service()
         disponible = svc is not None
         folder_id = _os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
-        creds_len = len(_os.environ.get("GOOGLE_CREDENTIALS_JSON", ""))
+        creds_json_len = len(_os.environ.get("GOOGLE_CREDENTIALS_JSON", ""))
+        oauth_client_id_len = len(_os.environ.get("GOOGLE_OAUTH_CLIENT_ID", ""))
+        oauth_secret_len = len(_os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", ""))
+        oauth_token_len = len(_os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN", ""))
         msg = "Drive OK" if disponible else "Drive NO disponible"
         if disponible and folder_id:
             try:
@@ -5101,8 +5108,15 @@ def drive_status():
         return jsonify({
             "status": msg,
             "disponible": disponible,
+            "error_detalle": _du._drive_last_error,
+            "upload_error_detalle": getattr(_du, "_drive_last_upload_error", None),
+            "upload_last_ok": getattr(_du, "_drive_last_upload_ok", None),
             "folder_id_set": bool(folder_id),
-            "credentials_len": creds_len,
+            "folder_id_value": folder_id[:12] + "..." if len(folder_id) > 12 else folder_id,
+            "service_account_json_len": creds_json_len,
+            "oauth_client_id_len": oauth_client_id_len,
+            "oauth_client_secret_len": oauth_secret_len,
+            "oauth_refresh_token_len": oauth_token_len,
         })
     except Exception as e:
         return jsonify({"status": f"Error: {e}", "disponible": False})

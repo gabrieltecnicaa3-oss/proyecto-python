@@ -12,3 +12,10 @@ xlrd==2.0.1
 google-api-python-client==2.163.0
 google-auth==2.40.1
 google-auth-httplib2==0.2.0
+flask
+qrcode
+pillow
+google-auth
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2

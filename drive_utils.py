@@ -23,13 +23,17 @@ import io
 
 _drive_service = None
 _drive_init_attempted = False
+_drive_last_error = None
+_drive_last_upload_error = None
+_drive_last_upload_ok = None
 
 
 def _get_drive_service():
-    global _drive_service, _drive_init_attempted
+    global _drive_service, _drive_init_attempted, _drive_last_error
     if _drive_init_attempted:
         return _drive_service
     _drive_init_attempted = True
+    _drive_last_error = None
 
     credentials_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
     oauth_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
@@ -57,12 +61,17 @@ def _get_drive_service():
             return _drive_service
 
         if not credentials_json:
+            _drive_last_error = (
+                "Sin credenciales: GOOGLE_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN no configurados "
+                "y GOOGLE_CREDENTIALS_JSON vacío."
+            )
             return None
 
         info = json.loads(credentials_json)
         creds = service_account.Credentials.from_service_account_info(info, scopes=scopes)
         _drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
     except Exception as e:
+        _drive_last_error = str(e)
         print(f"[Drive] No se pudo inicializar el servicio: {e}")
         _drive_service = None
 
@@ -126,13 +135,30 @@ def subir_pdf_a_drive(pdf_bytes, filename, obra, seccion_nombre, ot_subfolder=No
 
     Retorna el link de Drive del archivo subido, o None si falla.
     """
+    global _drive_last_upload_error, _drive_last_upload_ok
+    _drive_last_upload_error = None
+    _drive_last_upload_ok = None
+
     service = _get_drive_service()
     if service is None:
+        _drive_last_upload_error = "Servicio de Drive no disponible"
         return None
 
     root_folder_id = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "").strip()
     if not root_folder_id:
         print("[Drive] GOOGLE_DRIVE_FOLDER_ID no configurado")
+        _drive_last_upload_error = "GOOGLE_DRIVE_FOLDER_ID no configurado"
+        return None
+
+    if isinstance(pdf_bytes, bytearray):
+        pdf_bytes = bytes(pdf_bytes)
+    if not isinstance(pdf_bytes, (bytes, bytearray)):
+        _drive_last_upload_error = f"Tipo de PDF invalido: {type(pdf_bytes).__name__}"
+        print(f"[Drive] {_drive_last_upload_error}")
+        return None
+    if not pdf_bytes:
+        _drive_last_upload_error = "PDF vacio (0 bytes)"
+        print(f"[Drive] {_drive_last_upload_error}")
         return None
 
     try:
@@ -166,10 +192,18 @@ def subir_pdf_a_drive(pdf_bytes, filename, obra, seccion_nombre, ot_subfolder=No
 
         link = uploaded.get("webViewLink", "")
         print(f"[Drive] Subido: {filename} → {link}")
+        _drive_last_upload_ok = {
+            "filename": str(filename or ""),
+            "bytes": len(pdf_bytes),
+            "folder_id": destino_folder_id,
+            "file_id": uploaded.get("id", ""),
+            "webViewLink": link,
+        }
         return link
 
     except Exception as e:
         print(f"[Drive] Error subiendo '{filename}': {e}")
+        _drive_last_upload_error = str(e)
         return None
 
 
