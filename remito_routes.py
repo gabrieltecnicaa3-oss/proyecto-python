@@ -344,7 +344,7 @@ def remitos():
             return f"Error generando PDF: {str(e)}", 500
 
     # GET
-    ots = db.execute("SELECT id, cliente, obra FROM ordenes_trabajo WHERE estado != 'Finalizada' AND fecha_cierre IS NULL AND ((es_mantenimiento IS NULL OR es_mantenimiento = 0) OR id = 2) ORDER BY id DESC").fetchall()
+    ots = db.execute("SELECT id, cliente, obra, TRIM(COALESCE(titulo, '')) AS titulo FROM ordenes_trabajo WHERE estado != 'Finalizada' AND fecha_cierre IS NULL AND ((es_mantenimiento IS NULL OR es_mantenimiento = 0) OR id = 2) ORDER BY id DESC").fetchall()
     obras_disponibles = sorted({str(ot[2] or "").strip() for ot in ots if str(ot[2] or "").strip()})
     ots_por_obra = {}
     for ot in ots:
@@ -355,6 +355,7 @@ def remitos():
             "id": int(ot[0]),
             "cliente": str(ot[1] or ""),
             "obra": obra_txt,
+            "titulo": str(ot[3] or ""),
         })
     ots_por_obra_json = json.dumps(ots_por_obra, ensure_ascii=False).replace("</", "<\\/")
 
@@ -393,18 +394,19 @@ def remitos():
     h2 { color: #333; border-bottom: 3px solid #f093fb; padding-bottom: 10px; }
     .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
     .header-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .btn { background: #667eea; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; }
+    .btn { background: #f97316; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; }
+    .btn:hover { background: #ea580c; }
     .btn-despacho { background: #f97316; }
     .btn-despacho:hover { background: #ea580c; }
     form { background: white; padding: 20px; border-radius: 5px; margin: 20px 0; max-width: 1200px; }
     .form-group { margin-bottom: 15px; }
     label { display: block; font-weight: bold; margin-bottom: 5px; }
     input[type="text"], input[type="date"], select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
-    button { width: 100%; padding: 12px; background: #43e97b; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 16px; }
-    button:hover { background: #2cc96e; }
+    button { width: 100%; padding: 12px; background: #f97316; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 16px; }
+    button:hover { background: #ea580c; }
     .piezas-table-wrapper { margin: 20px 0; overflow-x: auto; }
     .piezas-table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .piezas-table th { background: #667eea; color: white; padding: 12px; text-align: left; font-weight: bold; border-bottom: 2px solid #556bd7; }
+    .piezas-table th { background: #f97316; color: white; padding: 12px; text-align: left; font-weight: bold; border-bottom: 2px solid #ea580c; }
     .piezas-table td { padding: 12px; border-bottom: 1px solid #e0e0e0; }
     .piezas-table tr:hover { background: #f9f9f9; }
     .piezas-table input[type="checkbox"] { margin-right: 8px; cursor: pointer; width: 18px; height: 18px; }
@@ -594,7 +596,7 @@ def remitos():
         otsPorObra[obraSel].forEach(ot => {
             const opt = document.createElement('option');
             opt.value = String(ot.id);
-            opt.textContent = `OT ${ot.id} - ${ot.cliente}`;
+            opt.textContent = `OT ${ot.id} - ${ot.obra}${ot.titulo ? ' - ' + ot.titulo : ''}`;
             otSelect.appendChild(opt);
         });
         otSelect.disabled = false;

@@ -2196,7 +2196,7 @@ def home(page=1):
     }}
     h2 {{
         color: #111827;
-        border-bottom: 3px solid #0ea5a3;
+        border-bottom: 3px solid #f97316;
         padding-bottom: 10px;
         margin: 0;
     }}
@@ -2209,7 +2209,7 @@ def home(page=1):
     }}
     .btn-volver {{
         display: inline-block;
-        background: #2563eb;
+        background: #f97316;
         color: white;
         padding: 10px 14px;
         border-radius: 8px;
@@ -2218,7 +2218,7 @@ def home(page=1):
         white-space: nowrap;
     }}
     .btn-volver:hover {{
-        background: #1d4ed8;
+        background: #ea580c;
     }}
     .buscador-box {{
         background: #ffffff;
@@ -2246,7 +2246,7 @@ def home(page=1):
         box-sizing: border-box;
     }}
     .buscador-box button {{
-        background: #0f766e;
+        background: #f97316;
         color: white;
         border: none;
         padding: 10px 20px;
@@ -2257,7 +2257,7 @@ def home(page=1):
         width: 100%;
     }}
     .buscador-box button:hover {{
-        background: #0d6660;
+        background: #ea580c;
     }}
     .btn-eliminar-obra {{
         background: #d32f2f !important;
@@ -2317,7 +2317,7 @@ def home(page=1):
         margin-bottom: 20px;
     }}
     th {{
-        background: #0f766e;
+        background: #f97316;
         color: white;
         padding: 14px 10px;
         text-align: center;
@@ -3727,6 +3727,7 @@ def cargar(pos):
             """
             SELECT id,
                    TRIM(COALESCE(obra, '')) AS obra,
+                 TRIM(COALESCE(titulo, '')) AS titulo,
                    TRIM(COALESCE(esquema_pintura, '')) AS esquema,
                    TRIM(COALESCE(espesor_total_requerido, '')) AS espesor
             FROM ordenes_trabajo
@@ -3742,6 +3743,7 @@ def cargar(pos):
             """
             SELECT DISTINCT ot.id,
                    TRIM(COALESCE(ot.obra, '')) AS obra,
+                 TRIM(COALESCE(ot.titulo, '')) AS titulo,
                    TRIM(COALESCE(ot.esquema_pintura, '')) AS esquema,
                    TRIM(COALESCE(ot.espesor_total_requerido, '')) AS espesor
             FROM ordenes_trabajo ot
@@ -3764,6 +3766,7 @@ def cargar(pos):
             """
             SELECT id,
                    TRIM(COALESCE(obra, '')) AS obra,
+                 TRIM(COALESCE(titulo, '')) AS titulo,
                    TRIM(COALESCE(esquema_pintura, '')) AS esquema,
                    TRIM(COALESCE(espesor_total_requerido, '')) AS espesor
             FROM ordenes_trabajo
@@ -4042,7 +4045,7 @@ def cargar(pos):
 
     obra_ot_actual = obra_qs
     if ot_id_existente is not None:
-        for _otid, _obra, _esq, _esp in ot_rows:
+        for _otid, _obra, _titulo, _esq, _esp in ot_rows:
             if int(_otid) == int(ot_id_existente):
                 obra_ot_actual = _obra or obra_qs
                 break
@@ -4054,8 +4057,8 @@ def cargar(pos):
         for nombre in operarios_disponibles
     )
     opciones_ot = "".join(
-        f'<option value="{int(ot_id)}" data-obra="{html_lib.escape(obra)}" {"selected" if ot_id_existente is not None and int(ot_id_existente) == int(ot_id) else ""}>OT {int(ot_id)} - {html_lib.escape(obra or "(sin obra)")}</option>'
-        for ot_id, obra, _esquema, _espesor in ot_rows
+        f'<option value="{int(ot_id)}" data-obra="{html_lib.escape(obra)}" {"selected" if ot_id_existente is not None and int(ot_id_existente) == int(ot_id) else ""}>OT {int(ot_id)} - {html_lib.escape(obra or "(sin obra)")}{(" - " + html_lib.escape(titulo)) if str(titulo or "").strip() else ""}</option>'
+        for ot_id, obra, titulo, _esquema, _espesor in ot_rows
     )
     
     # Mostrar qué procesos se pueden hacer

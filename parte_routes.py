@@ -161,7 +161,11 @@ def parte_semanal():
     ).fetchall()
 
     empleados_catalogo = db.execute(
-        "SELECT id, nombre, puesto, firma_electronica, firma_imagen_path FROM empleados_parte ORDER BY nombre"
+        """
+        SELECT id, nombre, puesto, firma_electronica, firma_imagen_path
+        FROM empleados_parte
+        ORDER BY LOWER(TRIM(COALESCE(nombre, ''))) COLLATE NOCASE ASC
+        """
     ).fetchall()
 
     operarios_catalogo = db.execute(
@@ -229,24 +233,21 @@ def parte_semanal():
     h2 { color: #333; border-bottom: 3px solid #667eea; padding-bottom: 10px; }
     .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
     .header-actions { display: flex; gap: 10px; align-items: center; }
-    .btn { background: #667eea; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; }
-    .btn-carga { background: #2196f3; }
-    .btn-carga:hover { background: #1976d2; }
-    .btn-reportes { background: #43a047; }
-    .btn-reportes:hover { background: #2e7d32; }
+    .btn { background: #f97316; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; }
+    .btn:hover { background: #ea580c; }
     form { background: white; padding: 20px; border-radius: 5px; margin: 20px 0; }
     .form-group { margin-bottom: 20px; }
     label { display: block; font-weight: bold; margin-bottom: 5px; }
     input[type="date"], input[type="text"], select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
     table { width: 100%; border-collapse: collapse; background: white; margin-top: 15px; }
     th, td { padding: 10px; border: 1px solid #ddd; text-align: center; }
-    th { background: #667eea; color: white; font-weight: bold; }
+    th { background: #f97316; color: white; font-weight: bold; }
     td { background: white; }
     input[type="number"] { width: 100%; padding: 5px; border: 1px solid #ccc; border-radius: 3px; }
-    .btn-add { background: #43e97b; padding: 8px 12px; cursor: pointer; margin-top: 10px; }
-    .btn-add:hover { background: #2cc96e; }
-    button { width: 100%; padding: 12px; background: #43e97b; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-    button:hover { background: #2cc96e; }
+    .btn-add { background: #f97316; padding: 8px 12px; cursor: pointer; margin-top: 10px; }
+    .btn-add:hover { background: #ea580c; }
+    button { width: 100%; padding: 12px; background: #f97316; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+    button:hover { background: #ea580c; }
     .btn-delete { background: #fa709a; color: white; padding: 5px 10px; border: none; cursor: pointer; border-radius: 3px; }
     .btn-x {
         background: #fa709a;
@@ -638,7 +639,11 @@ def parte_carga_empleados():
 
     # GET
     empleados_catalogo = db.execute(
-        "SELECT id, nombre, puesto, firma_electronica, firma_imagen_path FROM empleados_parte ORDER BY nombre"
+        """
+        SELECT id, nombre, puesto, firma_electronica, firma_imagen_path
+        FROM empleados_parte
+        ORDER BY LOWER(TRIM(COALESCE(nombre, ''))) COLLATE NOCASE ASC
+        """
     ).fetchall()
 
     mensaje = (request.args.get("mensaje") or "").strip()
@@ -688,20 +693,20 @@ def parte_carga_empleados():
     <style>
     * { box-sizing: border-box; }
     body { font-family: Arial; padding: 15px; background: #f4f4f4; margin: 0; }
-    h2 { color: #333; border-bottom: 3px solid #667eea; padding-bottom: 10px; }
+    h2 { color: #333; border-bottom: 3px solid #f97316; padding-bottom: 10px; }
     .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
     .header-actions { display: flex; gap: 10px; align-items: center; }
-    .btn { background: #667eea; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; }
+    .btn { background: #f97316; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; }
     form { background: white; padding: 20px; border-radius: 5px; margin: 20px 0; }
     .form-group { margin-bottom: 20px; }
     label { display: block; font-weight: bold; margin-bottom: 5px; }
     input[type="date"], input[type="text"], select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
     table { width: 100%; border-collapse: collapse; background: white; margin-top: 15px; }
     th, td { padding: 10px; border: 1px solid #ddd; text-align: center; }
-    th { background: #3949ab; color: white; font-weight: bold; }
+    th { background: #f97316; color: white; font-weight: bold; }
     td { background: white; text-align: left; }
-    button { width: 100%; padding: 12px; background: #43e97b; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-    button:hover { background: #2cc96e; }
+    button { width: 100%; padding: 12px; background: #f97316; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+    button:hover { background: #ea580c; }
     .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     .btn-mini { width: auto; padding: 8px 10px; font-size: 12px; margin-right: 6px; margin-top: 4px; }
     .btn-mini-del { background: #ef5350; }
@@ -742,7 +747,10 @@ def parte_carga_empleados():
         <button type="submit">💾 Guardar Empleado</button>
     </form>
 
-    <h3>📋 Empleados registrados</h3>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px;">
+        <h3 style="margin:0;">📋 Empleados registrados</h3>
+        <a href="/modulo/parte/carga-empleados" class="btn" style="padding:8px 12px;background:#3949ab;">🔤 Ordenar A-Z</a>
+    </div>
     <table>
         <tr>
             <th>Nombre</th>
@@ -932,10 +940,10 @@ def parte_semanal_reportes():
     body {{ font-family: Arial; padding: 15px; background: #f4f4f4; margin: 0; }}
     .header {{ display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 20px; }}
     .header-left {{ display: flex; align-items: center; gap: 12px; flex: 1; }}
-    h2 {{ color: #333; border-bottom: 3px solid #43a047; padding-bottom: 10px; margin: 0; }}
+    h2 {{ color: #333; border-bottom: 3px solid #f97316; padding-bottom: 10px; margin: 0; }}
     .header-btns {{ display: flex; gap: 8px; }}
-    .btn {{ background: #667eea; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; }}
-    .btn:hover {{ background: #5568d3; }}
+    .btn {{ background: #f97316; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; }}
+    .btn:hover {{ background: #ea580c; }}
     .btn-pdf {{ background: #ff9800; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; border: none; cursor: pointer; font-weight: bold; }}
     .btn-pdf:hover {{ background: #f57c00; }}
     .filters {{ background: white; padding: 18px; border-radius: 6px; margin-bottom: 16px; box-shadow: 0 2px 5px rgba(0,0,0,0.08); }}
