@@ -1230,19 +1230,27 @@ def generar_etiquetas_qr(excel_file, logo_path, cargar_bd_excel=False):
         
         # Expandir filas según cantidad
         for idx, row in df.iterrows():
-            pos = str(row.get(col_pos, "")).strip()
-            pos_upper = pos.upper()
-            cant_str = str(row.get(cant_col, "0")).split(".")[0]
+            # 1. Limpieza agresiva de la posición
+            val_pos = row.get(col_pos, "")
+            if pd.isna(val_pos): continue # Salta si está vacío
             
+            pos = str(val_pos).strip()
+            pos_upper = pos.upper()
+            
+            # 2. Limpieza de la cantidad (aseguramos que sea número)
+            val_cant = row.get(cant_col, 1)
             try:
-                cant = int(cant_str) if cant_str else 1
+                # Si viene como 2.0 lo pasa a 2, si es "2" lo pasa a 2
+                cant = int(float(str(val_cant).replace(',', '.'))) if val_cant else 1
             except:
                 cant = 1
             
-            es_expandible = any(pos_upper.startswith(prefijo) for prefijo in prefijos_expandibles)
-            es_duplicar_igual = any(pos_upper.startswith(prefijo) for prefijo in prefijos_duplicar_igual)
+            # 3. Verificación de prefijos (usando la variable limpia)
+            es_expandible = any(pos_upper.startswith(p) for p in prefijos_expandibles)
+            # Forzamos que si empieza con G, entre sí o sí
+            es_duplicar_igual = any(pos_upper.startswith(p) for p in prefijos_duplicar_igual) or pos_upper.startswith("G")
             es_excluido_ti_to = pos_upper.startswith("TI") or pos_upper.startswith("TO")
-
+            
             if es_expandible and cant > 1:
                 for num in range(1, cant + 1):
                     row_copia = row.copy()
