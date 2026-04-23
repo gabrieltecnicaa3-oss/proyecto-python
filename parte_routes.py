@@ -3,7 +3,7 @@ import json
 import html as html_lib
 from io import BytesIO
 from datetime import datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from flask import Blueprint, redirect, request, send_file
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Image, Paragraph, Spacer
 from reportlab.lib import colors
@@ -808,8 +808,35 @@ def parte_carga_empleados():
     edit_id_txt = (request.args.get("edit_id") or "").strip()
     edit_id = int(edit_id_txt) if edit_id_txt.isdigit() else None
 
-    empleados_catalogo = db.execute(
+    orden_por = (request.args.get("orden_por") or "apellido").strip().lower()
+    if orden_por not in ("apellido", "nombre"):
+        orden_por = "apellido"
+    orden = (request.args.get("orden") or "az").strip().lower()
+    if orden not in ("az", "za"):
+        orden = "az"
+    filtro = (request.args.get("filtro") or "").strip()
+
+    if orden_por == "nombre":
+        campo_principal = "LOWER(TRIM(COALESCE(nombre_base, nombre, ''))) COLLATE NOCASE"
+        campo_secundario = "LOWER(TRIM(COALESCE(apellido, ''))) COLLATE NOCASE"
+    else:
+        campo_principal = "LOWER(TRIM(COALESCE(apellido, ''))) COLLATE NOCASE"
+        campo_secundario = "LOWER(TRIM(COALESCE(nombre_base, nombre, ''))) COLLATE NOCASE"
+    direccion = "ASC" if orden == "az" else "DESC"
+
+    where_sql = ""
+    where_params = []
+    if filtro:
+        filtro_like = f"%{filtro.lower()}%"
+        where_sql = """
+        WHERE LOWER(TRIM(COALESCE(nombre_base, ''))) LIKE ?
+           OR LOWER(TRIM(COALESCE(apellido, ''))) LIKE ?
+           OR LOWER(TRIM(COALESCE(nombre, ''))) LIKE ?
         """
+        where_params = [filtro_like, filtro_like, filtro_like]
+
+    empleados_catalogo = db.execute(
+        f"""
         SELECT id,
                COALESCE(nombre, ''),
                COALESCE(nombre_base, ''),
@@ -820,10 +847,21 @@ def parte_carga_empleados():
                COALESCE(firma_electronica, ''),
                COALESCE(firma_imagen_path, '')
         FROM empleados_parte
-        ORDER BY LOWER(TRIM(COALESCE(apellido, ''))) COLLATE NOCASE ASC,
-                 LOWER(TRIM(COALESCE(nombre_base, nombre, ''))) COLLATE NOCASE ASC
-        """
+        {where_sql}
+        ORDER BY {campo_principal} {direccion},
+                 {campo_secundario} {direccion}
+        """,
+        where_params,
     ).fetchall()
+
+    filtros_link = {}
+    if filtro:
+        filtros_link["filtro"] = filtro
+    if orden_por != "apellido":
+        filtros_link["orden_por"] = orden_por
+    if orden != "az":
+        filtros_link["orden"] = orden
+    filtros_link_qs = urlencode(filtros_link)
 
     mensaje = (request.args.get("mensaje") or "").strip()
     mensaje_html = ""
@@ -904,6 +942,10 @@ def parte_carga_empleados():
         tipo_txt = html_lib.escape("Operario" if tipo_raw == "operario" else "Supervisor")
         detalle_txt = html_lib.escape(detalle_raw or "-")
         firma_txt = html_lib.escape(firma_raw)
+        edit_url = f"/modulo/parte/carga-empleados?edit_id={empleado_id}"
+        if filtros_link_qs:
+            edit_url += f"&{filtros_link_qs}"
+
         empleados_listado += f"""
             <tr>
                 <td>{nombre_txt}</td>
@@ -912,7 +954,7 @@ def parte_carga_empleados():
                 <td>{detalle_txt}</td>
                 <td>{firma_txt}</td>
                 <td style="white-space: nowrap; min-width: 220px;">
-                    <a href="/modulo/parte/carga-empleados?edit_id={empleado_id}" class="btn-mini" style="text-decoration:none;display:inline-block;">✏️ Editar</a>
+                    <a href="{edit_url}" class="btn-mini" style="text-decoration:none;display:inline-block;">✏️ Editar</a>
                     <form method="post" style="display:inline; margin:0; padding:0; background:transparent;" onsubmit="return confirm('¿Eliminar empleado?');">
                         <input type="hidden" name="accion" value="eliminar_empleado">
                         <input type="hidden" name="empleado_id" value="{empleado_id}">
@@ -940,10 +982,14 @@ def parte_carga_empleados():
     .form-group { margin-bottom: 20px; }
     label { display: block; font-weight: bold; margin-bottom: 5px; }
     input[type="date"], input[type="text"], select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
-    table { width: 100%; border-collapse: collapse; background: white; margin-top: 15px; }
-    th, td { padding: 10px; border: 1px solid #ddd; text-align: center; }
+    .panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin-top: 16px; box-shadow: 0 6px 14px rgba(15,23,42,0.06); }
+    .filtros-grid { display: grid; grid-template-columns: 1.2fr 1fr 1fr auto; gap: 10px; align-items: end; }
+    .table-wrap { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; box-shadow: 0 6px 14px rgba(15,23,42,0.06); }
+    table { width: 100%; border-collapse: collapse; margin-top: 0; }
+    th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: center; }
     th { background: #f97316; color: white; font-weight: bold; }
     td { background: white; text-align: left; }
+    tr:nth-child(even) td { background: #fff7ed; }
     button { width: 100%; padding: 12px; background: #f97316; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
     button:hover { background: #ea580c; }
     .grid-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
@@ -953,7 +999,12 @@ def parte_carga_empleados():
     .flash { padding: 10px 12px; border-radius: 6px; margin-bottom: 14px; font-weight: bold; }
     .flash-ok { background: #e8f5e9; color: #1b5e20; border: 1px solid #a5d6a7; }
     .flash-error { background: #fff3e0; color: #8a4b00; border: 1px solid #ffcc80; }
-    @media (max-width: 900px) { .header { flex-direction: column; align-items: flex-start; } .header-actions { width: 100%; margin-top: 10px; } .grid-5 { grid-template-columns: 1fr; } }
+    @media (max-width: 900px) {
+        .header { flex-direction: column; align-items: flex-start; }
+        .header-actions { width: 100%; margin-top: 10px; }
+        .grid-5 { grid-template-columns: 1fr; }
+        .filtros-grid { grid-template-columns: 1fr; }
+    }
     </style>
     </head>
     <body>
@@ -1001,20 +1052,47 @@ def parte_carga_empleados():
         __FORM_CANCELAR__
     </form>
 
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px;">
-        <h3 style="margin:0;">📋 Empleados registrados</h3>
+    <div class="panel">
+        <h3 style="margin:0 0 10px 0;">📋 Empleados registrados</h3>
+        <form method="get" class="filtros-grid" style="margin:0;padding:0;background:transparent;">
+            <div>
+                <label>Buscar (nombre o apellido)</label>
+                <input type="text" name="filtro" placeholder="Ej: Juan o Perez" value="__FILTRO_VAL__">
+            </div>
+            <div>
+                <label>Ordenar por</label>
+                <select name="orden_por">
+                    <option value="apellido" __ORDEN_APELLIDO_SEL__>Apellido</option>
+                    <option value="nombre" __ORDEN_NOMBRE_SEL__>Nombre</option>
+                </select>
+            </div>
+            <div>
+                <label>Sentido</label>
+                <select name="orden">
+                    <option value="az" __ORDEN_AZ_SEL__>A-Z</option>
+                    <option value="za" __ORDEN_ZA_SEL__>Z-A</option>
+                </select>
+            </div>
+            <div style="display:flex;gap:8px;">
+                <button type="submit" style="width:auto;min-width:120px;">Aplicar</button>
+                <a href="/modulo/parte/carga-empleados" class="btn" style="background:#64748b;">Limpiar</a>
+            </div>
+        </form>
     </div>
-    <table>
-        <tr>
-            <th>Nombre (A-Z)</th>
-            <th>Apellido (A-Z)</th>
-            <th>Tipo</th>
-            <th>Puesto</th>
-            <th>Firma electrónica</th>
-            <th>Acciones</th>
-        </tr>
-    """ + empleados_listado + """
-    </table>
+
+    <div class="table-wrap">
+        <table>
+            <tr>
+                <th>Nombre</th>
+                <th>Apellido</th>
+                <th>Tipo</th>
+                <th>Puesto</th>
+                <th>Firma electrónica</th>
+                <th>Acciones</th>
+            </tr>
+        """ + empleados_listado + """
+        </table>
+    </div>
 
     <script>
     const PUESTOS_SUPERVISOR = ["Of tecnica", "Jefe de Taller", "Coord Estructuras", "Resp. calidad", "Mantenimiento", "Encargado Pintura"];
@@ -1067,6 +1145,11 @@ def parte_carga_empleados():
     html = html.replace("__FORM_FIRMA__", html_lib.escape(form_firma))
     html = html.replace("__FORM_BOTON__", html_lib.escape(form_btn))
     html = html.replace("__FORM_CANCELAR__", '<a href="/modulo/parte/carga-empleados" class="btn" style="display:inline-block;margin-top:10px;background:#9ca3af;">Cancelar edición</a>' if form_empleado_id else "")
+    html = html.replace("__FILTRO_VAL__", html_lib.escape(filtro))
+    html = html.replace("__ORDEN_APELLIDO_SEL__", "selected" if orden_por == "apellido" else "")
+    html = html.replace("__ORDEN_NOMBRE_SEL__", "selected" if orden_por == "nombre" else "")
+    html = html.replace("__ORDEN_AZ_SEL__", "selected" if orden == "az" else "")
+    html = html.replace("__ORDEN_ZA_SEL__", "selected" if orden == "za" else "")
     return html
 
 

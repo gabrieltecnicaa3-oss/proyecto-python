@@ -15,7 +15,15 @@ except Exception:  # pragma: no cover - fallback when MySQL dependency is missin
     pymysql = None
 
 
-DB_ENGINE = os.getenv("DB_ENGINE", "sqlite").strip().lower()
+_DB_ENGINE_RAW = os.getenv("DB_ENGINE", "auto").strip().lower()
+if _DB_ENGINE_RAW in ("", "auto"):
+    # In cloud deployments we prefer MySQL automatically when credentials are available.
+    if os.getenv("MYSQL_HOST") and os.getenv("MYSQL_DB"):
+        DB_ENGINE = "mysql"
+    else:
+        DB_ENGINE = "sqlite"
+else:
+    DB_ENGINE = _DB_ENGINE_RAW
 
 
 class _StaticCursor:
