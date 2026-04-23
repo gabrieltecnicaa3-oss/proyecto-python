@@ -27,6 +27,58 @@ def _resolver_imagen_firma_empleado(nombre, firma_electronica):
 parte_bp = Blueprint("parte", __name__)
 
 
+PUESTOS_SUPERVISOR = [
+    "Of tecnica",
+    "Jefe de Taller",
+    "Coord Estructuras",
+    "Resp. calidad",
+    "Mantenimiento",
+    "Encargado Pintura",
+]
+
+PUESTOS_OPERARIO = [
+    "Of. Soldador",
+    "Of. Armador",
+    "Medio Of.",
+    "Ayudante",
+    "Of. Pintor",
+]
+
+
+def _normalizar_tipo_puesto(valor):
+    tipo = str(valor or "").strip().lower()
+    if tipo == "operario":
+        return "operario"
+    return "supervisor"
+
+
+def _inferir_tipo_puesto_legacy(puesto_txt):
+    txt = str(puesto_txt or "").strip().lower()
+    if any(k in txt for k in ["operario", "soldador", "armador", "medio", "ayudante", "pintor"]):
+        return "operario"
+    return "supervisor"
+
+
+def _extraer_nombre_apellido_desde_full(nombre_full):
+    txt = str(nombre_full or "").strip()
+    if not txt:
+        return "", ""
+    partes = txt.split()
+    if len(partes) <= 1:
+        return txt, ""
+    return partes[0], " ".join(partes[1:])
+
+
+def _opciones_detalle_html(tipo_actual, detalle_actual):
+    detalle_actual = str(detalle_actual or "").strip()
+    opciones = PUESTOS_OPERARIO if tipo_actual == "operario" else PUESTOS_SUPERVISOR
+    html_opts = '<option value="">-- Seleccionar puesto --</option>'
+    for item in opciones:
+        selected = "selected" if detalle_actual == item else ""
+        html_opts += f'<option value="{html_lib.escape(item)}" {selected}>{html_lib.escape(item)}</option>'
+    return html_opts
+
+
 @parte_bp.route("/modulo/parte", methods=["GET", "POST"])
 def parte_semanal():
     db = get_db()
@@ -172,8 +224,13 @@ def parte_semanal():
         """
         SELECT nombre
         FROM empleados_parte
-        WHERE LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%operario%'
-        ORDER BY nombre
+        WHERE LOWER(TRIM(COALESCE(puesto_tipo, ''))) = 'operario'
+           OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%operario%'
+           OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%soldador%'
+           OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%armador%'
+           OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%ayudante%'
+           OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%pintor%'
+        ORDER BY LOWER(TRIM(COALESCE(nombre, ''))) COLLATE NOCASE ASC
         """
     ).fetchall()
 
@@ -552,18 +609,70 @@ def parte_semanal():
 def parte_carga_empleados():
     db = get_db()
 
+    # Compatibilidad/migración liviana de columnas nuevas
+    try:
+        cols = {r[1] for r in db.execute("PRAGMA table_info(empleados_parte)").fetchall()}
+        if "nombre_base" not in cols:
+            db.execute("ALTER TABLE empleados_parte ADD COLUMN nombre_base TEXT")
+        if "apellido" not in cols:
+            db.execute("ALTER TABLE empleados_parte ADD COLUMN apellido TEXT")
+        if "puesto_tipo" not in cols:
+            db.execute("ALTER TABLE empleados_parte ADD COLUMN puesto_tipo TEXT")
+        if "puesto_detalle" not in cols:
+            db.execute("ALTER TABLE empleados_parte ADD COLUMN puesto_detalle TEXT")
+
+        rows_fix = db.execute(
+            """
+            SELECT id, COALESCE(nombre, ''), COALESCE(nombre_base, ''), COALESCE(apellido, ''), COALESCE(puesto_tipo, ''), COALESCE(puesto, '')
+            FROM empleados_parte
+            """
+        ).fetchall()
+        for emp_id, nombre_full, nombre_base, apellido, puesto_tipo, puesto in rows_fix:
+            nombre_base_fix = str(nombre_base or "").strip()
+            apellido_fix = str(apellido or "").strip()
+            if not nombre_base_fix:
+                n_guess, a_guess = _extraer_nombre_apellido_desde_full(nombre_full)
+                nombre_base_fix = n_guess
+                if not apellido_fix:
+                    apellido_fix = a_guess
+
+            tipo_fix = _normalizar_tipo_puesto(puesto_tipo) if str(puesto_tipo or "").strip() else _inferir_tipo_puesto_legacy(puesto)
+
+            db.execute(
+                """
+                UPDATE empleados_parte
+                SET nombre_base = COALESCE(NULLIF(nombre_base, ''), ?),
+                    apellido = COALESCE(NULLIF(apellido, ''), ?),
+                    puesto_tipo = COALESCE(NULLIF(puesto_tipo, ''), ?)
+                WHERE id = ?
+                """,
+                (nombre_base_fix, apellido_fix, tipo_fix, int(emp_id)),
+            )
+        db.commit()
+    except Exception:
+        pass
+
     if request.method == "POST":
         accion = (request.form.get("accion") or "").strip()
 
         if accion == "guardar_empleado":
-            nombre_emp = (request.form.get("empleado_nombre") or "").strip()
-            puesto_emp = (request.form.get("empleado_puesto") or "").strip()
-            firma_emp = (request.form.get("empleado_firma") or "").strip()
+            nombre_base = (request.form.get("empleado_nombre") or "").strip()
+            apellido_emp = (request.form.get("empleado_apellido") or "").strip()
+            tipo_puesto = _normalizar_tipo_puesto(request.form.get("empleado_tipo_puesto"))
+            puesto_detalle = (request.form.get("empleado_puesto_detalle") or "").strip()
+            firma_ingresada = (request.form.get("empleado_firma") or "").strip()
+            firma_emp = "0" if tipo_puesto == "operario" else firma_ingresada
+            nombre_emp = " ".join([v for v in [nombre_base, apellido_emp] if v]).strip()
+            puesto_emp = puesto_detalle
 
-            if not nombre_emp or not puesto_emp or not firma_emp:
-                return redirect("/modulo/parte/carga-empleados?mensaje=" + quote("⚠️ Completá nombre, puesto y firma electrónica"))
+            if not nombre_base or not apellido_emp or not puesto_detalle:
+                return redirect("/modulo/parte/carga-empleados?mensaje=" + quote("⚠️ Completá nombre, apellido y puesto"))
+            if tipo_puesto == "supervisor" and not firma_emp:
+                return redirect("/modulo/parte/carga-empleados?mensaje=" + quote("⚠️ Para supervisor la firma electrónica es obligatoria"))
 
-            firma_imagen_rel = _resolver_imagen_firma_empleado(nombre_emp, firma_emp)
+            firma_imagen_rel = ""
+            if firma_emp and firma_emp != "0":
+                firma_imagen_rel = _resolver_imagen_firma_empleado(nombre_emp, firma_emp)
 
             existe = db.execute(
                 "SELECT id FROM empleados_parte WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(?))",
@@ -574,20 +683,20 @@ def parte_carga_empleados():
                 db.execute(
                     """
                     UPDATE empleados_parte
-                    SET nombre=?, puesto=?, firma_electronica=?, firma_imagen_path=?, fecha_actualizacion=CURRENT_TIMESTAMP
+                    SET nombre=?, nombre_base=?, apellido=?, puesto=?, puesto_tipo=?, puesto_detalle=?, firma_electronica=?, firma_imagen_path=?, fecha_actualizacion=CURRENT_TIMESTAMP
                     WHERE id=?
                     """,
-                    (nombre_emp, puesto_emp, firma_emp, firma_imagen_rel, existe[0])
+                    (nombre_emp, nombre_base, apellido_emp, puesto_emp, tipo_puesto, puesto_detalle, firma_emp, firma_imagen_rel, existe[0])
                 )
                 mensaje = "✅ Empleado actualizado"
             else:
                 try:
                     db.execute(
                         """
-                        INSERT INTO empleados_parte (nombre, puesto, firma_electronica, firma_imagen_path)
-                        VALUES (?, ?, ?, ?)
+                        INSERT INTO empleados_parte (nombre, nombre_base, apellido, puesto, puesto_tipo, puesto_detalle, firma_electronica, firma_imagen_path)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (nombre_emp, puesto_emp, firma_emp, firma_imagen_rel)
+                        (nombre_emp, nombre_base, apellido_emp, puesto_emp, tipo_puesto, puesto_detalle, firma_emp, firma_imagen_rel)
                     )
                 except Exception as exc:
                     if not is_integrity_error(exc):
@@ -600,25 +709,34 @@ def parte_carga_empleados():
 
         if accion == "editar_empleado":
             empleado_id = (request.form.get("empleado_id") or "").strip()
-            nombre_emp = (request.form.get("empleado_nombre") or "").strip()
-            puesto_emp = (request.form.get("empleado_puesto") or "").strip()
-            firma_emp = (request.form.get("empleado_firma") or "").strip()
+            nombre_base = (request.form.get("empleado_nombre") or "").strip()
+            apellido_emp = (request.form.get("empleado_apellido") or "").strip()
+            tipo_puesto = _normalizar_tipo_puesto(request.form.get("empleado_tipo_puesto"))
+            puesto_detalle = (request.form.get("empleado_puesto_detalle") or "").strip()
+            firma_ingresada = (request.form.get("empleado_firma") or "").strip()
+            firma_emp = "0" if tipo_puesto == "operario" else firma_ingresada
+            nombre_emp = " ".join([v for v in [nombre_base, apellido_emp] if v]).strip()
+            puesto_emp = puesto_detalle
 
             if not empleado_id.isdigit():
                 return redirect("/modulo/parte/carga-empleados?mensaje=" + quote("⚠️ Empleado inválido"))
-            if not nombre_emp or not puesto_emp or not firma_emp:
-                return redirect("/modulo/parte/carga-empleados?mensaje=" + quote("⚠️ Completá nombre, puesto y firma electrónica"))
+            if not nombre_base or not apellido_emp or not puesto_detalle:
+                return redirect("/modulo/parte/carga-empleados?mensaje=" + quote("⚠️ Completá nombre, apellido y puesto"))
+            if tipo_puesto == "supervisor" and not firma_emp:
+                return redirect("/modulo/parte/carga-empleados?mensaje=" + quote("⚠️ Para supervisor la firma electrónica es obligatoria"))
 
-            firma_imagen_rel = _resolver_imagen_firma_empleado(nombre_emp, firma_emp)
+            firma_imagen_rel = ""
+            if firma_emp and firma_emp != "0":
+                firma_imagen_rel = _resolver_imagen_firma_empleado(nombre_emp, firma_emp)
 
             try:
                 db.execute(
                     """
                     UPDATE empleados_parte
-                    SET nombre=?, puesto=?, firma_electronica=?, firma_imagen_path=?, fecha_actualizacion=CURRENT_TIMESTAMP
+                    SET nombre=?, nombre_base=?, apellido=?, puesto=?, puesto_tipo=?, puesto_detalle=?, firma_electronica=?, firma_imagen_path=?, fecha_actualizacion=CURRENT_TIMESTAMP
                     WHERE id=?
                     """,
-                    (nombre_emp, puesto_emp, firma_emp, firma_imagen_rel, int(empleado_id))
+                    (nombre_emp, nombre_base, apellido_emp, puesto_emp, tipo_puesto, puesto_detalle, firma_emp, firma_imagen_rel, int(empleado_id))
                 )
             except Exception as exc:
                 if not is_integrity_error(exc):
@@ -640,9 +758,18 @@ def parte_carga_empleados():
     # GET
     empleados_catalogo = db.execute(
         """
-        SELECT id, nombre, puesto, firma_electronica, firma_imagen_path
+        SELECT id,
+               COALESCE(nombre, ''),
+               COALESCE(nombre_base, ''),
+               COALESCE(apellido, ''),
+               COALESCE(puesto_tipo, ''),
+               COALESCE(puesto_detalle, ''),
+               COALESCE(puesto, ''),
+               COALESCE(firma_electronica, ''),
+               COALESCE(firma_imagen_path, '')
         FROM empleados_parte
-        ORDER BY LOWER(TRIM(COALESCE(nombre, ''))) COLLATE NOCASE ASC
+        ORDER BY LOWER(TRIM(COALESCE(apellido, ''))) COLLATE NOCASE ASC,
+                 LOWER(TRIM(COALESCE(nombre_base, nombre, ''))) COLLATE NOCASE ASC
         """
     ).fetchall()
 
@@ -653,20 +780,48 @@ def parte_carga_empleados():
         mensaje_html = f'<div class="flash {clase}">{html_lib.escape(mensaje)}</div>'
 
     empleados_listado = ""
-    for empleado_id, nombre, puesto, firma, firma_imagen_path in empleados_catalogo:
-        nombre_txt = html_lib.escape(str(nombre or "").strip())
-        puesto_txt = html_lib.escape(str(puesto or "").strip())
-        firma_txt = html_lib.escape(str(firma or "").strip())
+    for empleado_id, nombre_full, nombre_base, apellido, puesto_tipo, puesto_detalle, puesto_legacy, firma, firma_imagen_path in empleados_catalogo:
+        nombre_base_raw = str(nombre_base or "").strip()
+        apellido_raw = str(apellido or "").strip()
+        if not nombre_base_raw:
+            n_guess, a_guess = _extraer_nombre_apellido_desde_full(nombre_full)
+            nombre_base_raw = n_guess
+            if not apellido_raw:
+                apellido_raw = a_guess
+
+        tipo_raw = _normalizar_tipo_puesto(puesto_tipo) if str(puesto_tipo or "").strip() else _inferir_tipo_puesto_legacy(puesto_legacy)
+        detalle_raw = str(puesto_detalle or "").strip() or str(puesto_legacy or "").strip()
+        firma_raw = str(firma or "").strip()
+        if tipo_raw == "operario":
+            firma_raw = "0"
+
+        nombre_txt = html_lib.escape(nombre_base_raw)
+        apellido_txt = html_lib.escape(apellido_raw)
+        firma_txt = html_lib.escape(firma_raw)
+        tipo_supervisor_sel = "selected" if tipo_raw == "supervisor" else ""
+        tipo_operario_sel = "selected" if tipo_raw == "operario" else ""
+        detalle_opts = _opciones_detalle_html(tipo_raw, detalle_raw)
         empleados_listado += f"""
             <tr>
                 <td>
                     <input type="text" name="empleado_nombre" value="{nombre_txt}" form="edit-emp-{empleado_id}" required>
                 </td>
                 <td>
-                    <input type="text" name="empleado_puesto" value="{puesto_txt}" form="edit-emp-{empleado_id}" required>
+                    <input type="text" name="empleado_apellido" value="{apellido_txt}" form="edit-emp-{empleado_id}" required>
                 </td>
                 <td>
-                    <input type="text" name="empleado_firma" value="{firma_txt}" form="edit-emp-{empleado_id}" required>
+                    <select name="empleado_tipo_puesto" form="edit-emp-{empleado_id}" onchange="actualizarCamposEmpleado('{empleado_id}')" id="tipo-{empleado_id}">
+                        <option value="supervisor" {tipo_supervisor_sel}>Supervisor</option>
+                        <option value="operario" {tipo_operario_sel}>Operario</option>
+                    </select>
+                </td>
+                <td>
+                    <select name="empleado_puesto_detalle" form="edit-emp-{empleado_id}" id="detalle-{empleado_id}" required>
+                        {detalle_opts}
+                    </select>
+                </td>
+                <td>
+                    <input type="text" name="empleado_firma" value="{firma_txt}" form="edit-emp-{empleado_id}" id="firma-{empleado_id}" required>
                 </td>
                 <td style="white-space: nowrap; min-width: 220px;">
                     <form id="edit-emp-{empleado_id}" method="post" style="display:inline; margin:0; padding:0; background:transparent;">
@@ -684,7 +839,7 @@ def parte_carga_empleados():
         """
 
     if not empleados_listado:
-        empleados_listado = "<tr><td colspan='4' style='text-align:center;color:#6b7280;'>No hay empleados cargados</td></tr>"
+        empleados_listado = "<tr><td colspan='6' style='text-align:center;color:#6b7280;'>No hay empleados cargados</td></tr>"
 
     html = """
     <html>
@@ -707,14 +862,14 @@ def parte_carga_empleados():
     td { background: white; text-align: left; }
     button { width: 100%; padding: 12px; background: #f97316; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
     button:hover { background: #ea580c; }
-    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .grid-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
     .btn-mini { width: auto; padding: 8px 10px; font-size: 12px; margin-right: 6px; margin-top: 4px; }
     .btn-mini-del { background: #ef5350; }
     .btn-mini-del:hover { background: #d84343; }
     .flash { padding: 10px 12px; border-radius: 6px; margin-bottom: 14px; font-weight: bold; }
     .flash-ok { background: #e8f5e9; color: #1b5e20; border: 1px solid #a5d6a7; }
     .flash-error { background: #fff3e0; color: #8a4b00; border: 1px solid #ffcc80; }
-    @media (max-width: 900px) { .header { flex-direction: column; align-items: flex-start; } .header-actions { width: 100%; margin-top: 10px; } .grid-3 { grid-template-columns: 1fr; } }
+    @media (max-width: 900px) { .header { flex-direction: column; align-items: flex-start; } .header-actions { width: 100%; margin-top: 10px; } .grid-5 { grid-template-columns: 1fr; } }
     </style>
     </head>
     <body>
@@ -730,18 +885,31 @@ def parte_carga_empleados():
     <form method="post" id="empleados-form">
         <input type="hidden" name="accion" value="guardar_empleado">
         <h3>Agregar nuevo empleado</h3>
-        <div class="grid-3">
+        <div class="grid-5">
             <div>
                 <label>Nombre</label>
-                <input type="text" name="empleado_nombre" placeholder="Nombre y apellido" required>
+                <input type="text" name="empleado_nombre" placeholder="Nombre" required>
+            </div>
+            <div>
+                <label>Apellido</label>
+                <input type="text" name="empleado_apellido" placeholder="Apellido" required>
+            </div>
+            <div>
+                <label>Tipo</label>
+                <select name="empleado_tipo_puesto" id="empleado_tipo_puesto" onchange="actualizarCamposNuevo()" required>
+                    <option value="supervisor" selected>Supervisor</option>
+                    <option value="operario">Operario</option>
+                </select>
             </div>
             <div>
                 <label>Puesto</label>
-                <input type="text" name="empleado_puesto" placeholder="Ej: Soldador" required>
+                <select name="empleado_puesto_detalle" id="empleado_puesto_detalle" required>
+                    <option value="">-- Seleccionar puesto --</option>
+                </select>
             </div>
             <div>
                 <label>Firma electrónica</label>
-                <input type="text" name="empleado_firma" placeholder="Código o nombre de firma" required>
+                <input type="text" name="empleado_firma" id="empleado_firma" placeholder="Código o nombre de firma" required>
             </div>
         </div>
         <button type="submit">💾 Guardar Empleado</button>
@@ -749,17 +917,75 @@ def parte_carga_empleados():
 
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px;">
         <h3 style="margin:0;">📋 Empleados registrados</h3>
-        <a href="/modulo/parte/carga-empleados" class="btn" style="padding:8px 12px;background:#3949ab;">🔤 Ordenar A-Z</a>
     </div>
     <table>
         <tr>
-            <th>Nombre</th>
+            <th>Nombre (A-Z)</th>
+            <th>Apellido (A-Z)</th>
+            <th>Tipo</th>
             <th>Puesto</th>
             <th>Firma electrónica</th>
             <th>Acciones</th>
         </tr>
     """ + empleados_listado + """
     </table>
+
+    <script>
+    const PUESTOS_SUPERVISOR = ["Of tecnica", "Jefe de Taller", "Coord Estructuras", "Resp. calidad", "Mantenimiento", "Encargado Pintura"];
+    const PUESTOS_OPERARIO = ["Of. Soldador", "Of. Armador", "Medio Of.", "Ayudante", "Of. Pintor"];
+
+    function setOpcionesDetalle(selectEl, tipo, valorActual) {
+        const arr = (tipo === 'operario') ? PUESTOS_OPERARIO : PUESTOS_SUPERVISOR;
+        selectEl.innerHTML = '<option value="">-- Seleccionar puesto --</option>';
+        arr.forEach(item => {
+            const opt = document.createElement('option');
+            opt.value = item;
+            opt.textContent = item;
+            if ((valorActual || '').trim() === item) opt.selected = true;
+            selectEl.appendChild(opt);
+        });
+    }
+
+    function actualizarCamposNuevo() {
+        const tipo = document.getElementById('empleado_tipo_puesto').value;
+        const detalle = document.getElementById('empleado_puesto_detalle');
+        const firma = document.getElementById('empleado_firma');
+        setOpcionesDetalle(detalle, tipo, detalle.value);
+        if (tipo === 'operario') {
+            firma.value = '0';
+            firma.readOnly = true;
+            firma.style.background = '#f1f5f9';
+        } else {
+            if ((firma.value || '').trim() === '0') firma.value = '';
+            firma.readOnly = false;
+            firma.style.background = '#fff';
+        }
+    }
+
+    function actualizarCamposEmpleado(empId) {
+        const tipo = document.getElementById('tipo-' + empId).value;
+        const detalle = document.getElementById('detalle-' + empId);
+        const firma = document.getElementById('firma-' + empId);
+        setOpcionesDetalle(detalle, tipo, detalle.value);
+        if (tipo === 'operario') {
+            firma.value = '0';
+            firma.readOnly = true;
+            firma.style.background = '#f1f5f9';
+        } else {
+            if ((firma.value || '').trim() === '0') firma.value = '';
+            firma.readOnly = false;
+            firma.style.background = '#fff';
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        actualizarCamposNuevo();
+        document.querySelectorAll('select[id^="tipo-"]').forEach(sel => {
+            const empId = sel.id.replace('tipo-', '');
+            actualizarCamposEmpleado(empId);
+        });
+    });
+    </script>
     
     </body>
     </html>

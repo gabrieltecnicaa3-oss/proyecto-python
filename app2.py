@@ -679,6 +679,34 @@ def init_db():
             except Exception:
                 pass
 
+        if 'nombre_base' not in empleados_parte_columns:
+            try:
+                db.execute("ALTER TABLE empleados_parte ADD COLUMN nombre_base TEXT")
+                db.commit()
+            except Exception:
+                pass
+
+        if 'apellido' not in empleados_parte_columns:
+            try:
+                db.execute("ALTER TABLE empleados_parte ADD COLUMN apellido TEXT")
+                db.commit()
+            except Exception:
+                pass
+
+        if 'puesto_tipo' not in empleados_parte_columns:
+            try:
+                db.execute("ALTER TABLE empleados_parte ADD COLUMN puesto_tipo TEXT")
+                db.commit()
+            except Exception:
+                pass
+
+        if 'puesto_detalle' not in empleados_parte_columns:
+            try:
+                db.execute("ALTER TABLE empleados_parte ADD COLUMN puesto_detalle TEXT")
+                db.commit()
+            except Exception:
+                pass
+
         cursor = db.execute("PRAGMA table_info(usuarios)")
         usuarios_columns = {row[1] for row in cursor.fetchall()}
 
