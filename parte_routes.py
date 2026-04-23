@@ -79,6 +79,18 @@ def _opciones_detalle_html(tipo_actual, detalle_actual):
     return html_opts
 
 
+def _nombre_mostrable(nombre_full, nombre_base="", apellido=""):
+    n_base = str(nombre_base or "").strip()
+    ape = str(apellido or "").strip()
+    if not n_base:
+        n_base, ape_guess = _extraer_nombre_apellido_desde_full(nombre_full)
+        if not ape:
+            ape = ape_guess
+    if ape and n_base:
+        return f"{ape}, {n_base}"
+    return str(nombre_full or "").strip()
+
+
 @parte_bp.route("/modulo/parte", methods=["GET", "POST"])
 def parte_semanal():
     db = get_db()
@@ -789,6 +801,9 @@ def parte_carga_empleados():
             return redirect("/modulo/parte/carga-empleados?mensaje=" + quote("✅ Empleado eliminado"))
 
     # GET
+    edit_id_txt = (request.args.get("edit_id") or "").strip()
+    edit_id = int(edit_id_txt) if edit_id_txt.isdigit() else None
+
     empleados_catalogo = db.execute(
         """
         SELECT id,
@@ -812,6 +827,57 @@ def parte_carga_empleados():
         clase = "flash-error" if ("⚠️" in mensaje or "❌" in mensaje) else "flash-ok"
         mensaje_html = f'<div class="flash {clase}">{html_lib.escape(mensaje)}</div>'
 
+    form_accion = "guardar_empleado"
+    form_titulo = "Agregar nuevo empleado"
+    form_btn = "💾 Guardar Empleado"
+    form_empleado_id = ""
+    form_nombre = ""
+    form_apellido = ""
+    form_tipo = "supervisor"
+    form_puesto_detalle = ""
+    form_firma = ""
+
+    if edit_id is not None:
+        edit_row = db.execute(
+            """
+            SELECT id,
+                   COALESCE(nombre, ''),
+                   COALESCE(nombre_base, ''),
+                   COALESCE(apellido, ''),
+                   COALESCE(puesto_tipo, ''),
+                   COALESCE(puesto_detalle, ''),
+                   COALESCE(puesto, ''),
+                   COALESCE(firma_electronica, '')
+            FROM empleados_parte
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (edit_id,),
+        ).fetchone()
+        if edit_row:
+            _, nombre_full_e, nombre_base_e, apellido_e, tipo_e, detalle_e, puesto_legacy_e, firma_e = edit_row
+            nombre_base_e = str(nombre_base_e or "").strip()
+            apellido_e = str(apellido_e or "").strip()
+            if not nombre_base_e:
+                n_guess, a_guess = _extraer_nombre_apellido_desde_full(nombre_full_e)
+                nombre_base_e = n_guess
+                if not apellido_e:
+                    apellido_e = a_guess
+
+            tipo_e = _normalizar_tipo_puesto(tipo_e) if str(tipo_e or "").strip() else _inferir_tipo_puesto_legacy(puesto_legacy_e)
+            detalle_e = str(detalle_e or "").strip() or str(puesto_legacy_e or "").strip()
+            firma_e = "0" if tipo_e == "operario" else str(firma_e or "").strip()
+
+            form_accion = "editar_empleado"
+            form_titulo = "Editar empleado"
+            form_btn = "💾 Guardar cambios"
+            form_empleado_id = str(edit_id)
+            form_nombre = nombre_base_e
+            form_apellido = apellido_e
+            form_tipo = tipo_e
+            form_puesto_detalle = detalle_e
+            form_firma = firma_e
+
     empleados_listado = ""
     for empleado_id, nombre_full, nombre_base, apellido, puesto_tipo, puesto_detalle, puesto_legacy, firma, firma_imagen_path in empleados_catalogo:
         nombre_base_raw = str(nombre_base or "").strip()
@@ -830,38 +896,19 @@ def parte_carga_empleados():
 
         nombre_txt = html_lib.escape(nombre_base_raw)
         apellido_txt = html_lib.escape(apellido_raw)
+        nombre_mostrable_txt = html_lib.escape(_nombre_mostrable(nombre_full, nombre_base_raw, apellido_raw))
+        tipo_txt = html_lib.escape("Operario" if tipo_raw == "operario" else "Supervisor")
+        detalle_txt = html_lib.escape(detalle_raw or "-")
         firma_txt = html_lib.escape(firma_raw)
-        tipo_supervisor_sel = "selected" if tipo_raw == "supervisor" else ""
-        tipo_operario_sel = "selected" if tipo_raw == "operario" else ""
-        detalle_opts = _opciones_detalle_html(tipo_raw, detalle_raw)
         empleados_listado += f"""
             <tr>
-                <td>
-                    <input type="text" name="empleado_nombre" value="{nombre_txt}" form="edit-emp-{empleado_id}" required>
-                </td>
-                <td>
-                    <input type="text" name="empleado_apellido" value="{apellido_txt}" form="edit-emp-{empleado_id}" required>
-                </td>
-                <td>
-                    <select name="empleado_tipo_puesto" form="edit-emp-{empleado_id}" onchange="actualizarCamposEmpleado('{empleado_id}')" id="tipo-{empleado_id}">
-                        <option value="supervisor" {tipo_supervisor_sel}>Supervisor</option>
-                        <option value="operario" {tipo_operario_sel}>Operario</option>
-                    </select>
-                </td>
-                <td>
-                    <select name="empleado_puesto_detalle" form="edit-emp-{empleado_id}" id="detalle-{empleado_id}" required>
-                        {detalle_opts}
-                    </select>
-                </td>
-                <td>
-                    <input type="text" name="empleado_firma" value="{firma_txt}" form="edit-emp-{empleado_id}" id="firma-{empleado_id}" required>
-                </td>
+                <td>{nombre_txt}</td>
+                <td>{apellido_txt}</td>
+                <td>{tipo_txt}</td>
+                <td>{detalle_txt}</td>
+                <td>{firma_txt}</td>
                 <td style="white-space: nowrap; min-width: 220px;">
-                    <form id="edit-emp-{empleado_id}" method="post" style="display:inline; margin:0; padding:0; background:transparent;">
-                        <input type="hidden" name="accion" value="editar_empleado">
-                        <input type="hidden" name="empleado_id" value="{empleado_id}">
-                        <button type="submit" class="btn-mini">💾 Editar</button>
-                    </form>
+                    <a href="/modulo/parte/carga-empleados?edit_id={empleado_id}" class="btn-mini" style="text-decoration:none;display:inline-block;">✏️ Editar</a>
                     <form method="post" style="display:inline; margin:0; padding:0; background:transparent;" onsubmit="return confirm('¿Eliminar empleado?');">
                         <input type="hidden" name="accion" value="eliminar_empleado">
                         <input type="hidden" name="empleado_id" value="{empleado_id}">
@@ -916,22 +963,23 @@ def parte_carga_empleados():
     """ + mensaje_html + """
     
     <form method="post" id="empleados-form">
-        <input type="hidden" name="accion" value="guardar_empleado">
-        <h3>Agregar nuevo empleado</h3>
+        <input type="hidden" name="accion" value="__FORM_ACCION__">
+        __FORM_EMPLEADO_ID__
+        <h3>__FORM_TITULO__</h3>
         <div class="grid-5">
             <div>
                 <label>Nombre</label>
-                <input type="text" name="empleado_nombre" placeholder="Nombre" required>
+                <input type="text" name="empleado_nombre" id="empleado_nombre" placeholder="Nombre" value="__FORM_NOMBRE__" required>
             </div>
             <div>
                 <label>Apellido</label>
-                <input type="text" name="empleado_apellido" placeholder="Apellido" required>
+                <input type="text" name="empleado_apellido" id="empleado_apellido" placeholder="Apellido" value="__FORM_APELLIDO__" required>
             </div>
             <div>
                 <label>Tipo</label>
                 <select name="empleado_tipo_puesto" id="empleado_tipo_puesto" onchange="actualizarCamposNuevo()" required>
-                    <option value="supervisor" selected>Supervisor</option>
-                    <option value="operario">Operario</option>
+                    <option value="supervisor" __FORM_TIPO_SUP__>Supervisor</option>
+                    <option value="operario" __FORM_TIPO_OPE__>Operario</option>
                 </select>
             </div>
             <div>
@@ -942,10 +990,11 @@ def parte_carga_empleados():
             </div>
             <div>
                 <label>Firma electrónica</label>
-                <input type="text" name="empleado_firma" id="empleado_firma" placeholder="Código o nombre de firma" required>
+                <input type="text" name="empleado_firma" id="empleado_firma" placeholder="Código o nombre de firma" value="__FORM_FIRMA__" required>
             </div>
         </div>
-        <button type="submit">💾 Guardar Empleado</button>
+        <button type="submit">__FORM_BOTON__</button>
+        __FORM_CANCELAR__
     </form>
 
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px;">
@@ -983,23 +1032,7 @@ def parte_carga_empleados():
         const tipo = document.getElementById('empleado_tipo_puesto').value;
         const detalle = document.getElementById('empleado_puesto_detalle');
         const firma = document.getElementById('empleado_firma');
-        setOpcionesDetalle(detalle, tipo, detalle.value);
-        if (tipo === 'operario') {
-            firma.value = '0';
-            firma.readOnly = true;
-            firma.style.background = '#f1f5f9';
-        } else {
-            if ((firma.value || '').trim() === '0') firma.value = '';
-            firma.readOnly = false;
-            firma.style.background = '#fff';
-        }
-    }
-
-    function actualizarCamposEmpleado(empId) {
-        const tipo = document.getElementById('tipo-' + empId).value;
-        const detalle = document.getElementById('detalle-' + empId);
-        const firma = document.getElementById('firma-' + empId);
-        setOpcionesDetalle(detalle, tipo, detalle.value);
+        setOpcionesDetalle(detalle, tipo, '__FORM_PUESTO_DETALLE__' || detalle.value);
         if (tipo === 'operario') {
             firma.value = '0';
             firma.readOnly = true;
@@ -1013,16 +1046,23 @@ def parte_carga_empleados():
 
     document.addEventListener('DOMContentLoaded', function() {
         actualizarCamposNuevo();
-        document.querySelectorAll('select[id^="tipo-"]').forEach(sel => {
-            const empId = sel.id.replace('tipo-', '');
-            actualizarCamposEmpleado(empId);
-        });
     });
     </script>
     
     </body>
     </html>
     """
+    html = html.replace("__FORM_ACCION__", html_lib.escape(form_accion))
+    html = html.replace("__FORM_EMPLEADO_ID__", f'<input type="hidden" name="empleado_id" value="{html_lib.escape(form_empleado_id)}">' if form_empleado_id else "")
+    html = html.replace("__FORM_TITULO__", html_lib.escape(form_titulo))
+    html = html.replace("__FORM_NOMBRE__", html_lib.escape(form_nombre))
+    html = html.replace("__FORM_APELLIDO__", html_lib.escape(form_apellido))
+    html = html.replace("__FORM_TIPO_SUP__", "selected" if form_tipo == "supervisor" else "")
+    html = html.replace("__FORM_TIPO_OPE__", "selected" if form_tipo == "operario" else "")
+    html = html.replace("__FORM_PUESTO_DETALLE__", html_lib.escape(form_puesto_detalle))
+    html = html.replace("__FORM_FIRMA__", html_lib.escape(form_firma))
+    html = html.replace("__FORM_BOTON__", html_lib.escape(form_btn))
+    html = html.replace("__FORM_CANCELAR__", '<a href="/modulo/parte/carga-empleados" class="btn" style="display:inline-block;margin-top:10px;background:#9ca3af;">Cancelar edición</a>' if form_empleado_id else "")
     return html
 
 
@@ -1048,6 +1088,18 @@ def parte_semanal_reportes():
         WHERE operario IS NOT NULL AND TRIM(operario) <> ''
         ORDER BY operario ASC
     """).fetchall()
+    empleados_catalogo = db.execute("""
+        SELECT TRIM(COALESCE(nombre, '')),
+               TRIM(COALESCE(nombre_base, '')),
+               TRIM(COALESCE(apellido, ''))
+        FROM empleados_parte
+        WHERE TRIM(COALESCE(nombre, '')) <> ''
+    """).fetchall()
+    empleados_display_map = {}
+    for nombre_full, nombre_base, apellido in empleados_catalogo:
+        clave = str(nombre_full or "").strip().lower()
+        if clave:
+            empleados_display_map[clave] = _nombre_mostrable(nombre_full, nombre_base, apellido)
 
     condiciones = []
     params = []
@@ -1102,10 +1154,17 @@ def parte_semanal_reportes():
         opciones_obras += f'<option value="{obra_val}" {selected}>{obra_val}</option>'
 
     opciones_empleados = '<option value="">Todos los empleados</option>'
+    empleados_items = []
     for empleado in empleados:
         empleado_val = str(empleado[0] or '').strip()
+        if not empleado_val:
+            continue
+        empleado_label = empleados_display_map.get(empleado_val.lower(), empleado_val)
+        empleados_items.append((empleado_val, empleado_label))
+    empleados_items.sort(key=lambda x: x[1].lower())
+    for empleado_val, empleado_label in empleados_items:
         selected = 'selected' if empleado_val == filtro_empleado else ''
-        opciones_empleados += f'<option value="{empleado_val}" {selected}>{empleado_val}</option>'
+        opciones_empleados += f'<option value="{html_lib.escape(empleado_val)}" {selected}>{html_lib.escape(empleado_label)}</option>'
 
     semanas = db.execute("""
         SELECT DISTINCT fecha
@@ -1164,6 +1223,7 @@ def parte_semanal_reportes():
 
         for operario in sorted(reps_semana.keys()):
             rows_emp = reps_semana[operario]
+            operario_label = empleados_display_map.get(str(operario or "").strip().lower(), str(operario or "").strip())
             for idx, rep in enumerate(rows_emp):
                 parte_id = rep[0]
                 ot_id = rep[4] or '-'
@@ -1176,7 +1236,7 @@ def parte_semanal_reportes():
 
                 filas += f"""
         <tr>
-            <td><b>{operario}</b></td>
+            <td><b>{html_lib.escape(operario_label)}</b></td>
             <td>{obra}</td>
             <td><b>{ot_id}</b></td>
             <td>{ot_titulo}</td>
