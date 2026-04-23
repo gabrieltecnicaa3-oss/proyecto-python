@@ -103,7 +103,7 @@ def generar_etiquetas_qr(excel_file, logo_path, cargar_bd_excel=False):
         cols = 6
         rows_per_page = 5
         prefijos_expandibles = ["V", "C", "PU", "INS"]
-        prefijos_duplicar_igual = ["A", "T"]
+        prefijos_duplicar_igual = ["A", "T", "G", "BA"]
         rows_expandidas = []
 
         for _, row in df.iterrows():

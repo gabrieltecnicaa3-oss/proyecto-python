@@ -79,7 +79,7 @@ def _cargar_piezas_excel_a_ot(db, excel_path, obra, ot_id):
 
         inserted = 0
         prefijos_expandibles = ("V", "C", "PU", "INS")
-        prefijos_duplicar_igual = ("A", "T")
+        prefijos_duplicar_igual = ("A", "T", "G", "BA")
 
         def _expandir_posiciones(pos_base, cantidad_txt):
             pos_txt = str(pos_base or "").strip()
