@@ -26,6 +26,7 @@ _drive_init_attempted = False
 _drive_last_error = None
 _drive_last_upload_error = None
 _drive_last_upload_ok = None
+_drive_last_upload_trace = None
 
 
 def _get_drive_service():
@@ -121,6 +122,21 @@ def _buscar_o_crear_carpeta(service, nombre, parent_id):
         return None
 
 
+def _resolver_ruta_carpeta(service, root_folder_id, nombres):
+    """Resuelve una ruta de carpetas bajo root_folder_id y devuelve el ID final."""
+    current_parent_id = root_folder_id
+    trace = []
+    for nombre in nombres:
+        folder_name = str(nombre or "").strip()
+        if not folder_name:
+            continue
+        current_parent_id = _buscar_o_crear_carpeta(service, folder_name, current_parent_id)
+        trace.append({"name": folder_name, "id": current_parent_id})
+        if not current_parent_id:
+            break
+    return current_parent_id, trace
+
+
 def subir_pdf_a_drive(pdf_bytes, filename, obra, seccion_nombre, ot_subfolder=None):
     """
     Sube un PDF a Google Drive manteniendo la estructura de carpetas:
@@ -135,9 +151,10 @@ def subir_pdf_a_drive(pdf_bytes, filename, obra, seccion_nombre, ot_subfolder=No
 
     Retorna el link de Drive del archivo subido, o None si falla.
     """
-    global _drive_last_upload_error, _drive_last_upload_ok
+    global _drive_last_upload_error, _drive_last_upload_ok, _drive_last_upload_trace
     _drive_last_upload_error = None
     _drive_last_upload_ok = None
+    _drive_last_upload_trace = None
 
     service = _get_drive_service()
     if service is None:
@@ -162,20 +179,19 @@ def subir_pdf_a_drive(pdf_bytes, filename, obra, seccion_nombre, ot_subfolder=No
         return None
 
     try:
-        # Crear estructura de carpetas
-        obra_folder_id = _buscar_o_crear_carpeta(service, obra, root_folder_id)
-        if not obra_folder_id:
-            return None
-
-        seccion_folder_id = _buscar_o_crear_carpeta(service, seccion_nombre, obra_folder_id)
-        if not seccion_folder_id:
-            return None
-
-        destino_folder_id = seccion_folder_id
+        # Resolver la ruta completa usando el ID real devuelto en cada nivel.
+        folder_names = [obra, seccion_nombre]
         if ot_subfolder:
-            ot_folder_id = _buscar_o_crear_carpeta(service, ot_subfolder, seccion_folder_id)
-            if ot_folder_id:
-                destino_folder_id = ot_folder_id
+            folder_names.append(ot_subfolder)
+        destino_folder_id, trace = _resolver_ruta_carpeta(service, root_folder_id, folder_names)
+        _drive_last_upload_trace = {
+            "root_folder_id": root_folder_id,
+            "folders": trace,
+            "filename": str(filename or ""),
+        }
+        if not destino_folder_id:
+            _drive_last_upload_error = f"No se pudo resolver la carpeta destino para '{filename}'"
+            return None
 
         # Subir el archivo
         file_metadata = {
@@ -198,12 +214,16 @@ def subir_pdf_a_drive(pdf_bytes, filename, obra, seccion_nombre, ot_subfolder=No
             "folder_id": destino_folder_id,
             "file_id": uploaded.get("id", ""),
             "webViewLink": link,
+            "trace": _drive_last_upload_trace,
         }
         return link
 
     except Exception as e:
         print(f"[Drive] Error subiendo '{filename}': {e}")
-        _drive_last_upload_error = str(e)
+        trace_txt = ""
+        if _drive_last_upload_trace:
+            trace_txt = f" | trace={_drive_last_upload_trace}"
+        _drive_last_upload_error = f"{e}{trace_txt}"
         return None
 
 

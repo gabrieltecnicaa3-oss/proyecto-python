@@ -1225,7 +1225,7 @@ def generar_etiquetas_qr(excel_file, logo_path, cargar_bd_excel=False):
         cols = 6
         rows_per_page = 5
         prefijos_expandibles = ["V", "C", "PU", "INS"]
-        prefijos_duplicar_igual = ["A", "T"]
+        prefijos_duplicar_igual = ["A", "T", "G", "BA", "ES"]
         rows_expandidas = []
         
         # Expandir filas según cantidad
@@ -5111,6 +5111,7 @@ def drive_status():
             "error_detalle": _du._drive_last_error,
             "upload_error_detalle": getattr(_du, "_drive_last_upload_error", None),
             "upload_last_ok": getattr(_du, "_drive_last_upload_ok", None),
+            "upload_trace": getattr(_du, "_drive_last_upload_trace", None),
             "folder_id_set": bool(folder_id),
             "folder_id_value": folder_id[:12] + "..." if len(folder_id) > 12 else folder_id,
             "service_account_json_len": creds_json_len,
@@ -5120,6 +5121,44 @@ def drive_status():
         })
     except Exception as e:
         return jsonify({"status": f"Error: {e}", "disponible": False})
+
+
+@app.route("/drive/test-upload")
+def drive_test_upload():
+    if not _is_admin_session():
+        return jsonify({"error": "no autorizado"}), 403
+    try:
+        import drive_utils as _du
+        # PDF mínimo válido de prueba
+        test_pdf = (
+            b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+            b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+            b"3 0 obj<</Type/Page/MediaBox[0 0 3 3]>>endobj\n"
+            b"xref\n0 4\n0000000000 65535 f\n"
+            b"trailer<</Size 4/Root 1 0 R>>\nstartxref\n0\n%%EOF"
+        )
+        link = _du.subir_pdf_a_drive(
+            test_pdf,
+            "test-upload.pdf",
+            "_TEST_",
+            "_test_seccion_",
+            ot_subfolder=None,
+        )
+        if link:
+            return jsonify({
+                "ok": True,
+                "link": link,
+                "trace": getattr(_du, "_drive_last_upload_trace", None),
+                "upload": getattr(_du, "_drive_last_upload_ok", None),
+            })
+        else:
+            return jsonify({
+                "ok": False,
+                "error": getattr(_du, "_drive_last_upload_error", "sin detalle"),
+                "trace": getattr(_du, "_drive_last_upload_trace", None),
+            })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
 
 
 # ======================
