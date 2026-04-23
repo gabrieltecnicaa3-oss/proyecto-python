@@ -543,9 +543,17 @@ def _obtener_operarios_disponibles(db):
         """
         SELECT DISTINCT TRIM(nombre) AS nombre
         FROM empleados_parte
-        WHERE LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%operario%'
+                WHERE (
+                                LOWER(TRIM(COALESCE(puesto_tipo, ''))) = 'operario'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%operario%'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%soldador%'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%armador%'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%medio%'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%ayudante%'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%pintor%'
+                            )
           AND TRIM(COALESCE(nombre, '')) <> ''
-        ORDER BY nombre
+                ORDER BY LOWER(TRIM(COALESCE(nombre, ''))) COLLATE NOCASE ASC
         """
     ).fetchall()
 

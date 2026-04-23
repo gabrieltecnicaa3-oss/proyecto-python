@@ -87,14 +87,26 @@ def parte_semanal():
         accion = (request.form.get("accion") or "").strip()
 
         if accion == "guardar_empleado":
-            nombre_emp = (request.form.get("empleado_nombre") or "").strip()
-            puesto_emp = (request.form.get("empleado_puesto") or "").strip()
-            firma_emp = (request.form.get("empleado_firma") or "").strip()
+            nombre_base = (request.form.get("empleado_nombre") or "").strip()
+            apellido_emp = (request.form.get("empleado_apellido") or "").strip()
+            if not apellido_emp and " " in nombre_base:
+                n_guess, a_guess = _extraer_nombre_apellido_desde_full(nombre_base)
+                nombre_base, apellido_emp = n_guess, a_guess
+            tipo_puesto = _normalizar_tipo_puesto(request.form.get("empleado_tipo_puesto"))
+            puesto_detalle = (request.form.get("empleado_puesto_detalle") or request.form.get("empleado_puesto") or "").strip()
+            firma_ingresada = (request.form.get("empleado_firma") or "").strip()
+            firma_emp = "0" if tipo_puesto == "operario" else firma_ingresada
+            nombre_emp = " ".join([v for v in [nombre_base, apellido_emp] if v]).strip()
+            puesto_emp = puesto_detalle
 
-            if not nombre_emp or not puesto_emp or not firma_emp:
-                return redirect("/modulo/parte?mensaje=" + quote("⚠️ Completá nombre, puesto y firma electrónica"))
+            if not nombre_base or not apellido_emp or not puesto_detalle:
+                return redirect("/modulo/parte?mensaje=" + quote("⚠️ Completá nombre, apellido y puesto"))
+            if tipo_puesto == "supervisor" and not firma_emp:
+                return redirect("/modulo/parte?mensaje=" + quote("⚠️ Para supervisor la firma electrónica es obligatoria"))
 
-            firma_imagen_rel = _resolver_imagen_firma_empleado(nombre_emp, firma_emp)
+            firma_imagen_rel = ""
+            if firma_emp and firma_emp != "0":
+                firma_imagen_rel = _resolver_imagen_firma_empleado(nombre_emp, firma_emp)
 
             existe = db.execute(
                 "SELECT id FROM empleados_parte WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(?))",
@@ -105,20 +117,20 @@ def parte_semanal():
                 db.execute(
                     """
                     UPDATE empleados_parte
-                    SET nombre=?, puesto=?, firma_electronica=?, firma_imagen_path=?, fecha_actualizacion=CURRENT_TIMESTAMP
+                    SET nombre=?, nombre_base=?, apellido=?, puesto=?, puesto_tipo=?, puesto_detalle=?, firma_electronica=?, firma_imagen_path=?, fecha_actualizacion=CURRENT_TIMESTAMP
                     WHERE id=?
                     """,
-                    (nombre_emp, puesto_emp, firma_emp, firma_imagen_rel, existe[0])
+                    (nombre_emp, nombre_base, apellido_emp, puesto_emp, tipo_puesto, puesto_detalle, firma_emp, firma_imagen_rel, existe[0])
                 )
                 mensaje = "✅ Empleado actualizado"
             else:
                 try:
                     db.execute(
                         """
-                        INSERT INTO empleados_parte (nombre, puesto, firma_electronica, firma_imagen_path)
-                        VALUES (?, ?, ?, ?)
+                        INSERT INTO empleados_parte (nombre, nombre_base, apellido, puesto, puesto_tipo, puesto_detalle, firma_electronica, firma_imagen_path)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (nombre_emp, puesto_emp, firma_emp, firma_imagen_rel)
+                        (nombre_emp, nombre_base, apellido_emp, puesto_emp, tipo_puesto, puesto_detalle, firma_emp, firma_imagen_rel)
                     )
                 except Exception as exc:
                     if not is_integrity_error(exc):
@@ -131,25 +143,37 @@ def parte_semanal():
 
         if accion == "editar_empleado":
             empleado_id = (request.form.get("empleado_id") or "").strip()
-            nombre_emp = (request.form.get("empleado_nombre") or "").strip()
-            puesto_emp = (request.form.get("empleado_puesto") or "").strip()
-            firma_emp = (request.form.get("empleado_firma") or "").strip()
+            nombre_base = (request.form.get("empleado_nombre") or "").strip()
+            apellido_emp = (request.form.get("empleado_apellido") or "").strip()
+            if not apellido_emp and " " in nombre_base:
+                n_guess, a_guess = _extraer_nombre_apellido_desde_full(nombre_base)
+                nombre_base, apellido_emp = n_guess, a_guess
+            tipo_puesto = _normalizar_tipo_puesto(request.form.get("empleado_tipo_puesto"))
+            puesto_detalle = (request.form.get("empleado_puesto_detalle") or request.form.get("empleado_puesto") or "").strip()
+            firma_ingresada = (request.form.get("empleado_firma") or "").strip()
+            firma_emp = "0" if tipo_puesto == "operario" else firma_ingresada
+            nombre_emp = " ".join([v for v in [nombre_base, apellido_emp] if v]).strip()
+            puesto_emp = puesto_detalle
 
             if not empleado_id.isdigit():
                 return redirect("/modulo/parte?mensaje=" + quote("⚠️ Empleado inválido"))
-            if not nombre_emp or not puesto_emp or not firma_emp:
-                return redirect("/modulo/parte?mensaje=" + quote("⚠️ Completá nombre, puesto y firma electrónica"))
+            if not nombre_base or not apellido_emp or not puesto_detalle:
+                return redirect("/modulo/parte?mensaje=" + quote("⚠️ Completá nombre, apellido y puesto"))
+            if tipo_puesto == "supervisor" and not firma_emp:
+                return redirect("/modulo/parte?mensaje=" + quote("⚠️ Para supervisor la firma electrónica es obligatoria"))
 
-            firma_imagen_rel = _resolver_imagen_firma_empleado(nombre_emp, firma_emp)
+            firma_imagen_rel = ""
+            if firma_emp and firma_emp != "0":
+                firma_imagen_rel = _resolver_imagen_firma_empleado(nombre_emp, firma_emp)
 
             try:
                 db.execute(
                     """
                     UPDATE empleados_parte
-                    SET nombre=?, puesto=?, firma_electronica=?, firma_imagen_path=?, fecha_actualizacion=CURRENT_TIMESTAMP
+                    SET nombre=?, nombre_base=?, apellido=?, puesto=?, puesto_tipo=?, puesto_detalle=?, firma_electronica=?, firma_imagen_path=?, fecha_actualizacion=CURRENT_TIMESTAMP
                     WHERE id=?
                     """,
-                    (nombre_emp, puesto_emp, firma_emp, firma_imagen_rel, int(empleado_id))
+                    (nombre_emp, nombre_base, apellido_emp, puesto_emp, tipo_puesto, puesto_detalle, firma_emp, firma_imagen_rel, int(empleado_id))
                 )
             except Exception as exc:
                 if not is_integrity_error(exc):
@@ -214,9 +238,18 @@ def parte_semanal():
 
     empleados_catalogo = db.execute(
         """
-        SELECT id, nombre, puesto, firma_electronica, firma_imagen_path
+        SELECT id,
+               COALESCE(nombre, ''),
+               COALESCE(nombre_base, ''),
+               COALESCE(apellido, ''),
+               COALESCE(puesto_tipo, ''),
+               COALESCE(puesto_detalle, ''),
+               COALESCE(puesto, ''),
+               COALESCE(firma_electronica, ''),
+               COALESCE(firma_imagen_path, '')
         FROM empleados_parte
-        ORDER BY LOWER(TRIM(COALESCE(nombre, ''))) COLLATE NOCASE ASC
+        ORDER BY LOWER(TRIM(COALESCE(apellido, ''))) COLLATE NOCASE ASC,
+                 LOWER(TRIM(COALESCE(nombre_base, nombre, ''))) COLLATE NOCASE ASC
         """
     ).fetchall()
 
