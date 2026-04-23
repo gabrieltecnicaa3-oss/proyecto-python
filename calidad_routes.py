@@ -462,20 +462,31 @@ def calidad_recepcion():
     <meta charset="UTF-8">
     <meta charset="UTF-8">
     <style>
-    body { font-family: Arial; padding: 15px; background: #f4f4f4; margin: 0; }
-    h2 { color: #333; border-bottom: 3px solid #fa709a; padding-bottom: 10px; }
-    .btn { background: #667eea; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial; padding: 15px; background: #fff7ed; margin: 0; }
+    h2 { color: #9a3412; border-bottom: 3px solid #f97316; padding-bottom: 10px; }
+    .btn { background: #f97316; color: white; padding: 10px 15px; text-decoration: none; border-radius: 6px; font-weight: 700; }
+    .btn:hover { background: #ea580c; }
     .top-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .btn-remito { background: #f97316; }
-    .btn-remito:hover { background: #ea580c; }
-    form { background: white; padding: 20px; border-radius: 5px; max-width: 1100px; margin: 20px 0; }
-    input, select, textarea { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
-    label { display: block; font-weight: bold; margin-top: 15px; }
-    button { width: 100%; padding: 12px; background: #ff9800; color: white; border: none; border-radius: 4px; cursor: pointer; margin-top: 20px; font-weight: bold; font-size: 14px; }
-    button:hover { background: #fb8c00; }
-    .items-table { width: 100%; margin-top: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.08); }
-    .items-table th { background: #fb7185; }
+    .btn-remito { background: #c2410c; }
+    .btn-remito:hover { background: #9a3412; }
+    form { background: white; padding: 16px; border-radius: 10px; max-width: 1100px; margin: 16px 0; border: 1px solid #fed7aa; }
+    input, select, textarea { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #fdba74; border-radius: 6px; box-sizing: border-box; background: #fffaf5; }
+    label { display: block; font-weight: bold; margin-top: 12px; color: #7c2d12; }
+    button { width: 100%; padding: 12px; background: #f97316; color: white; border: none; border-radius: 6px; cursor: pointer; margin-top: 20px; font-weight: bold; font-size: 14px; }
+    button:hover { background: #ea580c; }
+    .table-wrap { overflow-x: auto; width: 100%; border-radius: 8px; border: 1px solid #fed7aa; }
+    .items-table { width: 100%; min-width: 760px; margin-top: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.08); border-collapse: collapse; }
+    .items-table th { background: #f97316; color: white; }
+    .items-table td, .items-table th { border-bottom: 1px solid #fed7aa; padding: 8px; vertical-align: top; }
     .items-table td textarea { min-height: 44px; margin: 0; }
+    @media (max-width: 820px) {
+        body { padding: 10px; }
+        .top-actions { flex-direction: column; align-items: stretch; }
+        .top-actions .btn { width: 100%; text-align: center; }
+        form { padding: 12px; margin-top: 12px; }
+        h2 { font-size: 20px; }
+    }
     </style>
     </head>
     <body>
@@ -519,6 +530,7 @@ def calidad_recepcion():
         <input type="text" id="firma_digital_input" name="firma_digital" placeholder="Se completa automaticamente al seleccionar responsable" readonly required>
         <img id="firma_preview" src="" alt="Firma Responsable" style="display:none; margin-top:8px; max-width:280px; border:1px solid #ddd; border-radius:6px; background:white; padding:6px;" onerror="this.style.display='none';">
 
+        <div class="table-wrap">
         <table class="items-table">
             <tr>
                 <th style="width: 80px;">N°</th>
@@ -551,6 +563,7 @@ def calidad_recepcion():
 
     html += """
         </table>
+        </div>
         
         <label>Fecha de Recepción:</label>
         <input type="date" name="fecha" required>
@@ -989,20 +1002,31 @@ def calidad_despacho():
     <meta charset="UTF-8">
     <meta charset="UTF-8">
     <style>
-    body { font-family: Arial; padding: 15px; background: #f4f4f4; margin: 0; }
-    h2 { color: #333; border-bottom: 3px solid #fa709a; padding-bottom: 10px; }
-    .btn { background: #667eea; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial; padding: 15px; background: #fff7ed; margin: 0; }
+    h2 { color: #9a3412; border-bottom: 3px solid #f97316; padding-bottom: 10px; }
+    .btn { background: #f97316; color: white; padding: 10px 15px; text-decoration: none; border-radius: 6px; font-weight: 700; }
+    .btn:hover { background: #ea580c; }
     .top-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .btn-remito { background: #f97316; }
-    .btn-remito:hover { background: #ea580c; }
-    form { background: white; padding: 20px; border-radius: 5px; max-width: 1100px; margin: 20px 0; }
-    input, select, textarea { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
-    label { display: block; font-weight: bold; margin-top: 15px; }
-    button { width: 100%; padding: 12px; background: #ff9800; color: white; border: none; border-radius: 4px; cursor: pointer; margin-top: 20px; font-weight: bold; font-size: 14px; }
-    button:hover { background: #fb8c00; }
-    .items-table { width: 100%; margin-top: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.08); }
-    .items-table th { background: #fb7185; }
+    .btn-remito { background: #c2410c; }
+    .btn-remito:hover { background: #9a3412; }
+    form { background: white; padding: 16px; border-radius: 10px; max-width: 1100px; margin: 16px 0; border: 1px solid #fed7aa; }
+    input, select, textarea { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #fdba74; border-radius: 6px; box-sizing: border-box; background: #fffaf5; }
+    label { display: block; font-weight: bold; margin-top: 12px; color: #7c2d12; }
+    button { width: 100%; padding: 12px; background: #f97316; color: white; border: none; border-radius: 6px; cursor: pointer; margin-top: 20px; font-weight: bold; font-size: 14px; }
+    button:hover { background: #ea580c; }
+    .table-wrap { overflow-x: auto; width: 100%; border-radius: 8px; border: 1px solid #fed7aa; }
+    .items-table { width: 100%; min-width: 760px; margin-top: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.08); border-collapse: collapse; }
+    .items-table th { background: #f97316; color: white; }
+    .items-table td, .items-table th { border-bottom: 1px solid #fed7aa; padding: 8px; vertical-align: top; }
     .items-table td textarea { min-height: 44px; margin: 0; }
+    @media (max-width: 820px) {
+        body { padding: 10px; }
+        .top-actions { flex-direction: column; align-items: stretch; }
+        .top-actions .btn { width: 100%; text-align: center; }
+        form { padding: 12px; margin-top: 12px; }
+        h2 { font-size: 20px; }
+    }
     </style>
     </head>
     <body>
@@ -1042,6 +1066,7 @@ def calidad_despacho():
         <input type="text" id="firma_digital_input" name="firma_digital" placeholder="Se completa automaticamente al seleccionar responsable" readonly required>
         <img id="firma_preview" src="" alt="Firma Responsable" style="display:none; margin-top:8px; max-width:280px; border:1px solid #ddd; border-radius:6px; background:white; padding:6px;" onerror="this.style.display='none';">
 
+        <div class="table-wrap">
         <table class="items-table">
             <tr>
                 <th style="width: 80px;">N°</th>
@@ -1072,6 +1097,7 @@ def calidad_despacho():
 
     html += """
         </table>
+        </div>
         
         <label>Fecha de Despacho:</label>
         <input type="date" name="fecha" required>
@@ -2302,20 +2328,22 @@ def calidad_escaneo_form_armado_soldadura():
     <meta charset="UTF-8">
     <meta charset="UTF-8">
     <style>
-    body {{ font-family: Arial; padding: 15px; background: #f4f4f4; margin: 0; }}
+    * {{ box-sizing: border-box; }}
+    body {{ font-family: Arial; padding: 12px; background: #fff7ed; margin: 0; }}
     h2 {{ color: #9a3412; border-bottom: 3px solid #f97316; padding-bottom: 10px; }}
-    .box {{ background:white; border-radius:8px; padding:14px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); margin-bottom: 14px; }}
+    .box {{ background:white; border-radius:8px; padding:14px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); margin-bottom: 14px; border:1px solid #fed7aa; }}
     .filtro {{ display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:end; }}
-    .filtro select, .filtro input {{ width:100%; padding:10px; border:1px solid #d1d5db; border-radius:6px; }}
+    .filtro select, .filtro input {{ width:100%; padding:10px; border:1px solid #fdba74; border-radius:6px; background:#fffaf5; }}
     .btn {{ background:#f97316; color:white; border:none; padding:10px 14px; border-radius:6px; font-weight:bold; cursor:pointer; text-decoration:none; display:inline-block; }}
     .btn:hover {{ background:#ea580c; }}
-    .btn-blue {{ background:#2563eb; }}
-    .btn-blue:hover {{ background:#1d4ed8; }}
+    .btn-blue {{ background:#c2410c; }}
+    .btn-blue:hover {{ background:#9a3412; }}
     .kpis {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:10px; margin-top: 10px; }}
     .kpi {{ background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:10px; }}
     .kpi .t {{ font-size:12px; color:#9a3412; }}
     .kpi .v {{ font-size:22px; color:#7c2d12; font-weight:bold; }}
-    table {{ width:100%; border-collapse: collapse; background:white; table-layout: fixed; }}
+    .table-wrap {{ width:100%; overflow-x:auto; border:1px solid #fed7aa; border-radius:8px; }}
+    table {{ width:100%; min-width: 980px; border-collapse: collapse; background:white; table-layout: fixed; }}
     th, td {{ border-bottom:1px solid #e5e7eb; padding:9px; text-align:center; font-size:13px; }}
     th {{ background:#f97316; color:white; }}
     th.th-pos {{ background:#c2410c; }}
@@ -2340,6 +2368,14 @@ def calidad_escaneo_form_armado_soldadura():
     .reinsp-table .reinsp-group-sold {{ background:#f97316; }}
     .reinsp-table .reinsp-sub-arm {{ background:#ffedd5; color:#7c2d12; }}
     .reinsp-table .reinsp-sub-sold {{ background:#fff7ed; color:#9a3412; }}
+    @media (max-width: 860px) {{
+        body {{ padding: 10px; }}
+        .filtro {{ grid-template-columns: 1fr; }}
+        .actions {{ flex-direction: column; }}
+        .actions .btn, .actions button {{ width: 100%; text-align: center; }}
+        .reinsp-box {{ overflow-x: auto; }}
+        .reinsp-table {{ min-width: 980px; }}
+    }}
     </style>
     </head>
     <body>
@@ -2379,6 +2415,7 @@ def calidad_escaneo_form_armado_soldadura():
     </div>
 
     <div class="box">
+        <div class="table-wrap">
         <table>
             <tr>
                 <th class="th-pos" rowspan="2">Posición</th>
@@ -2399,6 +2436,7 @@ def calidad_escaneo_form_armado_soldadura():
             </tr>
             {rows_html}
         </table>
+        </div>
 
         <div class="reinsp-box">
             <h3 class="reinsp-title">Re-inspección (solo piezas NC)</h3>

@@ -59,7 +59,7 @@ def _path_tmp_valido(path_tmp):
         return False
 
 
-def _cargar_piezas_excel_a_ot(db, excel_path, obra, ot_id):
+def _cargar_piezas_excel_a_ot(db, excel_path, obra, ot_id, descripcion_ot=""):
     """Importa piezas del Excel Armado y las vincula a la OT recién creada."""
     try:
         df = load_clean_excel(excel_path)
@@ -114,6 +114,7 @@ def _cargar_piezas_excel_a_ot(db, excel_path, obra, ot_id):
             perfil = clean_xls(row.get(col_perfil, "")) if col_perfil else ""
             peso_txt = clean_xls(row.get(col_peso, "")) if col_peso else ""
             desc = clean_xls(row.get(col_desc, "")) if col_desc else ""
+            desc_final = desc or str(descripcion_ot or "").strip()
 
             try:
                 cantidad = float(str(cant_txt).replace(",", ".")) if cant_txt else None
@@ -149,7 +150,7 @@ def _cargar_piezas_excel_a_ot(db, excel_path, obra, ot_id):
                             ot_id = COALESCE(ot_id, ?)
                         WHERE id = ?
                         """,
-                        (obra, cantidad, perfil or None, peso, desc or None, ot_id, existing[0]),
+                        (obra, cantidad, perfil or None, peso, desc_final or None, ot_id, existing[0]),
                     )
                 else:
                     db.execute(
@@ -158,7 +159,7 @@ def _cargar_piezas_excel_a_ot(db, excel_path, obra, ot_id):
                         (posicion, obra, cantidad, perfil, peso, descripcion, ot_id, escaneado_qr, eliminado)
                         VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)
                         """,
-                        (pos_expandida, obra, cantidad, perfil or None, peso, desc or None, ot_id),
+                        (pos_expandida, obra, cantidad, perfil or None, peso, desc_final or None, ot_id),
                     )
                     inserted += 1
 
@@ -190,29 +191,41 @@ def ot_lista():
     <html>
     <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-    body {{ font-family: Arial; padding: 15px; background: #f4f4f4; }}
-    h2 {{ color: #333; border-bottom: 3px solid #667eea; padding-bottom: 10px; }}
-    .btn {{ display: inline-block; background: #667eea; color: white; padding: 10px 15px; 
-           text-decoration: none; border-radius: 5px; margin: 10px 0; }}
-    .btn:hover {{ background: #5568d3; }}
-    .btn-nuevo {{ background: #43e97b; }}
-    .btn-nuevo:hover {{ background: #2cc96e; }}
-    table {{ width: 100%; border-collapse: collapse; background: white; margin-top: 20px; 
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
-    th, td {{ padding: 12px; border-bottom: 1px solid #ddd; text-align: left; }}
-    th {{ background: #667eea; color: white; }}
-    tr:hover {{ background: #f5f5f5; }}
-    .estado-pendiente {{ background: #ffe5e5; }}
-    .estado-proceso {{ background: #fff9e5; }}
-    .estado-finalizada {{ background: #e5ffe5; }}
-    .sin-datos {{ text-align: center; padding: 30px; color: #999; }}
-    .header {{ display: flex; justify-content: space-between; align-items: center; }}
-    .header a {{ margin-right: 10px; }}
-    .filtro-obra {{ background:white; padding:12px 16px; border-radius:6px; margin-bottom:14px; box-shadow:0 1px 4px rgba(0,0,0,0.08); display:flex; align-items:center; gap:10px; flex-wrap:wrap; }}
-    .filtro-obra label {{ font-weight:bold; color:#374151; }}
-    .filtro-obra select {{ padding:8px 10px; border:1px solid #d1d5db; border-radius:5px; font-size:14px; }}
-    </style>
+        <style>
+        * {{ box-sizing: border-box; }}
+        body {{ font-family: Arial; padding: 15px; background: #fff7ed; margin: 0; color: #431407; }}
+        h2 {{ color: #9a3412; border-bottom: 3px solid #f97316; padding-bottom: 10px; margin: 0 0 8px 0; }}
+        .btn {{ display: inline-block; background: #f97316; color: white; padding: 10px 15px;
+           text-decoration: none; border-radius: 6px; margin: 10px 0; font-weight: 700; }}
+        .btn:hover {{ background: #ea580c; }}
+        .btn-nuevo {{ background: #fb923c; }}
+        .btn-nuevo:hover {{ background: #f97316; }}
+        .table-wrap {{ width: 100%; overflow-x: auto; border-radius: 10px; }}
+        table {{ width: 100%; min-width: 980px; border-collapse: collapse; background: white; margin-top: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08); }}
+        th, td {{ padding: 11px; border-bottom: 1px solid #fed7aa; text-align: left; }}
+        th {{ background: #f97316; color: white; }}
+        tr:hover {{ background: #fff7ed; }}
+        .estado-pendiente {{ background: #fff7ed; }}
+        .estado-proceso {{ background: #ffedd5; }}
+        .estado-finalizada {{ background: #fff3e8; }}
+        .sin-datos {{ text-align: center; padding: 30px; color: #9a3412; background: #fff; border-radius: 10px; border: 1px solid #fdba74; }}
+        .header {{ display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }}
+        .header a {{ margin-right: 10px; }}
+        .filtro-obra {{ background:white; padding:12px 16px; border-radius:8px; margin-bottom:14px; box-shadow:0 1px 6px rgba(0,0,0,0.08); display:flex; align-items:center; gap:10px; flex-wrap:wrap; border: 1px solid #fed7aa; }}
+        .filtro-obra label {{ font-weight:bold; color:#9a3412; }}
+        .filtro-obra select {{ padding:8px 10px; border:1px solid #fdba74; border-radius:6px; font-size:14px; background:#fffaf5; }}
+        .chip-obra {{ background:#fff7ed;border-left:4px solid #f97316;padding:8px 12px;margin-bottom:6px;border-radius:4px; }}
+        @media (max-width: 780px) {{
+        body {{ padding: 10px; }}
+        .header {{ flex-direction: column; align-items: stretch; }}
+        .header > div, .header > a {{ width: 100%; }}
+        .header > a.btn {{ text-align: center; }}
+        .btn {{ width: 100%; text-align: center; margin: 6px 0; }}
+        .filtro-obra {{ padding: 10px; }}
+        .filtro-obra label, .filtro-obra select {{ width: 100%; }}
+        }}
+        </style>
     </head>
     <body>
     <div class="header">
@@ -246,17 +259,18 @@ def ot_lista():
             obras_dict.setdefault(obra_key, []).append(ot)
         for obra_key, ots_obra in sorted(obras_dict.items()):
             html += f"""
-            <div style="background:#f0f4ff;border-left:4px solid #667eea;padding:8px 12px;margin-bottom:6px;border-radius:4px;">
+            <div class="chip-obra">
                 <b>📁 {html_lib.escape(obra_key)}</b>
                 &nbsp;&nbsp;
                 {'&nbsp;'.join(
-                    f'<a href="/modulo/ot/editar/{o[0]}" style="background:#667eea;color:white;padding:3px 9px;border-radius:4px;font-size:12px;text-decoration:none;">OT-{o[0]}: {html_lib.escape(str(o[3] or ""))}</a>'
+                    f'<a href="/modulo/ot/editar/{o[0]}" style="background:#ea580c;color:white;padding:3px 9px;border-radius:4px;font-size:12px;text-decoration:none;">OT-{o[0]}: {html_lib.escape(str(o[3] or ""))}</a>'
                     for o in ots_obra
                 )}
             </div>
             """
         html += "</div></details>"
         html += """
+        <div class="table-wrap">
         <table>
             <tr>
                 <th>ID</th>
@@ -283,15 +297,15 @@ def ot_lista():
                 <td>{ot[5]}</td>
                 <td>{ot[6]}</td>
                 <td>
-                    <a href="/modulo/ot/editar/{ot[0]}" class="btn" style="background: #4facfe;">Editar</a>
-                    <a href="/modulo/ot/eliminar/{ot[0]}" class="btn" style="background: #fa709a;" onclick="return confirm('¿Eliminar?')">Eliminar</a>
+                    <a href="/modulo/ot/editar/{ot[0]}" class="btn" style="background: #ea580c;">Editar</a>
+                    <a href="/modulo/ot/eliminar/{ot[0]}" class="btn" style="background: #c2410c;" onclick="return confirm('¿Eliminar?')">Eliminar</a>
                     <form method="post" action="/modulo/ot/cerrar/{ot[0]}" style="display:inline;">
-                        <button type="submit" class="btn" style="background:#fbbf24;color:#000;" onclick="return confirm('¿Cerrar esta OT? Se moverá a Historial y se quitarán sus piezas del estado de piezas por proceso.')">Cerrar OT</button>
+                        <button type="submit" class="btn" style="background:#fb923c;color:#fff;" onclick="return confirm('¿Cerrar esta OT? Se moverá a Historial y se quitarán sus piezas del estado de piezas por proceso.')">Cerrar OT</button>
                     </form>
                 </td>
             </tr>
             """
-        html += "</table>"
+        html += "</table></div>"
 
     html += """
     </body>
@@ -367,7 +381,7 @@ def ot_nueva():
                         if carpeta_ot:
                             excel_path = os.path.join(carpeta_ot, filename)
                             excel_file.save(excel_path)
-                            _cargar_piezas_excel_a_ot(db, excel_path, obra, ot_id_nuevo)
+                            _cargar_piezas_excel_a_ot(db, excel_path, obra, ot_id_nuevo, descripcion_ot=request.form.get("titulo") or "")
                             db.commit()
                 return redirect("/modulo/ot")
             except Exception as e:
@@ -739,7 +753,7 @@ def ot_nueva():
                             excel_origen_path = excel_path
 
                 if excel_origen_path:
-                    _cargar_piezas_excel_a_ot(db, excel_origen_path, obra, ot_id_nuevo)
+                    _cargar_piezas_excel_a_ot(db, excel_origen_path, obra, ot_id_nuevo, descripcion_ot=titulo)
                     db.commit()
 
                 if _path_tmp_valido(ficha_tmp_path):

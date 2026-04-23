@@ -1,6 +1,6 @@
 import os
 
-from flask import Blueprint
+from flask import Blueprint, request
 from db_utils import get_db
 from proceso_utils import obtener_procesos_completados
 from qr_utils import find_col, load_clean_excel
@@ -284,9 +284,45 @@ def _persistir_avance_ot(db, ot_id, progreso_calculado, progreso_actual):
     return True
 
 
+def _desglose_ot(db, ot_id):
+    posiciones_rows = db.execute(
+        """
+        SELECT DISTINCT TRIM(COALESCE(posicion, ''))
+        FROM procesos
+        WHERE ot_id = ?
+          AND eliminado = 0
+          AND TRIM(COALESCE(posicion, '')) <> ''
+        """,
+        (ot_id,),
+    ).fetchall()
+
+    posiciones = [str(r[0] or "").strip() for r in posiciones_rows if str(r[0] or "").strip()]
+    total = len(posiciones)
+    conteo = {
+        "ARMADO": 0,
+        "SOLDADURA": 0,
+        "PINTURA": 0,
+        "DESPACHO": 0,
+    }
+    if total == 0:
+        return total, conteo
+
+    for pos in posiciones:
+        aprobados = set(obtener_procesos_completados(pos, ot_id=ot_id))
+        for proceso in conteo.keys():
+            if proceso in aprobados:
+                conteo[proceso] += 1
+
+    return total, conteo
+
+
 @produccion_bp.route("/modulo/produccion")
 def produccion():
     db = get_db()
+    filtro_obra = (request.args.get("obra") or "").strip()
+    filtro_ot_txt = (request.args.get("ot_id") or "").strip()
+    filtro_ot_id = int(filtro_ot_txt) if filtro_ot_txt.isdigit() else None
+
     ots_en_curso = db.execute(
         """
         SELECT id, cliente, obra, titulo, tipo_estructura, fecha_entrega, estado, COALESCE(estado_avance, 0)
@@ -296,27 +332,103 @@ def produccion():
         """
     ).fetchall()
 
+    filas_ot = []
+    hubo_cambios = False
+    for ot_id, cliente, obra, titulo, tipo_estructura, fecha_entrega, estado, estado_avance_actual in ots_en_curso:
+        progreso = calcular_avance_ot(db, ot_id)
+        if _persistir_avance_ot(db, ot_id, progreso, estado_avance_actual):
+            hubo_cambios = True
+        total_piezas, conteo_procesos = _desglose_ot(db, ot_id)
+        filas_ot.append({
+            "ot_id": int(ot_id),
+            "cliente": cliente or "",
+            "obra": (obra or "").strip(),
+            "titulo": titulo or "",
+            "tipo_estructura": tipo_estructura or "",
+            "fecha_entrega": fecha_entrega or "",
+            "estado": estado or "",
+            "progreso": int(progreso),
+            "total_piezas": int(total_piezas),
+            "conteo": conteo_procesos,
+        })
+
+    if hubo_cambios:
+        db.commit()
+
+    obras_disponibles = sorted({f["obra"] for f in filas_ot if f["obra"]})
+    ots_disponibles = sorted(filas_ot, key=lambda x: x["ot_id"], reverse=True)
+
+    filas_filtradas = []
+    for fila in filas_ot:
+        if filtro_obra and fila["obra"] != filtro_obra:
+            continue
+        if filtro_ot_id and fila["ot_id"] != filtro_ot_id:
+            continue
+        filas_filtradas.append(fila)
+
+    resumen_obra = {}
+    for fila in filas_filtradas:
+        obra_key = fila["obra"] or "Sin obra"
+        if obra_key not in resumen_obra:
+            resumen_obra[obra_key] = {
+                "ots": 0,
+                "avance_sum": 0,
+            }
+        resumen_obra[obra_key]["ots"] += 1
+        resumen_obra[obra_key]["avance_sum"] += int(fila["progreso"])
+
+    opciones_obra = '<option value="">Todas las obras</option>'
+    for obra in obras_disponibles:
+        sel = "selected" if obra == filtro_obra else ""
+        opciones_obra += f'<option value="{obra}" {sel}>{obra}</option>'
+
+    opciones_ot = '<option value="">Todas las OT</option>'
+    for fila in ots_disponibles:
+        sel = "selected" if filtro_ot_id and int(fila["ot_id"]) == int(filtro_ot_id) else ""
+        opciones_ot += f'<option value="{fila["ot_id"]}" {sel}>OT {fila["ot_id"]} - {fila["obra"] or "(sin obra)"}</option>'
+
     html = """
     <html>
     <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
     * { box-sizing: border-box; }
-    body { font-family: Arial; padding: 15px; background: #f4f4f4; margin: 0; }
-    h2 { color: #333; border-bottom: 3px solid #f093fb; padding-bottom: 10px; }
-    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-    .btn { display: inline-block; background: #667eea; color: white; padding: 10px 15px;
-           text-decoration: none; border-radius: 5px; font-weight: bold; }
-    .btn:hover { background: #5568d3; }
-    table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-    th, td { padding: 12px; border-bottom: 1px solid #ddd; text-align: left; }
-    th { background: #f093fb; color: white; font-weight: bold; }
-    tr:hover { background: #f5f5f5; }
-    .progress { width: 100%; height: 20px; background: #e0e0e0; border-radius: 10px; overflow: hidden; }
-    .progress-bar { height: 100%; background: linear-gradient(90deg, #43e97b, #38f9d7); text-align: center;
-                    color: white; font-size: 12px; line-height: 20px; }
-    .sin-datos { text-align: center; padding: 30px; color: #999; }
-    .nota { margin: 0 0 14px 0; color: #475569; font-size: 13px; }
+    body { font-family: Arial; padding: 14px; background: #fff7ed; margin: 0; color: #431407; }
+    h2 { color: #9a3412; border-bottom: 3px solid #f97316; padding-bottom: 10px; margin: 0; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 10px; flex-wrap: wrap; }
+    .btn { display: inline-block; background: #f97316; color: white; padding: 10px 15px;
+           text-decoration: none; border-radius: 6px; font-weight: bold; }
+    .btn:hover { background: #ea580c; }
+    .panel { background: #fff; border: 1px solid #fed7aa; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+    .filters { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 10px; align-items: end; }
+    .filters label { font-size: 13px; font-weight: 700; color: #9a3412; display: block; margin-bottom: 4px; }
+    .filters select { width: 100%; padding: 9px; border: 1px solid #fdba74; border-radius: 6px; background: #fffaf5; }
+    .btn-filter { border: none; cursor: pointer; height: 40px; }
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: 10px 0 0 0; }
+    .kpi { background: #fff7ed; border: 1px solid #fdba74; border-radius: 8px; padding: 10px; }
+    .kpi .t { color: #9a3412; font-size: 12px; }
+    .kpi .v { color: #7c2d12; font-weight: 700; font-size: 24px; }
+    .obra-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; }
+    .obra-card { background: #fffaf5; border: 1px solid #fed7aa; border-left: 4px solid #f97316; border-radius: 8px; padding: 10px; }
+    .obra-card .nombre { font-weight: 700; color: #9a3412; }
+    .obra-card .avance { font-size: 22px; font-weight: 700; color: #ea580c; }
+    .table-wrap { width: 100%; overflow-x: auto; border-radius: 8px; }
+    table { width: 100%; min-width: 1080px; border-collapse: collapse; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    th, td { padding: 10px; border-bottom: 1px solid #fed7aa; text-align: left; }
+    th { background: #f97316; color: white; font-weight: bold; }
+    tr:hover { background: #fff7ed; }
+    .progress { width: 100%; height: 20px; background: #ffedd5; border-radius: 10px; overflow: hidden; border: 1px solid #fdba74; }
+    .progress-bar { height: 100%; background: linear-gradient(90deg, #f97316, #fb923c); text-align: center;
+                    color: white; font-size: 12px; line-height: 20px; font-weight: 700; }
+    .desglose { display: flex; gap: 6px; flex-wrap: wrap; }
+    .chip { font-size: 11px; border-radius: 999px; padding: 3px 8px; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; }
+    .sin-datos { text-align: center; padding: 30px; color: #9a3412; }
+    .nota { margin: 0 0 12px 0; color: #7c2d12; font-size: 13px; }
+    @media (max-width: 900px) {
+        .filters { grid-template-columns: 1fr; }
+        .header { flex-direction: column; align-items: stretch; }
+        .header .btn { text-align: center; }
+    }
     </style>
     </head>
     <body>
@@ -327,10 +439,49 @@ def produccion():
     <p class="nota">% Avance automático por OT: KG de ARMADO y ponderación 70/10/15/5 por proceso aprobado.</p>
     """
 
-    if len(ots_en_curso) == 0:
+    html += f"""
+    <div class="panel">
+        <form method="get" action="/modulo/produccion" class="filters">
+            <div>
+                <label>Filtrar por obra</label>
+                <select name="obra">
+                    {opciones_obra}
+                </select>
+            </div>
+            <div>
+                <label>Filtrar por OT</label>
+                <select name="ot_id">
+                    {opciones_ot}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-filter">Aplicar filtros</button>
+        </form>
+        <div class="kpis">
+            <div class="kpi"><div class="t">OT visibles</div><div class="v">{len(filas_filtradas)}</div></div>
+            <div class="kpi"><div class="t">Obras visibles</div><div class="v">{len(resumen_obra)}</div></div>
+            <div class="kpi"><div class="t">Suma avance OT (visible)</div><div class="v">{sum([f['progreso'] for f in filas_filtradas])}%</div></div>
+        </div>
+    </div>
+    """
+
+    if resumen_obra:
+        html += '<div class="panel"><h3 style="margin:0 0 10px 0;color:#9a3412;">Desglose por obra</h3><div class="obra-grid">'
+        for obra_key in sorted(resumen_obra.keys()):
+            data = resumen_obra[obra_key]
+            html += f"""
+            <div class="obra-card">
+                <div class="nombre">{obra_key}</div>
+                <div class="avance">{data['avance_sum']}%</div>
+                <div style="font-size:12px;color:#7c2d12;">Avance obra = suma de avances de sus OT ({data['ots']} OT)</div>
+            </div>
+            """
+        html += "</div></div>"
+
+    if len(filas_filtradas) == 0:
         html += "<div class='sin-datos'>✅ No hay órdenes en curso. ¡Todas finalizadas!</div>"
     else:
         html += """
+        <div class="table-wrap">
         <table>
             <tr>
                 <th>ID</th>
@@ -339,37 +490,44 @@ def produccion():
                 <th>Título</th>
                 <th>Tipo de Estructura</th>
                 <th>% Avance</th>
+                <th>Desglose por proceso</th>
                 <th>Fecha Entrega</th>
                 <th>Estado</th>
             </tr>
         """
 
-        hubo_cambios = False
-        for ot_id, cliente, obra, titulo, tipo_estructura, fecha_entrega, estado, estado_avance_actual in ots_en_curso:
-            progreso = calcular_avance_ot(db, ot_id)
-            if _persistir_avance_ot(db, ot_id, progreso, estado_avance_actual):
-                hubo_cambios = True
+        for fila in filas_filtradas:
+            ot_id = fila["ot_id"]
+            progreso = fila["progreso"]
+            total_piezas = fila["total_piezas"]
+            conteo = fila["conteo"]
             html += f"""
             <tr>
                 <td><b>{ot_id}</b></td>
-                <td>{cliente or ''}</td>
-                <td>{obra or ''}</td>
-                <td>{titulo or ''}</td>
-                <td>{tipo_estructura or ''}</td>
+                <td>{fila['cliente']}</td>
+                <td>{fila['obra']}</td>
+                <td>{fila['titulo']}</td>
+                <td>{fila['tipo_estructura']}</td>
                 <td>
                     <div class="progress">
                         <div class="progress-bar" style="width: {progreso}%">{progreso}%</div>
                     </div>
                 </td>
-                <td>{fecha_entrega or ''}</td>
-                <td>{estado or ''}</td>
+                <td>
+                    <div class="desglose">
+                        <span class="chip">Pzas {total_piezas}</span>
+                        <span class="chip">A {conteo['ARMADO']}/{total_piezas}</span>
+                        <span class="chip">S {conteo['SOLDADURA']}/{total_piezas}</span>
+                        <span class="chip">P {conteo['PINTURA']}/{total_piezas}</span>
+                        <span class="chip">D {conteo['DESPACHO']}/{total_piezas}</span>
+                    </div>
+                </td>
+                <td>{fila['fecha_entrega']}</td>
+                <td>{fila['estado']}</td>
             </tr>
             """
 
-        if hubo_cambios:
-            db.commit()
-
-        html += "</table>"
+        html += "</table></div>"
 
     html += """
     </body>
