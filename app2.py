@@ -1714,6 +1714,7 @@ def dashboard():
         margin: 0 auto;
     }
     .header {
+        position: relative;
         margin-bottom: 28px;
         padding: 18px;
         border-radius: 18px;
@@ -1721,6 +1722,41 @@ def dashboard():
         border: 1px solid #fdba74;
         box-shadow: 0 12px 28px rgba(154, 52, 18, 0.14);
     }
+    .cert-logos {
+        position: absolute;
+        top: 10px;
+        right: 12px;
+        display: flex;
+        gap: 8px;
+    }
+    .cert-badge {
+        width: 52px;
+        height: 52px;
+        border-radius: 50%;
+        background: #ffffff;
+        border: 3px solid #94a3b8;
+        box-shadow: 0 2px 6px rgba(15,23,42,0.18);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        line-height: 1;
+    }
+    .cert-badge .iso {
+        font-size: 8px;
+        color: #334155;
+        letter-spacing: 0.3px;
+    }
+    .cert-badge .num {
+        margin-top: 2px;
+        font-size: 12px;
+        font-weight: 800;
+        color: #0f172a;
+    }
+    .cert-badge.iso9001 { border-color: #1e3a8a; }
+    .cert-badge.iso45001 { border-color: #be123c; }
+    .cert-badge.iso37001 { border-color: #111827; }
     .header-inner {
         display: grid;
         grid-template-columns: 240px 1fr;
@@ -1834,6 +1870,11 @@ def dashboard():
         font-size: 0.9em;
     }
     @media (max-width: 820px) {
+        .cert-logos {
+            position: static;
+            justify-content: center;
+            margin-bottom: 12px;
+        }
         .header-inner {
             grid-template-columns: 1fr;
             text-align: center;
@@ -1857,6 +1898,11 @@ def dashboard():
     <body>
     <div class="container">
         <div class="header">
+            <div class="cert-logos" aria-label="Certificaciones ISO">
+                <div class="cert-badge iso9001"><span class="iso">ISO</span><span class="num">9001</span></div>
+                <div class="cert-badge iso45001"><span class="iso">ISO</span><span class="num">45001</span></div>
+                <div class="cert-badge iso37001"><span class="iso">ISO</span><span class="num">37001</span></div>
+            </div>
             <div class="header-inner">
                 <div class="logo-card">
                     <img src="/logo-a3" alt="Logo A3 Servicios Constructivos">
