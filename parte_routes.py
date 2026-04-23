@@ -292,10 +292,14 @@ def parte_semanal():
             operarios_options += f'<option value="{html_lib.escape(nombre_txt)}">{html_lib.escape(nombre_txt)}</option>'
 
     empleados_listado = ""
-    for empleado_id, nombre, puesto, firma, firma_imagen_path in empleados_catalogo:
-        nombre_txt = html_lib.escape(str(nombre or "").strip())
-        puesto_txt = html_lib.escape(str(puesto or "").strip())
-        firma_txt = html_lib.escape(str(firma or "").strip())
+    for empleado_id, nombre_full, nombre_base, apellido, puesto_tipo, puesto_detalle, puesto_legacy, firma, firma_imagen_path in empleados_catalogo:
+        nombre_txt = html_lib.escape(_nombre_mostrable(nombre_full, nombre_base, apellido))
+        puesto_val = str(puesto_detalle or "").strip() or str(puesto_legacy or "").strip()
+        puesto_txt = html_lib.escape(puesto_val)
+        firma_val = str(firma or "").strip()
+        if _normalizar_tipo_puesto(puesto_tipo) == "operario":
+            firma_val = "0"
+        firma_txt = html_lib.escape(firma_val)
         empleados_listado += f"""
             <tr>
                 <td>
