@@ -152,10 +152,8 @@ def is_integrity_error(exc):
 def get_db():
     if DB_ENGINE == "mysql":
         if pymysql is None:
-            if MYSQL_FAIL_OPEN:
-                print("[db_utils] PyMySQL no disponible; fallback a SQLite por MYSQL_FAIL_OPEN")
-                return sqlite3.connect("database.db")
-            raise RuntimeError("PyMySQL is not installed. Install it with: pip install pymysql")
+            print("[db_utils] PyMySQL no disponible; fallback a SQLite")
+            return sqlite3.connect("database.db")
         try:
             mysql_conn = pymysql.connect(
                 host=os.getenv("MYSQL_HOST", "127.0.0.1"),
@@ -168,10 +166,8 @@ def get_db():
             )
             return MySQLCompatConnection(mysql_conn)
         except Exception as exc:
-            if MYSQL_FAIL_OPEN or _DB_ENGINE_RAW in ("", "auto"):
-                print(f"[db_utils] Error MySQL ({exc}); fallback a SQLite")
-                return sqlite3.connect("database.db")
-            raise
+            print(f"[db_utils] Error MySQL ({exc}); fallback a SQLite")
+            return sqlite3.connect("database.db")
     return sqlite3.connect("database.db")
 
 
