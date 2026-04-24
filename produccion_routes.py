@@ -120,7 +120,7 @@ def _avance_ratio_desde_aprobados(aprobados):
         ratio += 0.10
     if "PINTURA" in aprobados:
         ratio += 0.15
-    if "DESPACHO" in aprobados:
+    if "P/DESPACHO" in aprobados or "DESPACHO" in aprobados:
         ratio += 0.05
     return ratio
 
@@ -256,7 +256,7 @@ def calcular_avance_ot(db, ot_id):
             avance_pieza += 10.0
         if "PINTURA" in procesos_aprobados:
             avance_pieza += 15.0
-        if "DESPACHO" in procesos_aprobados:
+        if "P/DESPACHO" in procesos_aprobados or "DESPACHO" in procesos_aprobados:
             avance_pieza += 5.0
 
         avance_kg += kg_pieza * (avance_pieza / 100.0)
@@ -302,16 +302,18 @@ def _desglose_ot(db, ot_id):
         "ARMADO": 0,
         "SOLDADURA": 0,
         "PINTURA": 0,
-        "DESPACHO": 0,
+        "P/DESPACHO": 0,
     }
     if total == 0:
         return total, conteo
 
     for pos in posiciones:
         aprobados = set(obtener_procesos_completados(pos, ot_id=ot_id))
-        for proceso in conteo.keys():
+        for proceso in ("ARMADO", "SOLDADURA", "PINTURA"):
             if proceso in aprobados:
                 conteo[proceso] += 1
+        if "P/DESPACHO" in aprobados or "DESPACHO" in aprobados:
+            conteo["P/DESPACHO"] += 1
 
     return total, conteo
 
@@ -519,7 +521,7 @@ def produccion():
                         <span class="chip">A {conteo['ARMADO']}/{total_piezas}</span>
                         <span class="chip">S {conteo['SOLDADURA']}/{total_piezas}</span>
                         <span class="chip">P {conteo['PINTURA']}/{total_piezas}</span>
-                        <span class="chip">D {conteo['DESPACHO']}/{total_piezas}</span>
+                        <span class="chip">PD {conteo['P/DESPACHO']}/{total_piezas}</span>
                     </div>
                 </td>
                 <td>{fila['fecha_entrega']}</td>

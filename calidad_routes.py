@@ -2652,6 +2652,7 @@ def calidad_escaneo_form_pintura():
         term_firma_form = request.form.getlist("term_firma[]")
 
         filas_pintura = []
+        piezas_espesor_incompleto = []
         total_filas = len(piezas_form)
         for i in range(total_filas):
             pieza = (piezas_form[i] if i < len(piezas_form) else "").strip()
@@ -2671,6 +2672,8 @@ def calidad_escaneo_form_pintura():
             term_fecha = (term_fecha_form[i] if i < len(term_fecha_form) else "").strip()
             term_resp_nombre = (term_firma_form[i] if i < len(term_firma_form) else "").strip()
             term_firma = responsables_control.get(term_resp_nombre, {}).get("firma", "") if term_resp_nombre else ""
+            if sup_estado != "NO APLICA" and (fondo_espesor <= 0 or term_espesor <= 0):
+                piezas_espesor_incompleto.append(pieza)
             filas_pintura.append({
                 "pieza": pieza,
                 "cantidad": cantidad,
@@ -2687,6 +2690,12 @@ def calidad_escaneo_form_pintura():
                 "term_resp": term_resp_nombre,
                 "term_firma": term_firma,
             })
+
+        if piezas_espesor_incompleto:
+            listado = ", ".join(piezas_espesor_incompleto[:6])
+            sufijo = "..." if len(piezas_espesor_incompleto) > 6 else ""
+            msg = f"Completá espesor de pintura (fondo y terminación) en: {listado}{sufijo}"
+            return redirect("/modulo/calidad/escaneo/form-pintura?obra=" + quote(obra) + "&mensaje=" + quote(msg))
 
         # Eliminado bloque de temperatura y humedad
         mediciones = []
@@ -3050,6 +3059,7 @@ def calidad_escaneo_form_pintura():
     if es_obra:
         acciones_pintura_html = """
             <div class="actions">
+                <a href="/home" class="btn btn-blue">📊 Estado de piezas por proceso</a>
                 <a href="/modulo/calidad/escaneo" class="btn btn-blue">⬅️ Volver a Sub Módulos</a>
             </div>
             <p style="margin-top:10px;background:#fff7ed;color:#9a3412;padding:10px;border-radius:6px;border:1px solid #fdba74;"><b>Modo solo visualizacion:</b> podes usar filtros y consultar datos, sin generar PDF.</p>
@@ -3057,7 +3067,8 @@ def calidad_escaneo_form_pintura():
     else:
         acciones_pintura_html = """
             <div class="actions">
-                <button type="submit" class="btn">📄 Generar PDF Pintura</button>
+                <button type="submit" id="btn-guardar-pintura" class="btn" disabled style="opacity:0.6;cursor:not-allowed;">📄 Generar PDF Pintura</button>
+                <a href="/home" class="btn btn-blue">📊 Estado de piezas por proceso</a>
                 <a href="/modulo/calidad/escaneo/controles-pintura" class="btn btn-blue">ð📋 Ver Controles Anteriores</a>
                 <a href="/modulo/calidad/escaneo" class="btn btn-blue">⬅️ Volver a Sub Módulos</a>
             </div>
@@ -3168,6 +3179,8 @@ def calidad_escaneo_form_pintura():
     <script>
     (function() {{
         const firmasResponsables = {json.dumps(firmas_responsables, ensure_ascii=False)};
+        const formPintura = document.querySelector('form[method="post"][action="/modulo/calidad/escaneo/form-pintura"]');
+        const btnGuardar = document.getElementById('btn-guardar-pintura');
 
         function updateFirma(selectEl, displayId, pathId) {{
             const responsable = selectEl.value || '';
@@ -3195,6 +3208,7 @@ def calidad_escaneo_form_pintura():
                 }}
             }});
             row.classList.toggle('deshabilitada', isDisabled);
+            actualizarEstadoGuardado();
         }}
 
         document.querySelectorAll('.sup-resp').forEach(sel => {{
@@ -3211,6 +3225,7 @@ def calidad_escaneo_form_pintura():
             sel.addEventListener('change', () => {{
                 const isNoAplica = sel.value === 'NO APLICA';
                 toggleRowDisabled(sel.dataset.idx, isNoAplica);
+                actualizarEstadoGuardado();
             }});
         }});
 
@@ -3242,6 +3257,42 @@ def calidad_escaneo_form_pintura():
                 estadoInput.value = '';
                 estadoInput.style.color = '#000';
             }}
+            actualizarEstadoGuardado();
+        }}
+
+        function filaRequiereEspesor(row) {{
+            const supEstado = row.querySelector('.sup-estado');
+            if (!supEstado) return false;
+            return (supEstado.value || '').toUpperCase() !== 'NO APLICA';
+        }}
+
+        function filaCompletaEspesor(row) {{
+            const fondoInput = row.querySelector('.fondo-espesor');
+            const termInput = row.querySelector('.term-espesor');
+            const fondo = toFloat(fondoInput ? fondoInput.value : '');
+            const term = toFloat(termInput ? termInput.value : '');
+            return fondo > 0 && term > 0;
+        }}
+
+        function actualizarEstadoGuardado() {{
+            if (!btnGuardar) return;
+            const filas = Array.from(document.querySelectorAll('.pieza-row'));
+            let hayFilasAplicables = false;
+            let todoCompleto = true;
+
+            for (const row of filas) {{
+                if (!filaRequiereEspesor(row)) continue;
+                hayFilasAplicables = true;
+                if (!filaCompletaEspesor(row)) {{
+                    todoCompleto = false;
+                    break;
+                }}
+            }}
+
+            const habilitar = hayFilasAplicables && todoCompleto;
+            btnGuardar.disabled = !habilitar;
+            btnGuardar.style.opacity = habilitar ? '1' : '0.6';
+            btnGuardar.style.cursor = habilitar ? 'pointer' : 'not-allowed';
         }}
 
         // Agregar event listeners a los inputs de espesor
@@ -3259,6 +3310,18 @@ def calidad_escaneo_form_pintura():
             const idx = row.dataset.idx;
             calcularEspesorYEstado(idx);
         }});
+
+        actualizarEstadoGuardado();
+
+        if (formPintura) {{
+            formPintura.addEventListener('submit', (ev) => {{
+                actualizarEstadoGuardado();
+                if (btnGuardar && btnGuardar.disabled) {{
+                    ev.preventDefault();
+                    alert('Completá todos los espesores de pintura antes de guardar.');
+                }}
+            }});
+        }}
     }})();
     </script>
     </body>

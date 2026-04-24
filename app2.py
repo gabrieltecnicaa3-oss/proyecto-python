@@ -4372,15 +4372,6 @@ def cargar(pos):
     }}
     input[readonly] {{ background: #f8fafc; color: #475569; }}
     #estado_select {{ font-weight: 700; }}
-    .firma-preview {{
-        display: none;
-        margin-top: 6px;
-        max-width: 280px;
-        border: 1px solid #d1d5db;
-        border-radius: 6px;
-        background: #fff;
-        padding: 6px;
-    }}
     .reinspeccion-block {{
         margin-top: 14px;
         background: #fff7ed;
@@ -4478,7 +4469,6 @@ def cargar(pos):
                 <div class="field">
                     <label for="firma_digital_input">Firma (digital)</label>
                     <input type="text" id="firma_digital_input" name="firma_digital" placeholder="Se completa automaticamente al seleccionar responsable" readonly>
-                    <img id="firma_ok_preview" class="firma-preview" src="" alt="Firma" onerror="this.style.display='none';">
                 </div>
             </div>
 
@@ -4506,7 +4496,6 @@ def cargar(pos):
                     <div class="field">
                         <label for="reinspeccion_firma">Firma re-inspeccion</label>
                         <input type="text" id="reinspeccion_firma" name="reinspeccion_firma" placeholder="Se completa automaticamente al seleccionar responsable" readonly>
-                        <img id="reinspeccion_firma_ok_preview" class="firma-preview" src="" alt="Firma Re-inspeccion" onerror="this.style.display='none';">
                     </div>
                     <div class="field">
                         <label for="reinspeccion_estado">Estado</label>
@@ -4537,7 +4526,6 @@ def cargar(pos):
         const obraVisible = document.getElementById('obra_visible');
         const responsableSel = document.getElementById('responsable_select');
         const firmaInput = document.getElementById('firma_digital_input');
-        const firmaPreview = document.getElementById('firma_ok_preview');
         const reinspBlock = document.getElementById('reinspeccion_block');
         const reinspFields = [
             document.getElementById('reinspeccion_fecha'),
@@ -4549,9 +4537,7 @@ def cargar(pos):
         ].filter(Boolean);
         const reinspResponsableSel = document.getElementById('reinspeccion_responsable');
         const reinspFirmaInput = document.getElementById('reinspeccion_firma');
-        const reinspFirmaPreview = document.getElementById('reinspeccion_firma_ok_preview');
         const firmasResponsables = {json.dumps(firmas_responsables, ensure_ascii=False)};
-        const imagenesResponsables = {json.dumps(imagenes_responsables, ensure_ascii=False)};
         if (!sel || !responsableSel || !firmaInput) return;
 
         function syncOtMeta() {{
@@ -4568,40 +4554,21 @@ def cargar(pos):
                 el.disabled = !activa;
                 if (!activa) el.value = '';
             }});
-            if (!activa && reinspFirmaPreview) reinspFirmaPreview.style.display = 'none';
         }}
 
         function syncResponsable() {{
             const responsable = responsableSel.value || '';
             const firma = firmasResponsables[responsable] || '';
-            const firmaUrl = imagenesResponsables[responsable] || '';
             firmaInput.value = firma;
             firmaInput.readOnly = true;
-            if (firmaPreview) {{
-                if (firmaUrl) {{
-                    firmaPreview.src = firmaUrl;
-                    firmaPreview.style.display = 'block';
-                }} else {{
-                    firmaPreview.style.display = 'none';
-                }}
-            }}
         }}
 
         function syncReinspeccionResponsable() {{
             if (!reinspResponsableSel || !reinspFirmaInput) return;
             const responsable = reinspResponsableSel.value || '';
             const firma = firmasResponsables[responsable] || '';
-            const firmaUrl = imagenesResponsables[responsable] || '';
             reinspFirmaInput.value = firma;
             reinspFirmaInput.readOnly = true;
-            if (reinspFirmaPreview) {{
-                if (firmaUrl) {{
-                    reinspFirmaPreview.src = firmaUrl;
-                    reinspFirmaPreview.style.display = 'block';
-                }} else {{
-                    reinspFirmaPreview.style.display = 'none';
-                }}
-            }}
         }}
 
         function pintarEstado() {{
