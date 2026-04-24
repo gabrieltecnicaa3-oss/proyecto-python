@@ -32,6 +32,21 @@ def _guardar_pdf_databook(obra, seccion_key, filename, pdf_bytes, ot_id=None):
 estado_bp = Blueprint("estado", __name__)
 
 
+def _ot_has_column(db, column_name):
+    try:
+        rows = db.execute("PRAGMA table_info(ordenes_trabajo)").fetchall()
+        for row in rows:
+            try:
+                col = str(row[1] or "").strip().lower()
+            except Exception:
+                col = ""
+            if col == str(column_name or "").strip().lower():
+                return True
+    except Exception:
+        return False
+    return False
+
+
 @estado_bp.route("/modulo/estado")
 def estado_produccion():
     html = """<!DOCTYPE html>
@@ -872,6 +887,11 @@ def api_dashboard_estado():
     
     db = get_db()
 
+    tiene_hs_previstas = _ot_has_column(db, "hs_previstas")
+    tiene_estado_avance = _ot_has_column(db, "estado_avance")
+    hs_prev_expr = "COALESCE(ot.hs_previstas, 0)" if tiene_hs_previstas else "0"
+    estado_av_expr = "COALESCE(ot.estado_avance, 0)" if tiene_estado_avance else "0"
+
     # Construir filtros dinámicos
     fecha_filter_sql_pt = ""
     fecha_filter_sql_proc = ""
@@ -899,9 +919,9 @@ def api_dashboard_estado():
         ots = db.execute(f"""
             SELECT ot.id,
                    COALESCE(NULLIF(TRIM(ot.obra),''), NULLIF(TRIM(ot.titulo),''), 'OT ' || ot.id) AS nombre,
-                   COALESCE(ot.hs_previstas, 0) AS hs_previstas,
+                   {hs_prev_expr} AS hs_previstas,
                    0 AS hs_cargadas,
-                   COALESCE(ot.estado_avance, 0) AS estado_avance
+                   {estado_av_expr} AS estado_avance
             FROM ordenes_trabajo ot
             WHERE ot.fecha_cierre IS NULL {tipo_filter_sql}{obra_filter_sql}
             ORDER BY ot.id DESC
@@ -910,14 +930,14 @@ def api_dashboard_estado():
         ots = db.execute(f"""
             SELECT ot.id,
                    COALESCE(NULLIF(TRIM(ot.obra),''), NULLIF(TRIM(ot.titulo),''), 'OT ' || ot.id) AS nombre,
-                   COALESCE(ot.hs_previstas, 0) AS hs_previstas,
+                   {hs_prev_expr} AS hs_previstas,
                    COALESCE(SUM(CASE WHEN pt.fecha >= ? {fecha_filter_sql_pt} THEN pt.horas ELSE 0 END), 0) AS hs_cargadas,
-                   COALESCE(ot.estado_avance, 0) AS estado_avance
+                   {estado_av_expr} AS estado_avance
             FROM ordenes_trabajo ot
             LEFT JOIN partes_trabajo pt ON pt.ot_id = ot.id
             WHERE ot.fecha_cierre IS NULL {tipo_filter_sql}{obra_filter_sql}
             GROUP BY ot.id
-            HAVING COALESCE(ot.hs_previstas, 0) > 0 OR hs_cargadas > 0
+            HAVING {hs_prev_expr} > 0 OR hs_cargadas > 0
             ORDER BY ot.id DESC
         """, tuple(fecha_query_params) + tipo_params + obra_params).fetchall()
 
@@ -941,7 +961,7 @@ def api_dashboard_estado():
             WITH hs_ot AS (
                 SELECT ot.id,
                        COALESCE(NULLIF(TRIM(ot.obra),''), 'SIN OBRA') AS obra,
-                       COALESCE(ot.hs_previstas, 0) AS hs_previstas,
+                       {hs_prev_expr} AS hs_previstas,
                        0 AS hs_cargadas
                 FROM ordenes_trabajo ot
                 WHERE ot.fecha_cierre IS NULL {tipo_filter_sql}{obra_filter_sql}
@@ -960,7 +980,7 @@ def api_dashboard_estado():
             WITH hs_ot AS (
                 SELECT ot.id,
                        COALESCE(NULLIF(TRIM(ot.obra),''), 'SIN OBRA') AS obra,
-                       COALESCE(ot.hs_previstas, 0) AS hs_previstas,
+                       {hs_prev_expr} AS hs_previstas,
                        COALESCE(SUM(CASE WHEN pt.fecha >= ? {fecha_filter_sql_pt} THEN pt.horas ELSE 0 END), 0) AS hs_cargadas
                 FROM ordenes_trabajo ot
                 LEFT JOIN partes_trabajo pt ON pt.ot_id = ot.id
@@ -1090,6 +1110,8 @@ def api_dashboard_comparar():
         return jsonify({"error": "Fechas requeridas"}), 400
     
     db = get_db()
+    tiene_hs_previstas = _ot_has_column(db, "hs_previstas")
+    hs_prev_expr = "COALESCE(ot.hs_previstas, 0)" if tiene_hs_previstas else "0"
     
     # Obtener HS consumidas
     hs_cargadas = db.execute("""
@@ -1121,10 +1143,10 @@ def api_dashboard_comparar():
     
     # Eficiencia: OTs activas con HS previstas
     ots = db.execute("""
-        SELECT ot.id, COALESCE(ot.hs_previstas, 0) as hs_previstas
+        SELECT ot.id, {hs_prev_expr} as hs_previstas
         FROM ordenes_trabajo ot
-        WHERE ot.fecha_cierre IS NULL AND COALESCE(ot.hs_previstas, 0) > 0
-    """).fetchall()
+        WHERE ot.fecha_cierre IS NULL AND {hs_prev_expr} > 0
+    """.format(hs_prev_expr=hs_prev_expr)).fetchall()
     
     hs_previstas_total = sum(float(row[1] or 0) for row in ots)
     eficiencia = (hs_consumidas / hs_previstas_total) if hs_previstas_total > 0 else 0
@@ -1152,18 +1174,20 @@ def dashboard_estado_pdf():
 
     fecha_desde_str = str(fecha_desde)
     db = get_db()
+    tiene_hs_previstas = _ot_has_column(db, "hs_previstas")
+    hs_prev_expr = "COALESCE(ot.hs_previstas, 0)" if tiene_hs_previstas else "0"
 
     ots = db.execute("""
         SELECT ot.id,
                COALESCE(NULLIF(TRIM(ot.obra),''), NULLIF(TRIM(ot.titulo),''), 'OT ' || ot.id) AS nombre,
-               COALESCE(ot.hs_previstas, 0) AS hs_previstas,
+               {hs_prev_expr} AS hs_previstas,
                COALESCE(SUM(CASE WHEN pt.fecha >= ? THEN pt.horas ELSE 0 END), 0) AS hs_consumidas
         FROM ordenes_trabajo ot
         LEFT JOIN partes_trabajo pt ON pt.ot_id = ot.id
         GROUP BY ot.id
-        HAVING COALESCE(ot.hs_previstas, 0) > 0 OR hs_consumidas > 0
+        HAVING {hs_prev_expr} > 0 OR hs_consumidas > 0
         ORDER BY hs_consumidas DESC, ot.id DESC
-    """, (fecha_desde_str,)).fetchall()
+    """.format(hs_prev_expr=hs_prev_expr), (fecha_desde_str,)).fetchall()
 
     hs_por_ot = []
     for row in ots:

@@ -642,7 +642,12 @@ def _obtener_responsables_control(db, firmas_empleados_dir, inspector_firmas):
         """
         SELECT nombre, firma_electronica, firma_imagen_path
         FROM empleados_parte
-        WHERE LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%supervisor%'
+        WHERE (
+            LOWER(TRIM(COALESCE(puesto_tipo, ''))) = 'supervisor'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%supervisor%'
+        )
+          AND TRIM(COALESCE(nombre, '')) <> ''
+          AND TRIM(COALESCE(firma_electronica, '')) <> ''
         ORDER BY nombre
         """
     ).fetchall()
@@ -676,14 +681,22 @@ def _obtener_responsables_control(db, firmas_empleados_dir, inspector_firmas):
 
 
 def _ruta_firma_responsable(responsables_control, responsable, firmas_empleados_dir):
-    info = responsables_control.get(str(responsable or "").strip()) or {}
+    responsable_txt = str(responsable or "").strip()
+    info = responsables_control.get(responsable_txt) or {}
+    if not info and responsable_txt:
+        objetivo = _normalizar_texto_busqueda(responsable_txt)
+        for nombre_k, info_k in (responsables_control or {}).items():
+            if _normalizar_texto_busqueda(nombre_k) == objetivo:
+                info = info_k or {}
+                break
+
     firma_url = str(info.get("firma_url") or "").strip()
     archivo = ""
     if "/firma-supervisor/" in firma_url:
         archivo = unquote(firma_url.rsplit("/", 1)[-1])
     if not archivo:
         firma_rel = _resolver_imagen_firma_empleado(
-            responsable,
+            responsable_txt,
             info.get("firma", ""),
             firmas_empleados_dir,
         )

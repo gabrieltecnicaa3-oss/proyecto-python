@@ -4233,14 +4233,21 @@ def control_pintura_nuevo():
             # Obtener estado de SOLDADURA para cada pieza
             soldadura_rows = db.execute(
                 """
-                SELECT DISTINCT TRIM(COALESCE(posicion, '')) AS posicion,
-                       UPPER(TRIM(COALESCE(estado, ''))) AS estado,
-                       COALESCE(re_inspeccion, '') AS re_inspeccion
-                FROM procesos
-                WHERE ot_id = ?
-                  AND UPPER(TRIM(COALESCE(proceso, ''))) = 'SOLDADURA'
-                  AND eliminado = 0
-                ORDER BY id DESC
+                SELECT TRIM(COALESCE(p.posicion, '')) AS posicion,
+                       UPPER(TRIM(COALESCE(p.estado, ''))) AS estado,
+                       COALESCE(p.re_inspeccion, '') AS re_inspeccion
+                FROM procesos p
+                JOIN (
+                    SELECT TRIM(COALESCE(posicion, '')) AS posicion,
+                           MAX(id) AS max_id
+                    FROM procesos
+                    WHERE ot_id = ?
+                      AND UPPER(TRIM(COALESCE(proceso, ''))) = 'SOLDADURA'
+                      AND eliminado = 0
+                      AND TRIM(COALESCE(posicion, '')) <> ''
+                    GROUP BY TRIM(COALESCE(posicion, ''))
+                ) ult ON ult.max_id = p.id
+                ORDER BY posicion ASC
                 """,
                 (ot_id_sel,)
             ).fetchall()
