@@ -78,6 +78,8 @@ def _normalize_sql_for_mysql(sql):
     # MySQL does not allow DEFAULT on TEXT columns.
     if re.match(r"^\s*CREATE\s+TABLE", sql_out, flags=re.IGNORECASE):
         sql_out = re.sub(r"\bTEXT\s+DEFAULT\b", "VARCHAR(255) DEFAULT", sql_out, flags=re.IGNORECASE)
+        # MySQL does not allow UNIQUE indexes on TEXT/BLOB without key length.
+        sql_out = re.sub(r"\bTEXT\s+UNIQUE\b", "VARCHAR(255) UNIQUE", sql_out, flags=re.IGNORECASE)
     return sql_out
 
 
