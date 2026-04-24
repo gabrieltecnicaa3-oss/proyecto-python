@@ -3799,9 +3799,11 @@ def pieza(pos):
                     fecha_mostrar = despacho_control[0] or fecha_mostrar
                     responsable_txt = str(despacho_control[1] or "").strip() or responsable_txt
                     estado_mostrar = _estado_despacho_desde_control(despacho_control[2])
-                    motivo_mostrar = _motivo_despacho_desde_control(despacho_control[4], despacho_control[3])
+                    motivo_mostrar = str(despacho_control[3] or "").strip() or "-"
                     estado_class = _estado_cls(str(estado_mostrar or "").strip().upper())
                     flujo_estado_html = _estado_badge(estado_mostrar)
+                else:
+                    motivo_mostrar = "-"
 
             html += f"""
             <div class="card">
@@ -3828,12 +3830,9 @@ def pieza(pos):
                     <div class="process-title">DESPACHADO</div>
                     <span class="flujo-badge flujo-liberado">DESPACHADO</span><br>
                     <div class="meta-line"><span class="kv-label">Fecha:</span> {despachado_info.get('fecha') or '-'}</div>
-                    <div class="meta-line"><span class="kv-label">Operario:</span> {despachado_info.get('operario') or '-'}</div>
                     <div class="kv-line"><span class="kv-label">Estado:</span> <span class="estado-ok">{despachado_info.get('estado') or '-'}</span></div>
-                    <div class="kv-line"><span class="kv-label">Motivo:</span> {despachado_info.get('motivo') or '-'}</div>
-                    <div class="kv-line"><span class="kv-label">Responsable:</span> {despachado_info.get('responsable') or '-'}</div>
-                    <div class="reins-title">RE-INSPECCION</div>
-                    <div class="reins-content-empty">Sin ciclos registrados</div>
+                    <div class="kv-line"><span class="kv-label">Remito:</span> {despachado_info.get('motivo') or '-'}</div>
+                    <div class="kv-line"><span class="kv-label">Chofer:</span> {despachado_info.get('chofer') or '-'}</div>
                 </div>
                 <div class="card-actions"></div>
             </div>
