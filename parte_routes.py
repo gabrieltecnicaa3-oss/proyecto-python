@@ -1089,7 +1089,9 @@ def parte_carga_empleados():
                 <th>Firma electrónica</th>
                 <th>Acciones</th>
             </tr>
+            <tbody id="empleados-tbody">
         """ + empleados_listado + """
+            </tbody>
         </table>
     </div>
 
@@ -1132,16 +1134,30 @@ def parte_carga_empleados():
         const filtroInput = document.getElementById('filtro-empleados');
         const ordenPor = document.getElementById('orden-por-empleados');
         const ordenSentido = document.getElementById('orden-sentido-empleados');
-        let filtroTimer = null;
+        const tbody = document.getElementById('empleados-tbody');
+
+        function aplicarFiltroDinamico() {
+            if (!tbody || !filtroInput) return;
+            const q = (filtroInput.value || '').trim().toLowerCase();
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            rows.forEach(function(row) {
+                const celdas = row.querySelectorAll('td');
+                if (celdas.length < 2) return;
+                const nombre = (celdas[0].textContent || '').toLowerCase();
+                const apellido = (celdas[1].textContent || '').toLowerCase();
+                const visible = !q || nombre.includes(q) || apellido.includes(q);
+                row.style.display = visible ? '' : 'none';
+            });
+        }
 
         if (filtrosForm && filtroInput) {
             filtroInput.addEventListener('input', function() {
-                if (filtroTimer) {
-                    clearTimeout(filtroTimer);
+                aplicarFiltroDinamico();
+            });
+            filtroInput.addEventListener('keydown', function(ev) {
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
                 }
-                filtroTimer = setTimeout(function() {
-                    filtrosForm.submit();
-                }, 300);
             });
         }
 
@@ -1156,6 +1172,8 @@ def parte_carga_empleados():
                 filtrosForm.submit();
             });
         }
+
+        aplicarFiltroDinamico();
     });
     </script>
     
