@@ -12,6 +12,7 @@ from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics.charts.piecharts import Pie
 from db_utils import get_db, _guardar_pdf_databook as _db_guardar_pdf_databook
 from produccion_routes import calcular_avance_ot
+from proceso_utils import _proceso_aprobado
 
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))
 _DATABOOKS_DIR = os.path.join(_APP_DIR, "Reportes Produccion")
@@ -67,6 +68,77 @@ def _ot_has_column(db, column_name):
     except Exception:
         return False
     return False
+
+
+def _safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _calcular_kg_por_estacion_y_despachados(rows):
+    # Reglas pedidas:
+    # - Si SOLDADURA esta aprobada, la pieza cuenta en PINTURA.
+    # - Si DESPACHO esta aprobado, la pieza cuenta en P/DESPACHO y en KG despachados.
+    piezas = {}
+    for row in rows:
+        pos = str(row[0] or "").strip()
+        obra = str(row[1] or "").strip()
+        ot_id = row[2]
+        proceso = str(row[3] or "").strip().upper()
+        estado = str(row[4] or "").strip().upper()
+        reins = str(row[5] or "")
+        peso = _safe_float(row[6], 0.0)
+
+        if not pos:
+            continue
+
+        key = (pos, obra, int(ot_id or 0))
+        data = piezas.get(key)
+        if not data:
+            data = {
+                "peso": 0.0,
+                "armado_ok": False,
+                "soldadura_ok": False,
+                "pintura_ok": False,
+                "despacho_ok": False,
+            }
+            piezas[key] = data
+
+        if peso > data["peso"]:
+            data["peso"] = peso
+
+        if _proceso_aprobado(estado, reins):
+            if proceso == "ARMADO":
+                data["armado_ok"] = True
+            elif proceso == "SOLDADURA":
+                data["soldadura_ok"] = True
+            elif proceso in ("PINTURA", "PINTURA_FONDO"):
+                data["pintura_ok"] = True
+            elif proceso == "DESPACHO":
+                data["despacho_ok"] = True
+
+    kg_por_estacion = {"ARMADO Y SOLDADURA": 0.0, "PINTURA": 0.0, "P/DESPACHO": 0.0}
+    kg_despachados = 0.0
+
+    for data in piezas.values():
+        peso = _safe_float(data.get("peso"), 0.0)
+        if peso <= 0:
+            continue
+
+        if data.get("despacho_ok"):
+            kg_por_estacion["P/DESPACHO"] += peso
+            kg_despachados += peso
+        elif data.get("soldadura_ok") or data.get("pintura_ok"):
+            kg_por_estacion["PINTURA"] += peso
+        else:
+            kg_por_estacion["ARMADO Y SOLDADURA"] += peso
+
+    for k in kg_por_estacion:
+        kg_por_estacion[k] = round(_safe_float(kg_por_estacion[k]), 2)
+    kg_despachados = round(_safe_float(kg_despachados), 2)
+    return kg_por_estacion, kg_despachados
 
 
 @estado_bp.route("/modulo/estado")
@@ -432,6 +504,10 @@ body {
       <div class="kpi-label">KG producidos (período)</div>
     </div>
         <div class="kpi-card">
+            <div class="kpi-valor" id="kpi-kg-desp">—</div>
+            <div class="kpi-label">KG despachados</div>
+        </div>
+        <div class="kpi-card">
             <div class="kpi-valor" id="kpi-kg-hs">—</div>
             <div class="kpi-label">KG/HS</div>
         </div>
@@ -722,6 +798,7 @@ function renderDashboard(data) {
     const hs = data.hs_por_ot;
     const hsObra = data.hs_por_obra || [];
     const kg = data.kg_por_estacion;
+    const kgDespachados = Number(data.kg_despachados || 0);
 
     // Filtro por obra: mantener opciones sincronizadas con backend
     const filtroObra = document.getElementById('filtro-obra');
@@ -751,6 +828,7 @@ function renderDashboard(data) {
     document.getElementById('kpi-hs-segun-av').textContent = totalSegunAv.toFixed(1) + ' hs';
     document.getElementById('kpi-eficiencia').textContent = efic !== '—' ? efic + '%' : '—';
     document.getElementById('kpi-kg-total').textContent = totalKg.toFixed(1) + ' kg';
+    document.getElementById('kpi-kg-desp').textContent = kgDespachados.toFixed(1) + ' kg';
     document.getElementById('kpi-kg-hs').textContent = kgHs !== '—' ? kgHs + ' kg/hs' : '—';
 
     // === Chart HS por OBRA (OTs agrupadas) ===
@@ -1049,67 +1127,58 @@ def api_dashboard_estado():
         })
 
     if periodo == "actual":
-        # Solo OTs activas, sin filtro de fecha
-        ot_ids = [row[0] for row in ots]
+        ot_ids = [int(row[0]) for row in ots]
         if ot_ids:
-            format_ids = ','.join(['?']*len(ot_ids))
-            kg_rows = db.execute(f"""
-                SELECT 
-                    CASE 
-                        WHEN proceso IN ('ARMADO', 'SOLDADURA') THEN 'ARMADO Y SOLDADURA'
-                        WHEN proceso = 'PINTURA' THEN 'PINTURA'
-                        WHEN proceso = 'DESPACHO' THEN 'P/DESPACHO'
-                    END AS estacion,
-                    SUM(COALESCE(CAST(peso AS REAL), 0)) AS total_kg
-                FROM procesos
-                WHERE escaneado_qr = 1
-                  AND ot_id IN ({format_ids})
-                  AND proceso IN ('ARMADO', 'SOLDADURA', 'PINTURA', 'DESPACHO')
-                GROUP BY estacion
-            """, tuple(ot_ids)).fetchall()
+            format_ids = ",".join(["?"] * len(ot_ids))
+            kg_source_rows = db.execute(
+                f"""
+                SELECT TRIM(COALESCE(p.posicion, '')),
+                       TRIM(COALESCE(p.obra, '')),
+                       COALESCE(p.ot_id, 0),
+                       UPPER(TRIM(COALESCE(p.proceso, ''))),
+                       UPPER(TRIM(COALESCE(p.estado, ''))),
+                       COALESCE(p.re_inspeccion, ''),
+                       COALESCE(CAST(p.peso AS REAL), 0)
+                FROM procesos p
+                WHERE COALESCE(p.eliminado, 0) = 0
+                  AND COALESCE(p.escaneado_qr, 0) = 1
+                  AND COALESCE(p.ot_id, 0) IN ({format_ids})
+                  AND UPPER(TRIM(COALESCE(p.proceso, ''))) IN ('ARMADO', 'SOLDADURA', 'PINTURA', 'PINTURA_FONDO', 'DESPACHO')
+                """,
+                tuple(ot_ids),
+            ).fetchall()
         else:
-            kg_rows = []
+            kg_source_rows = []
     else:
-        kg_rows = db.execute(f"""
-            WITH obra_tipo AS (
-                SELECT LOWER(TRIM(obra)) AS obra_key,
-                       UPPER(COALESCE(tipo_estructura, '')) AS tipo_estructura
-                FROM ordenes_trabajo
-                WHERE COALESCE(TRIM(obra), '') <> ''
-                GROUP BY LOWER(TRIM(obra)), UPPER(COALESCE(tipo_estructura, ''))
-            ),
-            ultima_ubicacion AS (
-                SELECT 
-                    posicion,
-                    obra,
-                    proceso,
-                    peso,
-                    ROW_NUMBER() OVER (PARTITION BY posicion, obra ORDER BY fecha DESC, id DESC) as rn
-                FROM procesos
-                WHERE escaneado_qr = 1 
-                  AND fecha >= ?
-                  {fecha_filter_sql_proc}
-                  AND proceso IN ('ARMADO', 'SOLDADURA', 'PINTURA', 'DESPACHO')
-            )
-            SELECT 
-                CASE 
-                    WHEN uu.proceso IN ('ARMADO', 'SOLDADURA') THEN 'ARMADO Y SOLDADURA'
-                    WHEN uu.proceso = 'PINTURA' THEN 'PINTURA'
-                    WHEN uu.proceso = 'DESPACHO' THEN 'P/DESPACHO'
-                END AS estacion,
-                SUM(COALESCE(CAST(uu.peso AS REAL), 0)) AS total_kg
-            FROM ultima_ubicacion uu
-            LEFT JOIN obra_tipo otp ON LOWER(TRIM(COALESCE(uu.obra, ''))) = otp.obra_key
-            WHERE uu.rn = 1
-              AND (? = '' OR COALESCE(otp.tipo_estructura, '') = ?)
-              AND (? = '' OR LOWER(TRIM(COALESCE(uu.obra, ''))) = LOWER(?))
-            GROUP BY estacion
-        """, tuple(fecha_query_params) + (tipo_obra, tipo_obra, obra, obra)).fetchall()
+        filtros_extra = ""
+        params_proc = []
+        if fecha_hasta:
+            filtros_extra += " AND p.fecha <= ?"
+            params_proc.append(fecha_hasta)
 
-    kg_por_estacion = {"ARMADO Y SOLDADURA": 0.0, "PINTURA": 0.0, "P/DESPACHO": 0.0}
-    for row in kg_rows:
-        if row[0] in kg_por_estacion:
-            kg_por_estacion[row[0]] = round(float(row[1] or 0), 2)
+        kg_source_rows = db.execute(
+            f"""
+            SELECT TRIM(COALESCE(p.posicion, '')),
+                   TRIM(COALESCE(p.obra, '')),
+                   COALESCE(p.ot_id, 0),
+                   UPPER(TRIM(COALESCE(p.proceso, ''))),
+                   UPPER(TRIM(COALESCE(p.estado, ''))),
+                   COALESCE(p.re_inspeccion, ''),
+                   COALESCE(CAST(p.peso AS REAL), 0)
+            FROM procesos p
+            LEFT JOIN ordenes_trabajo ot ON ot.id = p.ot_id
+            WHERE COALESCE(p.eliminado, 0) = 0
+              AND COALESCE(p.escaneado_qr, 0) = 1
+              AND p.fecha >= ?
+              {filtros_extra}
+              AND UPPER(TRIM(COALESCE(p.proceso, ''))) IN ('ARMADO', 'SOLDADURA', 'PINTURA', 'PINTURA_FONDO', 'DESPACHO')
+              AND (? = '' OR UPPER(COALESCE(ot.tipo_estructura, '')) = ?)
+              AND (? = '' OR LOWER(TRIM(COALESCE(p.obra, ''))) = LOWER(?))
+            """,
+            (fecha_desde_str,) + tuple(params_proc) + (tipo_obra, tipo_obra, obra, obra),
+        ).fetchall()
+
+    kg_por_estacion, kg_despachados = _calcular_kg_por_estacion_y_despachados(kg_source_rows)
 
     # Evitar enviar None en fechas para el frontend
     fecha_desde_resp = fecha_desde_str if fecha_desde_str else ""
@@ -1126,7 +1195,8 @@ def api_dashboard_estado():
         "obras_disponibles": obras_disponibles,
         "hs_por_ot": hs_por_ot,
         "hs_por_obra": hs_por_obra,
-        "kg_por_estacion": kg_por_estacion
+        "kg_por_estacion": kg_por_estacion,
+        "kg_despachados": kg_despachados,
     })
 
 

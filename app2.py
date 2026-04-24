@@ -2125,6 +2125,11 @@ def home(page=1):
         return esquema in {"N/A", "NA", "NO APLICA", "SIN PINTURA", "NO REQUIERE PINTURA"}
 
     def obtener_resumen_panel_pieza(pos_sel, obra_sel, ot_id_sel=None):
+        def _extraer_fecha_despacho_meta(reproceso_txt):
+            txt = str(reproceso_txt or "")
+            m = _re.search(r"FECHA_DESPACHO\s*:\s*([^|\n]+)", txt, flags=_re.IGNORECASE)
+            return str(m.group(1)).strip() if m else ""
+
         def _etapa_pintura(reproceso_txt, proceso_u):
             ru = (reproceso_txt or '').upper()
             if 'ETAPA:SUPERFICIE' in ru:
@@ -2163,7 +2168,7 @@ def home(page=1):
 
         rows = db.execute(
             """
-            SELECT UPPER(TRIM(proceso)), UPPER(TRIM(COALESCE(estado, ''))), COALESCE(re_inspeccion, ''), COALESCE(firma_digital, ''), COALESCE(fecha, ''), COALESCE(estado_pieza, '')
+                        SELECT UPPER(TRIM(proceso)), UPPER(TRIM(COALESCE(estado, ''))), COALESCE(re_inspeccion, ''), COALESCE(firma_digital, ''), COALESCE(fecha, ''), COALESCE(estado_pieza, ''), COALESCE(reproceso, '')
             FROM procesos
             WHERE posicion=?
               AND COALESCE(obra, '') = COALESCE(?, '')
@@ -2194,7 +2199,9 @@ def home(page=1):
         nc_cerradas = 0
         ciclos_total = 0
 
-        for proceso, estado, reinspeccion, firma, fecha_reg, estado_pieza in rows:
+        despachado = {"estado": "-", "fecha": "-", "detalle": "Sin remito"}
+
+        for proceso, estado, reinspeccion, firma, fecha_reg, estado_pieza, reproceso in rows:
             if not firma.strip():
                 firmas_faltantes += 1
             if proceso not in latest:
@@ -2204,7 +2211,18 @@ def home(page=1):
                     'firma': firma,
                     'fecha': fecha_reg,
                     'estado_pieza': (estado_pieza or '').strip().upper(),
+                    'reproceso': reproceso,
                 }
+
+            if proceso == 'DESPACHO':
+                estado_pieza_desp = str(estado_pieza or '').strip().upper()
+                fecha_meta = _extraer_fecha_despacho_meta(reproceso)
+                if estado_pieza_desp == 'DESPACHADO' or fecha_meta:
+                    despachado = {
+                        "estado": "DESPACHADO",
+                        "fecha": fecha_meta or (str(fecha_reg or '').strip() or '-'),
+                        "detalle": "Remito generado",
+                    }
 
             if estado in ('NC', 'NO CONFORME', 'NO CONFORMIDAD'):
                 nc_total += 1
@@ -2298,6 +2316,7 @@ def home(page=1):
             'nc_pendientes': nc_pendientes,
             'nc_cerradas': nc_cerradas,
             'ciclos_total': ciclos_total,
+            'despachado': despachado,
         }
 
     panel_cache = {}
@@ -2694,6 +2713,7 @@ def home(page=1):
                 <th>Soldadura</th>
                 <th>Pintura</th>
                 <th>Despacho</th>
+                <th>Despachado</th>
                 <th>Re-inspección ISO</th>
                 <th>Acciones</th>
             </tr>
@@ -2731,6 +2751,12 @@ def home(page=1):
                 resumen_iso = f'<span class="chip chip-nc">NC PENDIENTE</span><div class="audit-text">Pendientes: {stats_proc.get("nc_pendientes", 0)}</div>'
             else:
                 resumen_iso = f'<span class="chip chip-warn">NC CERRADA</span><div class="audit-text">Ciclos: {stats_proc.get("ciclos_total", 0)}</div>'
+
+            desp_data = stats_proc.get('despachado') or {}
+            if str(desp_data.get('estado') or '').upper() == 'DESPACHADO':
+                despachado_html = f'<span class="chip chip-ok">DESPACHADO</span><div class="audit-text">{html_lib.escape(str(desp_data.get("fecha") or "-"))}</div>'
+            else:
+                despachado_html = '<span class="chip chip-neutral">NO</span><div class="audit-text">Sin remito</div>'
             
             # Crear celdas para cada proceso
             celdas = []
@@ -2836,6 +2862,7 @@ def home(page=1):
                 {celdas[1]}
                 {celdas[2]}
                 {celdas[3]}
+                <td>{despachado_html}</td>
                 <td>{resumen_iso}</td>
                 <td class="acciones-col">
                     <a class="btn-ver" href="/pieza/{quote(pos)}?obra={quote(obra_link)}&ot_id={ot_key}">Ver Pieza</a>

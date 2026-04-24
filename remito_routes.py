@@ -337,6 +337,37 @@ def remitos():
                 INSERT INTO remitos (cliente, ot_id, material_entregado, cantidad, fecha, pdf_path)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (ot[0], ot_id, material_entregado_value, total_enviado_sum, fecha_remito, pdf_base))
+
+            # Al generar el remito PDF, marcar las piezas incluidas como despachadas.
+            remito_meta = f"REMITO:{remito_code}|FECHA_DESPACHO:{fecha_remito}"
+            for pieza_id in piezas_ids:
+                row_proc = db.execute(
+                    """
+                    SELECT COALESCE(reproceso, '')
+                    FROM procesos
+                    WHERE id = ?
+                    LIMIT 1
+                    """,
+                    (pieza_id,),
+                ).fetchone()
+                reproceso_prev = str(row_proc[0] or "").strip() if row_proc else ""
+                if remito_meta in reproceso_prev:
+                    reproceso_nuevo = reproceso_prev
+                elif reproceso_prev:
+                    reproceso_nuevo = f"{reproceso_prev} | {remito_meta}"
+                else:
+                    reproceso_nuevo = remito_meta
+
+                db.execute(
+                    """
+                    UPDATE procesos
+                    SET estado_pieza = 'DESPACHADO',
+                        reproceso = ?
+                    WHERE id = ?
+                    """,
+                    (reproceso_nuevo, pieza_id),
+                )
+
             db.commit()
 
             return redirect(f"/descargar-remito/{pdf_base}")
