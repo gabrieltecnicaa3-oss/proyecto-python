@@ -928,8 +928,8 @@ def api_dashboard_estado():
     tipo_filter_sql = ""
     tipo_params = ()
     if tipo_obra:
-        tipo_filter_sql = " AND otp.tipo_estructura = ?"
-        tipo_params = (tipo_obra, tipo_obra)
+        tipo_filter_sql = " AND UPPER(COALESCE(ot.tipo_estructura, '')) = ?"
+        tipo_params = (tipo_obra,)
     
     obra_filter_sql = ""
     obra_params = ()
@@ -941,6 +941,7 @@ def api_dashboard_estado():
         ots = db.execute(f"""
             SELECT ot.id,
                    COALESCE(NULLIF(TRIM(ot.obra),''), NULLIF(TRIM(ot.titulo),''), 'OT ' || ot.id) AS nombre,
+                   COALESCE(NULLIF(TRIM(ot.obra),''), 'SIN OBRA') AS obra_nombre,
                    {hs_prev_expr} AS hs_previstas,
                    0 AS hs_cargadas,
                    {estado_av_expr} AS estado_avance
@@ -950,30 +951,37 @@ def api_dashboard_estado():
         """, tipo_params + obra_params).fetchall()
     else:
         ots = db.execute(f"""
-            SELECT ot.id,
-                   COALESCE(NULLIF(TRIM(ot.obra),''), NULLIF(TRIM(ot.titulo),''), 'OT ' || ot.id) AS nombre,
-                   {hs_prev_expr} AS hs_previstas,
-                   COALESCE(SUM(CASE WHEN pt.fecha >= ? {fecha_filter_sql_pt} THEN pt.horas ELSE 0 END), 0) AS hs_cargadas,
-                   {estado_av_expr} AS estado_avance
-            FROM ordenes_trabajo ot
-            LEFT JOIN partes_trabajo pt ON pt.ot_id = ot.id
-            WHERE ot.fecha_cierre IS NULL {tipo_filter_sql}{obra_filter_sql}
-            GROUP BY ot.id
-            HAVING {hs_prev_expr} > 0 OR hs_cargadas > 0
-            ORDER BY ot.id DESC
+            WITH hs_ot AS (
+                SELECT ot.id,
+                       COALESCE(NULLIF(TRIM(ot.obra),''), NULLIF(TRIM(ot.titulo),''), 'OT ' || ot.id) AS nombre,
+                       COALESCE(NULLIF(TRIM(ot.obra),''), 'SIN OBRA') AS obra_nombre,
+                       {hs_prev_expr} AS hs_previstas,
+                       COALESCE(SUM(CASE WHEN pt.fecha >= ? {fecha_filter_sql_pt} THEN pt.horas ELSE 0 END), 0) AS hs_cargadas,
+                       {estado_av_expr} AS estado_avance
+                FROM ordenes_trabajo ot
+                LEFT JOIN partes_trabajo pt ON pt.ot_id = ot.id
+                WHERE ot.fecha_cierre IS NULL {tipo_filter_sql}{obra_filter_sql}
+                GROUP BY ot.id
+            )
+            SELECT id, nombre, obra_nombre, hs_previstas, hs_cargadas, estado_avance
+            FROM hs_ot
+            WHERE hs_previstas > 0 OR hs_cargadas > 0
+            ORDER BY id DESC
         """, tuple(fecha_query_params) + tipo_params + obra_params).fetchall()
 
     hs_por_ot = []
     for row in ots:
         nombre = str(row[1] or '')[:22]
-        hs_previstas = round(float(row[2] or 0), 1)
-        avance_pct = int(row[4] or 0)
+        obra_nombre = str(row[2] or 'SIN OBRA')
+        hs_previstas = round(float(row[3] or 0), 1)
+        avance_pct = int(row[5] or 0)
         hs_segun_avance = round((avance_pct / 100.0) * hs_previstas, 1)
         hs_por_ot.append({
             "ot_id": row[0],
+            "obra": obra_nombre,
             "label": f"OT {row[0]} · {nombre}",
             "hs_previstas": hs_previstas,
-            "hs_cargadas":  round(float(row[3] or 0), 1),
+            "hs_cargadas":  round(float(row[4] or 0), 1),
             "hs_segun_avance": hs_segun_avance,
             "avance_pct": avance_pct
         })
@@ -1029,10 +1037,9 @@ def api_dashboard_estado():
     hs_por_obra = []
     for row in obras:
         obra_nombre = str(row[0] or 'SIN OBRA')
-        # Sumar hs_segun_avance de todos los OTs que pertenecen a esta obra
         hs_segun_avance_suma = sum(
             item["hs_segun_avance"] for item in hs_por_ot 
-            if obra_nombre in item["label"]
+            if str(item.get("obra") or "") == obra_nombre
         )
         hs_por_obra.append({
             "label": obra_nombre[:24],

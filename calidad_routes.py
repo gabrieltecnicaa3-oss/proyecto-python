@@ -4221,9 +4221,8 @@ def control_pintura_nuevo():
             for pos_v in piezas_preview:
                 p_v = piezas_preview[pos_v]
                 try:
-                    fe = float(str(p_v["fondo"].get("esp") or "0").replace("-", "0") or "0")
                     te = float(str(p_v["terminacion"].get("esp") or "0").replace("-", "0") or "0")
-                    esp_tot_v = fe + te
+                    esp_tot_v = te
                     p_v["esp_total"] = str(int(round(esp_tot_v))) if esp_tot_v > 0 else "-"
                 except Exception:
                     esp_tot_v = 0.0
@@ -4866,17 +4865,16 @@ def control_pintura_nuevo():
                 const sup = p.superficie || {{}};
                 const fon = p.fondo || {{}};
                 const ter = p.terminacion || {{}};
-                const fe = parseFloat(String(fon.esp || '0').replace('-','0')) || 0;
                 const te = parseFloat(String(ter.esp || '0').replace('-','0')) || 0;
-                const espTot = (fe + te) > 0 ? `${{Math.round(fe + te)}} μm` : '-';
+                const espTot = te > 0 ? `${{Math.round(te)}} μm` : '-';
                 const ests = [sup.estado, fon.estado, ter.estado].filter(e => e && e !== '-');
                 const espReq = parseFloat(String(document.getElementById('espesor_final')?.value || '0').replace(',', '.')) || 0;
                 const termEstado = String(ter.estado || '').toUpperCase();
                 const termOk = ['OK', 'OBS', 'OM'].includes(termEstado);
                 let estadoRes = p.estado_resumen || '-';
                 if (ests.some(e => e === 'NO CONFORME')) estadoRes = 'NO CONFORME';
-                else if (termOk && (espReq <= 0 || (fe + te) >= espReq)) estadoRes = 'OK';
-                else if (termOk && espReq > 0 && (fe + te) < espReq) estadoRes = 'NO CONFORME';
+                else if (termOk && (espReq <= 0 || te >= espReq)) estadoRes = 'OK';
+                else if (termOk && espReq > 0 && te < espReq) estadoRes = 'NO CONFORME';
                 else if (ests.length > 0) estadoRes = 'PENDIENTE TERMINACION';
                 const ec = estadoRes === 'OK' ? '#15803d' : estadoRes === 'NO CONFORME' ? '#b91c1c' : '#374151';
                 const cc = (e) => e === 'OK' ? '#15803d' : e === 'NO CONFORME' ? '#b91c1c' : '#374151';
@@ -5736,8 +5734,7 @@ def control_pintura_nuevo():
                     return jsonify({"error": f"Espesor de terminación inválido para {pieza}."}), 400
 
                 fecha_control = str((item or {}).get("fecha_control") or fecha).strip() or fecha
-                esp_fondo = _to_float(fondo.get("espesor"))
-                esp_total = esp_fondo + espesor_term
+                esp_total = espesor_term
                 aprobado = esp_total >= espesor_requerido_val and espesor_requerido_val > 0
 
                 st["terminacion"] = {
@@ -5758,7 +5755,7 @@ def control_pintura_nuevo():
                         "pieza": pieza,
                         "espesor": f"{espesor_term:.1f}",
                         "fecha_control": fecha_control,
-                        "espesor_total": f"{esp_total:.1f}",
+                        "espesor_total": f"{espesor_term:.1f}",
                         "estado_pintura": st["estado_pintura"],
                     }
                 )

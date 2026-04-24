@@ -3676,19 +3676,22 @@ def pieza(pos):
     btn_texto = "🔒 PIEZA COMPLETADA" if es_completada else "➕ CARGAR CONTROL"
     obra_url = obra if obra != '---' else (qr_obra or "")
     ot_qs = f"&ot_id={ot_scope_btn}" if ot_scope_btn is not None else ""
-    # Si soldadura está aprobada, "Cargar control" redirige al formulario de pintura
-    if not es_completada and obra_url:
+    procesos_completados_btn = obtener_procesos_completados(pos, obra_url if obra_url else None, ot_scope_btn)
+    soldadura_aprobada = "SOLDADURA" in procesos_completados_btn
+    pintura_aprobada = "PINTURA" in procesos_completados_btn
+    # Si pintura ya está aprobada, el siguiente paso es despacho; si no, y soldadura está OK, va a pintura.
+    if not es_completada and obra_url and not soldadura_aprobada:
         sol_rows = db.execute(
             "SELECT estado, re_inspeccion FROM procesos WHERE posicion=? AND obra=? AND UPPER(TRIM(COALESCE(proceso,'')))='SOLDADURA' ORDER BY id",
             (pos, obra_url)
         ).fetchall()
         soldadura_aprobada = any(_proceso_aprobado(r[0], r[1]) for r in sol_rows) if sol_rows else False
-    else:
-        soldadura_aprobada = False
     if es_completada:
         btn_href = "#"
+    elif pintura_aprobada:
+        btn_href = f"/cargar/{quote(pos)}?obra={quote(obra_url)}{ot_qs}"
     elif soldadura_aprobada:
-        btn_href = f"/modulo/calidad/escaneo/control-pintura?obra={quote(obra_url)}"
+        btn_href = f"/modulo/calidad/escaneo/control-pintura?obra={quote(obra_url)}" + (f"&ot_id={ot_scope_btn}" if ot_scope_btn is not None else "")
     else:
         btn_href = f"/cargar/{quote(pos)}?obra={quote(obra_url)}{ot_qs}"
     historial_href = f"/pieza/{quote(pos)}/historial?obra={quote(obra_url)}" if obra_url else f"/pieza/{quote(pos)}/historial"
