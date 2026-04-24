@@ -2127,7 +2127,7 @@ def home(page=1):
     def obtener_resumen_panel_pieza(pos_sel, obra_sel, ot_id_sel=None):
         def _extraer_fecha_despacho_meta(reproceso_txt):
             txt = str(reproceso_txt or "")
-            m = _re.search(r"FECHA_DESPACHO\s*:\s*([^|\n]+)", txt, flags=_re.IGNORECASE)
+            m = re.search(r"FECHA_DESPACHO\s*:\s*([^|\n]+)", txt, flags=re.IGNORECASE)
             return str(m.group(1)).strip() if m else ""
 
         def _etapa_pintura(reproceso_txt, proceso_u):
