@@ -968,13 +968,36 @@ def ot_editar(ot_id):
 @ot_bp.route("/modulo/ot/eliminar/<int:ot_id>")
 def ot_eliminar(ot_id):
     db = get_db()
-    # Obtener la obra asociada a la OT
+    # Borrado en orden para evitar violaciones FK en MySQL.
     ot = db.execute("SELECT obra FROM ordenes_trabajo WHERE id=?", (ot_id,)).fetchone()
-    if ot and ot[0]:
-        db.execute("DELETE FROM procesos WHERE obra=?", (ot[0],))
-    db.execute("DELETE FROM ordenes_trabajo WHERE id=?", (ot_id,))
-    db.commit()
-    return redirect("/modulo/ot")
+    if not ot:
+        return redirect("/modulo/ot?mensaje=OT no encontrada")
+
+    obra = str(ot[0] or "").strip()
+    try:
+        db.execute("DELETE FROM recepcion_materiales WHERE ot_id=?", (ot_id,))
+        db.execute("DELETE FROM control_proceso WHERE ot_id=?", (ot_id,))
+        db.execute("DELETE FROM control_despacho WHERE ot_id=?", (ot_id,))
+        db.execute("DELETE FROM partes_trabajo WHERE ot_id=?", (ot_id,))
+        db.execute("DELETE FROM remitos WHERE ot_id=?", (ot_id,))
+
+        # Limpiar procesos de la OT y fallback legacy por obra cuando ot_id no estaba informado.
+        db.execute("DELETE FROM procesos WHERE ot_id=?", (ot_id,))
+        if obra:
+            db.execute(
+                "DELETE FROM procesos WHERE (ot_id IS NULL OR ot_id=0) AND TRIM(COALESCE(obra,''))=TRIM(?)",
+                (obra,),
+            )
+
+        db.execute("DELETE FROM ordenes_trabajo WHERE id=?", (ot_id,))
+        db.commit()
+        return redirect("/modulo/ot?mensaje=OT eliminada")
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return redirect(f"/modulo/ot?mensaje=Error eliminando OT: {html_lib.escape(str(exc))}")
 
 
 @ot_bp.route("/modulo/ot/cerrar/<int:ot_id>", methods=["POST"])
