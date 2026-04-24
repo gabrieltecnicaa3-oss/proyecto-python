@@ -2652,7 +2652,7 @@ def calidad_escaneo_form_pintura():
         term_firma_form = request.form.getlist("term_firma[]")
 
         filas_pintura = []
-        piezas_espesor_incompleto = []
+        piezas_campos_incompletos = []
         total_filas = len(piezas_form)
         for i in range(total_filas):
             pieza = (piezas_form[i] if i < len(piezas_form) else "").strip()
@@ -2662,18 +2662,34 @@ def calidad_escaneo_form_pintura():
             descripcion = (desc_form[i] if i < len(desc_form) else "").strip()
             sup_estado = (sup_estado_form[i] if i < len(sup_estado_form) else "").strip().upper()
             sup_resp = (sup_resp_form[i] if i < len(sup_resp_form) else "").strip()
-            sup_resp_nombre = (sup_firma_form[i] if i < len(sup_firma_form) else "").strip()  # Ahora es el nombre
+            sup_resp_nombre = (sup_firma_form[i] if i < len(sup_firma_form) else "").strip() or sup_resp
             sup_firma = responsables_control.get(sup_resp_nombre, {}).get("firma", "") if sup_resp_nombre else ""
             fondo_espesor = _to_float(fondo_espesor_form[i] if i < len(fondo_espesor_form) else "")
             fondo_fecha = (fondo_fecha_form[i] if i < len(fondo_fecha_form) else "").strip()
-            fondo_resp_nombre = (fondo_firma_form[i] if i < len(fondo_firma_form) else "").strip()
+            fondo_resp = (fondo_resp_form[i] if i < len(fondo_resp_form) else "").strip()
+            fondo_resp_nombre = (fondo_firma_form[i] if i < len(fondo_firma_form) else "").strip() or fondo_resp
             fondo_firma = responsables_control.get(fondo_resp_nombre, {}).get("firma", "") if fondo_resp_nombre else ""
             term_espesor = _to_float(term_espesor_form[i] if i < len(term_espesor_form) else "")
             term_fecha = (term_fecha_form[i] if i < len(term_fecha_form) else "").strip()
-            term_resp_nombre = (term_firma_form[i] if i < len(term_firma_form) else "").strip()
+            term_resp = (term_resp_form[i] if i < len(term_resp_form) else "").strip()
+            term_resp_nombre = (term_firma_form[i] if i < len(term_firma_form) else "").strip() or term_resp
             term_firma = responsables_control.get(term_resp_nombre, {}).get("firma", "") if term_resp_nombre else ""
-            if sup_estado != "NO APLICA" and (fondo_espesor <= 0 or term_espesor <= 0):
-                piezas_espesor_incompleto.append(pieza)
+
+            fila_incompleta = False
+            if sup_estado not in {"APROBADA", "NO_APROBADA", "NO APLICA"}:
+                fila_incompleta = True
+            if not sup_resp:
+                fila_incompleta = True
+
+            if sup_estado != "NO APLICA":
+                if fondo_espesor <= 0 or not fondo_fecha or not fondo_resp:
+                    fila_incompleta = True
+                if term_espesor <= 0 or not term_fecha or not term_resp:
+                    fila_incompleta = True
+
+            if fila_incompleta:
+                piezas_campos_incompletos.append(pieza)
+
             filas_pintura.append({
                 "pieza": pieza,
                 "cantidad": cantidad,
@@ -2691,10 +2707,10 @@ def calidad_escaneo_form_pintura():
                 "term_firma": term_firma,
             })
 
-        if piezas_espesor_incompleto:
-            listado = ", ".join(piezas_espesor_incompleto[:6])
-            sufijo = "..." if len(piezas_espesor_incompleto) > 6 else ""
-            msg = f"Completá espesor de pintura (fondo y terminación) en: {listado}{sufijo}"
+        if piezas_campos_incompletos:
+            listado = ", ".join(piezas_campos_incompletos[:6])
+            sufijo = "..." if len(piezas_campos_incompletos) > 6 else ""
+            msg = f"Completá todos los campos obligatorios en: {listado}{sufijo}"
             return redirect("/modulo/calidad/escaneo/form-pintura?obra=" + quote(obra) + "&mensaje=" + quote(msg))
 
         # Eliminado bloque de temperatura y humedad
@@ -3260,36 +3276,55 @@ def calidad_escaneo_form_pintura():
             actualizarEstadoGuardado();
         }}
 
-        function filaRequiereEspesor(row) {{
+        function filaNoAplica(row) {{
             const supEstado = row.querySelector('.sup-estado');
             if (!supEstado) return false;
-            return (supEstado.value || '').toUpperCase() !== 'NO APLICA';
+            return (supEstado.value || '').toUpperCase() === 'NO APLICA';
         }}
 
-        function filaCompletaEspesor(row) {{
+        function filaCompleta(row) {{
+            const supEstado = row.querySelector('.sup-estado');
+            const supResp = row.querySelector('.sup-resp');
             const fondoInput = row.querySelector('.fondo-espesor');
+            const fondoFecha = row.querySelector('.fondo-fecha');
+            const fondoResp = row.querySelector('.fondo-resp');
             const termInput = row.querySelector('.term-espesor');
+            const termFecha = row.querySelector('.term-fecha');
+            const termResp = row.querySelector('.term-resp');
+
+            const estadoVal = ((supEstado && supEstado.value) || '').toUpperCase();
+            if (!estadoVal) return false;
+            if (!supResp || !supResp.value) return false;
+
+            if (estadoVal === 'NO APLICA') {{
+                return true;
+            }}
+
             const fondo = toFloat(fondoInput ? fondoInput.value : '');
             const term = toFloat(termInput ? termInput.value : '');
-            return fondo > 0 && term > 0;
+            if (fondo <= 0 || term <= 0) return false;
+            if (!fondoFecha || !fondoFecha.value) return false;
+            if (!termFecha || !termFecha.value) return false;
+            if (!fondoResp || !fondoResp.value) return false;
+            if (!termResp || !termResp.value) return false;
+            return true;
         }}
 
         function actualizarEstadoGuardado() {{
             if (!btnGuardar) return;
             const filas = Array.from(document.querySelectorAll('.pieza-row'));
-            let hayFilasAplicables = false;
+            let hayFilas = false;
             let todoCompleto = true;
 
             for (const row of filas) {{
-                if (!filaRequiereEspesor(row)) continue;
-                hayFilasAplicables = true;
-                if (!filaCompletaEspesor(row)) {{
+                hayFilas = true;
+                if (!filaCompleta(row)) {{
                     todoCompleto = false;
                     break;
                 }}
             }}
 
-            const habilitar = hayFilasAplicables && todoCompleto;
+            const habilitar = hayFilas && todoCompleto;
             btnGuardar.disabled = !habilitar;
             btnGuardar.style.opacity = habilitar ? '1' : '0.6';
             btnGuardar.style.cursor = habilitar ? 'pointer' : 'not-allowed';
@@ -3318,7 +3353,7 @@ def calidad_escaneo_form_pintura():
                 actualizarEstadoGuardado();
                 if (btnGuardar && btnGuardar.disabled) {{
                     ev.preventDefault();
-                    alert('Completá todos los espesores de pintura antes de guardar.');
+                    alert('Completá todos los campos obligatorios antes de guardar.');
                 }}
             }});
         }}
