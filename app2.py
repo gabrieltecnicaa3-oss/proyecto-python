@@ -2000,7 +2000,11 @@ def dashboard():
 def home(page=1):
     db = get_db()
     es_obra = _is_obra_session()
-    responsables_control = _obtener_responsables_control(db)
+    try:
+        responsables_control = _obtener_responsables_control(db)
+    except Exception as exc:
+        print(f"[home] error obteniendo responsables: {exc}")
+        responsables_control = {}
     responsable_por_firma = {
         str(data.get("firma", "")).strip().lower(): nombre
         for nombre, data in responsables_control.items()
@@ -3350,7 +3354,11 @@ def pieza(pos):
     </div>
     """
 
-    responsables_control = _obtener_responsables_control(db)
+    try:
+        responsables_control = _obtener_responsables_control(db)
+    except Exception as exc:
+        print(f"[cargar] error obteniendo responsables: {exc}")
+        responsables_control = {}
     responsable_por_firma = {
         str(data.get("firma", "")).strip().lower(): nombre
         for nombre, data in responsables_control.items()
@@ -3841,7 +3849,11 @@ def cargar(pos):
         </html>
         """
     
-    responsables_control = _obtener_responsables_control(db)
+    try:
+        responsables_control = _obtener_responsables_control(db)
+    except Exception as exc:
+        print(f"[cargar] error obteniendo responsables: {exc}")
+        responsables_control = {}
     firmas_responsables = {k: v.get("firma", "") for k, v in responsables_control.items()}
     imagenes_responsables = {k: v.get("firma_url", "") for k, v in responsables_control.items()}
     opciones_responsables = "".join(
@@ -4179,7 +4191,11 @@ def cargar(pos):
                 break
 
     procesos_hechos = obtener_procesos_completados(pos, obra_ot_actual if obra_ot_actual else None, ot_id_existente)
-    operarios_disponibles = _obtener_operarios_disponibles(db)
+    try:
+        operarios_disponibles = _obtener_operarios_disponibles(db)
+    except Exception as exc:
+        print(f"[cargar] error obteniendo operarios: {exc}")
+        operarios_disponibles = []
     opciones_operarios = "".join(
         f'<option value="{html_lib.escape(nombre)}">{html_lib.escape(nombre)}</option>'
         for nombre in operarios_disponibles

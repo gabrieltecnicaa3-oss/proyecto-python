@@ -3879,9 +3879,18 @@ def control_pintura_nuevo():
     # MODO CARGA: Formulario simple para operarios
     if request.method == "GET":
         db = get_db()
-        responsables_control = _obtener_responsables_control(db)
+        try:
+            responsables_control = _obtener_responsables_control(db)
+        except Exception as exc:
+            print(f"[control_pintura] error obteniendo responsables: {exc}")
+            responsables_control = {}
         responsables_list = sorted(responsables_control.keys())
-        operarios_disponibles = _obtener_operarios_disponibles(db)
+
+        try:
+            operarios_disponibles = _obtener_operarios_disponibles(db)
+        except Exception as exc:
+            print(f"[control_pintura] error obteniendo operarios: {exc}")
+            operarios_disponibles = []
         operarios_list = sorted(set(operarios_disponibles))
 
         # Obtener OTs activas con piezas disponibles para control pintura.

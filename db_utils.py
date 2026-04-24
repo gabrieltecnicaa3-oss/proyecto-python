@@ -146,6 +146,44 @@ def _parse_pragma_table_info(sql):
     return raw
 
 
+def _parse_insert_table_and_columns(sql):
+    m = re.match(
+        r"^\s*INSERT\s+INTO\s+`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\(([^)]*)\)\s*VALUES\s*\(",
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not m:
+        return None, None
+    table = (m.group(1) or "").strip()
+    cols_raw = m.group(2) or ""
+    cols = [c.strip().strip("`").strip() for c in cols_raw.split(",") if c.strip()]
+    return table, cols
+
+
+def _is_mysql_missing_id_default_error(exc):
+    txt = str(exc or "")
+    return "(1364" in txt and "Field 'id' doesn't have a default value" in txt
+
+
+def _inject_id_in_insert(sql_mysql):
+    # Inserta `id` en la lista de columnas y `%s` como primer valor.
+    sql2 = re.sub(
+        r"(INSERT\s+INTO\s+`?[A-Za-z_][A-Za-z0-9_]*`?\s*\()",
+        r"\1id, ",
+        sql_mysql,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    sql2 = re.sub(
+        r"(VALUES\s*\()",
+        r"\1%s, ",
+        sql2,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    return sql2
+
+
 class MySQLCompatConnection:
     def __init__(self, conn):
         self._conn = conn
@@ -177,7 +215,26 @@ class MySQLCompatConnection:
         sql_mysql = _normalize_sql_for_mysql(_convert_qmarks_to_format(sql))
         sql_mysql = _escape_percent_for_pymysql_format(sql_mysql)
         cur = self._conn.cursor()
-        cur.execute(sql_mysql, params or ())
+        exec_params = params or ()
+        try:
+            cur.execute(sql_mysql, exec_params)
+        except Exception as exc:
+            # Compatibilidad de emergencia para esquemas legacy sin AUTO_INCREMENT en id.
+            if not _is_mysql_missing_id_default_error(exc):
+                raise
+
+            table, cols = _parse_insert_table_and_columns(sql_mysql)
+            if not table or not cols or "id" in {c.lower() for c in cols}:
+                raise
+
+            id_cur = self._conn.cursor()
+            id_cur.execute(f"SELECT COALESCE(MAX(id), 0) + 1 FROM `{table}`")
+            id_row = id_cur.fetchone()
+            next_id = int((id_row[0] if id_row else 1) or 1)
+
+            retry_sql = _inject_id_in_insert(sql_mysql)
+            retry_params = (next_id,) + tuple(exec_params)
+            cur.execute(retry_sql, retry_params)
         return cur
 
     def executemany(self, sql, seq_of_params):
