@@ -6186,7 +6186,7 @@ def control_pintura_nuevo():
                     </div>
                     <div id="camposEtapa" style="margin-top:12px;"></div>
                     <div style="margin-top:10px;">
-                        <button class="btn" type="button" id="btnGuardarControl">💾 Guardar control</button>
+                        <button class="btn" type="button" id="btnGuardarControl" disabled>💾 Guardar control</button>
                     </div>
                 </div>
 
@@ -6224,7 +6224,7 @@ def control_pintura_nuevo():
                     <div class="actions">
                         {f'<a class="btn btn-blue" href="/modulo/calidad/escaneo/generar-pdf-control/{control_id}">📄 Generar PDF</a>' if control_id else '<button class="btn btn-blue" type="button" disabled>📄 Generar PDF</button>'}
                         <a class="btn btn-blue" href="/modulo/calidad/escaneo/controles-pintura">📋 Ver controles</a>
-                        <a class="btn btn-blue" href="/home">🏠 Estado de piezas</a>
+                        <a class="btn btn-blue" href="/home">🏠 Estado de piezas por proceso</a>
                         <a class="btn btn-blue" href="/modulo/calidad/escaneo">⬅️ Volver</a>
                     </div>
                 </div>
@@ -6270,6 +6270,7 @@ def control_pintura_nuevo():
                     if (!ok) chk.checked = false;
                 }});
                 renderCamposEtapa();
+                actualizarEstadoBotonGuardar();
             }}
 
             function renderCamposEtapa() {{
@@ -6277,9 +6278,14 @@ def control_pintura_nuevo():
                 const cont = document.getElementById('camposEtapa');
                 const sel = Array.from(document.querySelectorAll('.pieza-check:checked')).map(x => x.value);
 
-                if (!etapa) {{ cont.innerHTML = ''; return; }}
+                if (!etapa) {{
+                    cont.innerHTML = '';
+                    actualizarEstadoBotonGuardar();
+                    return;
+                }}
                 if (!sel.length) {{
                     cont.innerHTML = '<div class="hint">Seleccioná al menos una pieza habilitada para la etapa elegida.</div>';
+                    actualizarEstadoBotonGuardar();
                     return;
                 }}
 
@@ -6295,8 +6301,8 @@ def control_pintura_nuevo():
                     if (etapa === 'superficie') {{
                         html += '<td><select data-k="estado" data-p="' + pieza + '">';
                         html += '<option value="">Seleccionar...</option>';
-                        html += '<option value="APROBADA">✅ APROBADO</option>';
-                        html += '<option value="NO_APROBADA">❌ NO APROBADO</option>';
+                        html += '<option value="CONFORME">✅ CONFORME</option>';
+                        html += '<option value="NO CONFORME">❌ NO CONFORME</option>';
                         html += '</select></td>';
                         html += '<td><input data-k="fecha_control" data-p="' + pieza + '" type="date" value="' + (document.getElementById('fecha').value || '') + '"></td>';
                     }} else {{
@@ -6307,6 +6313,53 @@ def control_pintura_nuevo():
                 }});
                 html += '</tbody></table></div>';
                 cont.innerHTML = html;
+
+                document.querySelectorAll('#camposEtapa [data-k]').forEach((node) => {{
+                    node.addEventListener('input', actualizarEstadoBotonGuardar);
+                    node.addEventListener('change', actualizarEstadoBotonGuardar);
+                }});
+                actualizarEstadoBotonGuardar();
+            }}
+
+            function etapaCompletaParaGuardar() {{
+                const obra = document.getElementById('obra').value;
+                const etapa = document.getElementById('etapa').value;
+                const fecha = document.getElementById('fecha').value;
+                const responsable = document.getElementById('responsable').value;
+                const operario = document.getElementById('operario').value;
+                const piezasSel = Array.from(document.querySelectorAll('.pieza-check:checked')).map(x => x.value);
+
+                if (!obra || !etapa || !fecha || !responsable || !operario || !piezasSel.length) {{
+                    return false;
+                }}
+
+                for (const pieza of piezasSel) {{
+                    const fechaCtrl = document.querySelector('[data-k="fecha_control"][data-p="' + pieza + '"]');
+                    if (!fechaCtrl || !fechaCtrl.value) {{
+                        return false;
+                    }}
+
+                    if (etapa === 'superficie') {{
+                        const estadoNode = document.querySelector('[data-k="estado"][data-p="' + pieza + '"]');
+                        if (!estadoNode || !estadoNode.value) {{
+                            return false;
+                        }}
+                    }} else {{
+                        const espNode = document.querySelector('[data-k="espesor"][data-p="' + pieza + '"]');
+                        const espVal = espNode ? parseFloat(String(espNode.value).replace(',', '.')) : NaN;
+                        if (!espNode || Number.isNaN(espVal) || espVal <= 0) {{
+                            return false;
+                        }}
+                    }}
+                }}
+
+                return true;
+            }}
+
+            function actualizarEstadoBotonGuardar() {{
+                const btn = document.getElementById('btnGuardarControl');
+                if (!btn) return;
+                btn.disabled = !etapaCompletaParaGuardar();
             }}
 
             document.getElementById('obra').addEventListener('change', () => {{
@@ -6317,6 +6370,9 @@ def control_pintura_nuevo():
 
             document.getElementById('etapa').addEventListener('change', refrescarSeleccionPorEtapa);
             document.querySelectorAll('.pieza-check').forEach(c => c.addEventListener('change', renderCamposEtapa));
+            document.getElementById('fecha').addEventListener('change', actualizarEstadoBotonGuardar);
+            document.getElementById('responsable').addEventListener('change', actualizarEstadoBotonGuardar);
+            document.getElementById('operario').addEventListener('change', actualizarEstadoBotonGuardar);
 
             // ─── Paginación ───
             let paginaActual = 1;
@@ -6451,6 +6507,7 @@ def control_pintura_nuevo():
             if (document.getElementById('etapa').value) {{
                 refrescarSeleccionPorEtapa();
             }}
+            actualizarEstadoBotonGuardar();
 
             function quitarRiRow(btn) {{
                 const row = btn.closest('.ri-row');

@@ -2174,7 +2174,7 @@ def home(page=1):
               AND COALESCE(obra, '') = COALESCE(?, '')
                             AND COALESCE(ot_id, -1) = COALESCE(?, -1)
               AND eliminado=0
-              AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('ARMADO','SOLDADURA','P/DESPACHO')
+                              AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('ARMADO','SOLDADURA','DESPACHO','P/DESPACHO')
                     AND (
                         (ot_id IS NOT NULL AND EXISTS (
                             SELECT 1 FROM ordenes_trabajo ot
@@ -2202,10 +2202,11 @@ def home(page=1):
         despachado = {"estado": "-", "fecha": "-", "detalle": "Sin remito"}
 
         for proceso, estado, reinspeccion, firma, fecha_reg, estado_pieza, reproceso in rows:
+            proceso_norm = 'DESPACHO' if proceso in ('DESPACHO', 'P/DESPACHO') else proceso
             if not firma.strip():
                 firmas_faltantes += 1
-            if proceso not in latest:
-                latest[proceso] = {
+            if proceso_norm not in latest:
+                latest[proceso_norm] = {
                     'estado': estado,
                     'reinspeccion': reinspeccion,
                     'firma': firma,
@@ -2214,7 +2215,7 @@ def home(page=1):
                     'reproceso': reproceso,
                 }
 
-            if proceso == 'P/DESPACHO':
+            if proceso_norm == 'DESPACHO':
                 estado_pieza_desp = str(estado_pieza or '').strip().upper()
                 fecha_meta = _extraer_fecha_despacho_meta(reproceso)
                 if estado_pieza_desp == 'DESPACHADO' or fecha_meta:
@@ -2712,7 +2713,7 @@ def home(page=1):
                 <th>Armado</th>
                 <th>Soldadura</th>
                 <th>Pintura</th>
-                <th>Despacho</th>
+                <th>P/DESPACHO</th>
                 <th>Despachado</th>
                 <th>Re-inspección ISO</th>
                 <th>Acciones</th>

@@ -768,7 +768,7 @@ def api_piezas_remito(ot_id):
                                            AND obra = p_despacho.obra
                                        )
             WHERE p_despacho.ot_id = ?
-              AND p_despacho.proceso = 'P/DESPACHO'
+                            AND UPPER(TRIM(COALESCE(p_despacho.proceso, ''))) IN ('DESPACHO', 'P/DESPACHO')
               AND UPPER(TRIM(COALESCE(p_despacho.estado, ''))) = 'OK'
               AND UPPER(TRIM(COALESCE(p_despacho.estado_pieza, ''))) != 'DESPACHADO'
         """, (ot_id,)).fetchall()
@@ -791,7 +791,7 @@ def api_piezas_remito(ot_id):
                                        )
             WHERE TRIM(COALESCE(p_despacho.obra, '')) = ?
               AND (p_despacho.ot_id IS NULL OR p_despacho.ot_id = ?)
-              AND p_despacho.proceso = 'P/DESPACHO'
+                            AND UPPER(TRIM(COALESCE(p_despacho.proceso, ''))) IN ('DESPACHO', 'P/DESPACHO')
               AND UPPER(TRIM(COALESCE(p_despacho.estado, ''))) = 'OK'
               AND UPPER(TRIM(COALESCE(p_despacho.estado_pieza, ''))) != 'DESPACHADO'
         """, (obra_ot, ot_id)).fetchall()
