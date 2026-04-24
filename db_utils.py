@@ -83,6 +83,48 @@ def _normalize_sql_for_mysql(sql):
     return sql_out
 
 
+def _escape_percent_for_pymysql_format(sql):
+    """Escapa '%' literales para evitar que PyMySQL los tome como placeholders.
+
+    Conserva `%s` (placeholders reales) y `%%` (porcentaje ya escapado).
+    """
+    out = []
+    in_single = False
+    in_double = False
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == "%":
+            nxt = sql[i + 1] if i + 1 < len(sql) else ""
+            if not in_single and not in_double and nxt in ("s", "%"):
+                out.append("%")
+            elif in_single and nxt == "%":
+                # Mantener porcentajes ya escapados dentro de literales.
+                out.append("%")
+            else:
+                out.append("%%")
+            i += 1
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
+
 def _parse_pragma_table_info(sql):
     m = re.match(r"^\s*PRAGMA\s+table_info\(([^)]+)\)\s*;?\s*$", sql, flags=re.IGNORECASE)
     if not m:
@@ -120,12 +162,14 @@ class MySQLCompatConnection:
             return _StaticCursor(pragma_rows)
 
         sql_mysql = _normalize_sql_for_mysql(_convert_qmarks_to_format(sql))
+        sql_mysql = _escape_percent_for_pymysql_format(sql_mysql)
         cur = self._conn.cursor()
         cur.execute(sql_mysql, params or ())
         return cur
 
     def executemany(self, sql, seq_of_params):
         sql_mysql = _normalize_sql_for_mysql(_convert_qmarks_to_format(sql))
+        sql_mysql = _escape_percent_for_pymysql_format(sql_mysql)
         cur = self._conn.cursor()
         cur.executemany(sql_mysql, seq_of_params)
         return cur

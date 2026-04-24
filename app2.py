@@ -424,6 +424,20 @@ def init_db():
         FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)
     )
     """)
+
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS remitos (
+        id INTEGER PRIMARY KEY,
+        cliente TEXT,
+        ot_id INTEGER,
+        material_entregado TEXT,
+        cantidad INTEGER,
+        fecha TEXT,
+        pdf_path TEXT,
+        fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)
+    )
+    """)
     
     db.execute("""
     CREATE TABLE IF NOT EXISTS partes_trabajo (
