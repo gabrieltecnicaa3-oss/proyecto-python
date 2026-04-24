@@ -33,8 +33,8 @@ def _env_flag_true(name, default=False):
     return str(raw).strip().lower() in ("1", "true", "yes", "on", "si")
 
 
-# Availability-first mode: if MySQL is down/misconfigured, continue with SQLite.
-MYSQL_FAIL_OPEN = _env_flag_true("MYSQL_FAIL_OPEN", default=True)
+# Data-consistency-first mode: avoid silent split between MySQL and SQLite.
+MYSQL_FAIL_OPEN = _env_flag_true("MYSQL_FAIL_OPEN", default=False)
 
 
 class _StaticCursor:
@@ -221,8 +221,10 @@ def _connect_sqlite():
 def get_db():
     if DB_ENGINE == "mysql":
         if pymysql is None:
-            print("[db_utils] PyMySQL no disponible; fallback a SQLite")
-            return _connect_sqlite()
+            if MYSQL_FAIL_OPEN:
+                print("[db_utils] PyMySQL no disponible; fallback a SQLite")
+                return _connect_sqlite()
+            raise RuntimeError("PyMySQL no disponible y MYSQL_FAIL_OPEN=0")
         try:
             mysql_conn = pymysql.connect(
                 host=os.getenv("MYSQL_HOST", "127.0.0.1"),
@@ -235,8 +237,10 @@ def get_db():
             )
             return MySQLCompatConnection(mysql_conn)
         except Exception as exc:
-            print(f"[db_utils] Error MySQL ({exc}); fallback a SQLite")
-            return _connect_sqlite()
+            if MYSQL_FAIL_OPEN:
+                print(f"[db_utils] Error MySQL ({exc}); fallback a SQLite")
+                return _connect_sqlite()
+            raise
     return _connect_sqlite()
 
 
