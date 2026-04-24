@@ -3118,11 +3118,13 @@ def calidad_escaneo_form_pintura():
     .th-pint {{ background:#f97316; }}
     td:first-child {{ text-align:left; }}
     input, select {{ width:100%; padding:7px; border:1px solid #d1d5db; border-radius:6px; box-sizing:border-box; font-size:12px; }}
+    input.field-error, select.field-error {{ border-color: #dc2626 !important; background-color: #fee2e2 !important; }}
     .actions {{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }}
     .estado-ok {{ color:#166534; font-weight:bold; background:#dcfce7; }}
     .estado-nc {{ color:#991b1b; font-weight:bold; background:#fee2e2; }}
     .firma-img {{ display:block; margin:auto; }}
     .pieza-row.deshabilitada input, .pieza-row.deshabilitada select {{ opacity:0.5; cursor:not-allowed; }}
+    .validation-note {{ color: #dc2626; font-size: 11px; margin-top: 2px; font-weight: 700; }}
     </style>
     </head>
     <body>
@@ -3282,6 +3284,37 @@ def calidad_escaneo_form_pintura():
             return (supEstado.value || '').toUpperCase() === 'NO APLICA';
         }}
 
+        function limpiarErrores(row) {{
+            row.querySelectorAll('.sup-estado, .sup-resp, .fondo-espesor, .fondo-fecha, .fondo-resp, .term-espesor, .term-fecha, .term-resp').forEach(el => {{
+                el.classList.remove('field-error');
+            }});
+        }}
+
+        function marcarErrores(row) {{
+            limpiarErrores(row);
+            const supEstado = row.querySelector('.sup-estado');
+            const supResp = row.querySelector('.sup-resp');
+            const fondoInput = row.querySelector('.fondo-espesor');
+            const fondoFecha = row.querySelector('.fondo-fecha');
+            const fondoResp = row.querySelector('.fondo-resp');
+            const termInput = row.querySelector('.term-espesor');
+            const termFecha = row.querySelector('.term-fecha');
+            const termResp = row.querySelector('.term-resp');
+
+            const estadoVal = ((supEstado && supEstado.value) || '').toUpperCase();
+            if (!estadoVal && supEstado) supEstado.classList.add('field-error');
+            if (!supResp || !supResp.value) {{ if (supResp) supResp.classList.add('field-error'); }}
+            
+            if (estadoVal !== 'NO APLICA') {{
+                if (toFloat(fondoInput ? fondoInput.value : '') <= 0) fondoInput.classList.add('field-error');
+                if (!fondoFecha || !fondoFecha.value) {{ if (fondoFecha) fondoFecha.classList.add('field-error'); }}
+                if (!fondoResp || !fondoResp.value) {{ if (fondoResp) fondoResp.classList.add('field-error'); }}
+                if (toFloat(termInput ? termInput.value : '') <= 0) termInput.classList.add('field-error');
+                if (!termFecha || !termFecha.value) {{ if (termFecha) termFecha.classList.add('field-error'); }}
+                if (!termResp || !termResp.value) {{ if (termResp) termResp.classList.add('field-error'); }}
+            }}
+        }}
+
         function filaCompleta(row) {{
             const supEstado = row.querySelector('.sup-estado');
             const supResp = row.querySelector('.sup-resp');
@@ -3320,7 +3353,16 @@ def calidad_escaneo_form_pintura():
                 hayFilas = true;
                 if (!filaCompleta(row)) {{
                     todoCompleto = false;
-                    break;
+                }} else {{
+                    marcarErrores(row);
+                }}
+            }}
+
+            for (const row of filas) {{
+                if (!filaCompleta(row)) {{
+                    marcarErrores(row);
+                }} else {{
+                    limpiarErrores(row);
                 }}
             }}
 
@@ -3329,6 +3371,24 @@ def calidad_escaneo_form_pintura():
             btnGuardar.style.opacity = habilitar ? '1' : '0.6';
             btnGuardar.style.cursor = habilitar ? 'pointer' : 'not-allowed';
         }}
+
+        // Agregar event listeners a todos los campos para marcar errores en tiempo real
+        document.querySelectorAll('.sup-estado, .sup-resp, .fondo-espesor, .fondo-fecha, .fondo-resp, .term-espesor, .term-fecha, .term-resp').forEach(input => {{
+            input.addEventListener('change', () => {{
+                const row = input.closest('.pieza-row');
+                if (row) {{
+                    marcarErrores(row);
+                    actualizarEstadoGuardado();
+                }}
+            }});
+            input.addEventListener('input', () => {{
+                const row = input.closest('.pieza-row');
+                if (row) {{
+                    marcarErrores(row);
+                    actualizarEstadoGuardado();
+                }}
+            }});
+        }});
 
         // Agregar event listeners a los inputs de espesor
         document.querySelectorAll('.fondo-espesor, .term-espesor').forEach(input => {{

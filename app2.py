@@ -2130,6 +2130,11 @@ def home(page=1):
             m = re.search(r"FECHA_DESPACHO\s*:\s*([^|\n]+)", txt, flags=re.IGNORECASE)
             return str(m.group(1)).strip() if m else ""
 
+        def _extraer_remito_meta(reproceso_txt):
+            txt = str(reproceso_txt or "")
+            m = re.search(r"REMITO\s*:\s*([^|\n]+)", txt, flags=re.IGNORECASE)
+            return str(m.group(1)).strip() if m else ""
+
         def _etapa_pintura(reproceso_txt, proceso_u):
             ru = (reproceso_txt or '').upper()
             if 'ETAPA:SUPERFICIE' in ru:
@@ -2218,11 +2223,13 @@ def home(page=1):
             if proceso_norm == 'DESPACHO':
                 estado_pieza_desp = str(estado_pieza or '').strip().upper()
                 fecha_meta = _extraer_fecha_despacho_meta(reproceso)
+                remito_meta = _extraer_remito_meta(reproceso)
                 if estado_pieza_desp == 'DESPACHADO' or fecha_meta:
+                    detalle_texto = remito_meta if remito_meta else "Remito generado"
                     despachado = {
                         "estado": "DESPACHADO",
                         "fecha": fecha_meta or (str(fecha_reg or '').strip() or '-'),
-                        "detalle": "Remito generado",
+                        "detalle": detalle_texto,
                     }
 
             if estado in ('NC', 'NO CONFORME', 'NO CONFORMIDAD'):
@@ -2755,7 +2762,9 @@ def home(page=1):
 
             desp_data = stats_proc.get('despachado') or {}
             if str(desp_data.get('estado') or '').upper() == 'DESPACHADO':
-                despachado_html = f'<span class="chip chip-ok">DESPACHADO</span><div class="audit-text">{html_lib.escape(str(desp_data.get("fecha") or "-"))}</div>'
+                detalle_remito = html_lib.escape(str(desp_data.get("detalle") or "-"))
+                fecha_remito = html_lib.escape(str(desp_data.get("fecha") or "-"))
+                despachado_html = f'<span class="chip chip-ok">DESPACHADO</span><div class="audit-text">{detalle_remito}<br>{fecha_remito}</div>'
             else:
                 despachado_html = '<span class="chip chip-neutral">NO</span><div class="audit-text">Sin remito</div>'
             
