@@ -514,7 +514,7 @@ body {
   </div>
 
         <div class="chart-full">
-                                <h3>⏱ HS Consumidas vs HS Presupuestadas por Obra (OTs agrupadas)</h3>
+                                <h3>⏱ HS Consumidas vs HS Previstas por Obra (OTs agrupadas)</h3>
         <div id="no-data-hs" class="no-data-msg" style="display:none">Sin datos de horas por obra para el período seleccionado.</div>
         <canvas id="chartHS"></canvas>
     </div>

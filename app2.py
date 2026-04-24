@@ -2174,7 +2174,7 @@ def home(page=1):
               AND COALESCE(obra, '') = COALESCE(?, '')
                             AND COALESCE(ot_id, -1) = COALESCE(?, -1)
               AND eliminado=0
-              AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('ARMADO','SOLDADURA','DESPACHO')
+              AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('ARMADO','SOLDADURA','P/DESPACHO')
                     AND (
                         (ot_id IS NOT NULL AND EXISTS (
                             SELECT 1 FROM ordenes_trabajo ot
@@ -2214,7 +2214,7 @@ def home(page=1):
                     'reproceso': reproceso,
                 }
 
-            if proceso == 'DESPACHO':
+            if proceso == 'P/DESPACHO':
                 estado_pieza_desp = str(estado_pieza or '').strip().upper()
                 fecha_meta = _extraer_fecha_despacho_meta(reproceso)
                 if estado_pieza_desp == 'DESPACHADO' or fecha_meta:

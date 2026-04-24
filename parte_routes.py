@@ -890,7 +890,7 @@ def parte_carga_empleados():
             form_firma = firma_e
 
     empleados_listado = ""
-    for empleado_id, nombre_full, nombre_base, apellido, puesto_tipo, puesto_detalle, puesto_legacy, firma, firma_imagen_path in empleados_catalogo:
+    for idx, (empleado_id, nombre_full, nombre_base, apellido, puesto_tipo, puesto_detalle, puesto_legacy, firma, firma_imagen_path) in enumerate(empleados_catalogo, start=1):
         nombre_base_raw = str(nombre_base or "").strip()
         apellido_raw = str(apellido or "").strip()
         if not nombre_base_raw:
@@ -917,6 +917,7 @@ def parte_carga_empleados():
 
         empleados_listado += f"""
             <tr>
+                <td style="text-align: center; font-weight: bold; color: #f97316;">{idx}</td>
                 <td>{nombre_txt}</td>
                 <td>{apellido_txt}</td>
                 <td>{tipo_txt}</td>
@@ -1029,6 +1030,7 @@ def parte_carga_empleados():
     <div class="table-wrap">
         <table>
             <tr>
+                <th>N°</th>
                 <th>Nombre</th>
                 <th>Apellido</th>
                 <th>Tipo</th>

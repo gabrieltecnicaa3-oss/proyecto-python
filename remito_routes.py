@@ -324,7 +324,7 @@ def remitos():
 
             try:
                 with open(pdf_filename, "rb") as f_pdf:
-                    _guardar_pdf_databook(ot[1], "remitos", pdf_base, f_pdf.read(), ot_id=ot[0])
+                    _guardar_pdf_databook(ot[1], "remitos", pdf_base, f_pdf.read(), ot_id=int(ot_id))
             except Exception:
                 pass
 
@@ -768,8 +768,9 @@ def api_piezas_remito(ot_id):
                                            AND obra = p_despacho.obra
                                        )
             WHERE p_despacho.ot_id = ?
-              AND p_despacho.proceso = 'DESPACHO'
+              AND p_despacho.proceso = 'P/DESPACHO'
               AND UPPER(TRIM(COALESCE(p_despacho.estado, ''))) = 'OK'
+              AND UPPER(TRIM(COALESCE(p_despacho.estado_pieza, ''))) != 'DESPACHADO'
         """, (ot_id,)).fetchall()
 
         piezas_por_obra = db.execute("""
@@ -790,8 +791,9 @@ def api_piezas_remito(ot_id):
                                        )
             WHERE TRIM(COALESCE(p_despacho.obra, '')) = ?
               AND (p_despacho.ot_id IS NULL OR p_despacho.ot_id = ?)
-              AND p_despacho.proceso = 'DESPACHO'
+              AND p_despacho.proceso = 'P/DESPACHO'
               AND UPPER(TRIM(COALESCE(p_despacho.estado, ''))) = 'OK'
+              AND UPPER(TRIM(COALESCE(p_despacho.estado_pieza, ''))) != 'DESPACHADO'
         """, (obra_ot, ot_id)).fetchall()
 
         ids_vistos = {p[0] for p in piezas_por_ot}
