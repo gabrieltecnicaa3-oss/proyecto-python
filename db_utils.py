@@ -697,7 +697,7 @@ def _ruta_firma_responsable(responsables_control, responsable, firmas_empleados_
 def _obtener_operarios_disponibles(db):
     rows = db.execute(
         """
-        SELECT DISTINCT TRIM(nombre) AS nombre
+    SELECT DISTINCT TRIM(COALESCE(nombre, '')) AS nombre
         FROM empleados_parte
                 WHERE (
                                 LOWER(TRIM(COALESCE(puesto_tipo, ''))) = 'operario'
@@ -709,7 +709,7 @@ def _obtener_operarios_disponibles(db):
                                 OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%pintor%'
                             )
           AND TRIM(COALESCE(nombre, '')) <> ''
-                ORDER BY LOWER(TRIM(COALESCE(nombre, ''))) COLLATE NOCASE ASC
+                ORDER BY nombre ASC
         """
     ).fetchall()
 

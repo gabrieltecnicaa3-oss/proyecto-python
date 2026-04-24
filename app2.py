@@ -2972,6 +2972,27 @@ def pieza(pos):
     db = get_db()
     es_obra = _is_obra_session()
 
+    procesos_cols = """
+        id,
+        posicion,
+        UPPER(TRIM(COALESCE(proceso, ''))) AS proceso,
+        COALESCE(fecha, ''),
+        COALESCE(operario, ''),
+        UPPER(TRIM(COALESCE(estado, ''))) AS estado,
+        COALESCE(reproceso, ''),
+        COALESCE(re_inspeccion, ''),
+        COALESCE(obra, ''),
+        cantidad,
+        COALESCE(perfil, ''),
+        peso,
+        COALESCE(descripcion, ''),
+        COALESCE(firma_digital, ''),
+        COALESCE(estado_pieza, ''),
+        COALESCE(escaneado_qr, 0),
+        ot_id,
+        COALESCE(eliminado, 0)
+    """
+
     def _clean_qr(v):
         s = (v or '').strip()
         return '' if s.lower() in ('nan', 'none', 'nat', 'null') else s
@@ -2987,27 +3008,39 @@ def pieza(pos):
     # Si viene obra por QR/query, todo se resuelve por POS+OBRA.
     if qr_obra:
         datos_iniciales = db.execute("""
-            SELECT * FROM procesos 
+            SELECT
+                """ + procesos_cols + """
+            FROM procesos
             WHERE posicion=? AND obra=?
+              AND COALESCE(eliminado, 0) = 0
             LIMIT 1
         """, (pos, qr_obra)).fetchone()
 
         todas_filas = db.execute("""
-            SELECT * FROM procesos 
+            SELECT
+                """ + procesos_cols + """
+            FROM procesos
             WHERE posicion=? AND obra=?
+              AND COALESCE(eliminado, 0) = 0
             ORDER BY id
         """, (pos, qr_obra)).fetchall()
     else:
         # Compatibilidad con URLs antiguas sin obra
         datos_iniciales = db.execute("""
-            SELECT * FROM procesos 
+            SELECT
+                """ + procesos_cols + """
+            FROM procesos
             WHERE posicion=? AND obra IS NOT NULL 
+              AND COALESCE(eliminado, 0) = 0
             LIMIT 1
         """, (pos,)).fetchone()
 
         todas_filas = db.execute("""
-            SELECT * FROM procesos 
+            SELECT
+                """ + procesos_cols + """
+            FROM procesos
             WHERE posicion=? 
+              AND COALESCE(eliminado, 0) = 0
             ORDER BY id
         """, (pos,)).fetchall()
 
@@ -3079,23 +3112,31 @@ def pieza(pos):
 
             if qr_obra:
                 datos_iniciales = db.execute("""
-                    SELECT * FROM procesos
+                    SELECT
+                        """ + procesos_cols + """
+                    FROM procesos
                     WHERE posicion=? AND obra=? AND eliminado=0
                     LIMIT 1
                 """, (pos, qr_obra)).fetchone()
                 todas_filas = db.execute("""
-                    SELECT * FROM procesos
+                    SELECT
+                        """ + procesos_cols + """
+                    FROM procesos
                     WHERE posicion=? AND obra=? AND eliminado=0
                     ORDER BY id
                 """, (pos, qr_obra)).fetchall()
             else:
                 datos_iniciales = db.execute("""
-                    SELECT * FROM procesos
+                    SELECT
+                        """ + procesos_cols + """
+                    FROM procesos
                     WHERE posicion=? AND obra IS NOT NULL AND eliminado=0
                     LIMIT 1
                 """, (pos,)).fetchone()
                 todas_filas = db.execute("""
-                    SELECT * FROM procesos
+                    SELECT
+                        """ + procesos_cols + """
+                    FROM procesos
                     WHERE posicion=? AND eliminado=0
                     ORDER BY id
                 """, (pos,)).fetchall()
@@ -3110,22 +3151,28 @@ def pieza(pos):
         _completar_metadatos_por_obra_pos(db, obra_scope, pos)
         datos_iniciales = db.execute(
             """
-            SELECT * FROM procesos
+            SELECT
+                """ + procesos_cols + """
+            FROM procesos
             WHERE posicion=? AND obra=?
+              AND COALESCE(eliminado, 0) = 0
             LIMIT 1
             """,
             (pos, obra_scope),
         ).fetchone()
         todas_filas = db.execute(
             """
-            SELECT * FROM procesos
+            SELECT
+                """ + procesos_cols + """
+            FROM procesos
             WHERE posicion=? AND obra=?
+              AND COALESCE(eliminado, 0) = 0
             ORDER BY id
             """,
             (pos, obra_scope),
         ).fetchall()
 
-    obra_scope_btn = qr_obra or (str(datos_iniciales[2]).strip() if datos_iniciales and len(datos_iniciales) > 2 and datos_iniciales[2] else "")
+    obra_scope_btn = qr_obra or (str(datos_iniciales[8]).strip() if datos_iniciales and len(datos_iniciales) > 8 and datos_iniciales[8] else "")
     ot_scope_btn = qr_ot_id or _obtener_ot_id_pieza(db, pos, obra_scope_btn)
     es_completada = pieza_completada(pos, qr_obra if qr_obra else None, ot_scope_btn)
 
@@ -3374,7 +3421,7 @@ def pieza(pos):
         elif estado_u == "RE-INSPECCIÓN":
             return '<span class="flujo-badge flujo-curso">RE-INSPECCION</span>'
         else:
-            return '<span class="flujo-badge flujo-curso">PENDIENTE</span>'
+            return '<span class="flujo-badge flujo-curso">SIN CONTROL</span>'
 
     def _estado_cls(estado_u):
         if estado_u in ("OK", "APROBADO"):
@@ -3593,7 +3640,7 @@ def pieza(pos):
             elif ciclos_reinspeccion:
                 flujo_estado_html = '<span class="flujo-badge flujo-curso">RE-INSPECCION EN CURSO</span>'
             else:
-                flujo_estado_html = '<span class="flujo-badge flujo-curso">PENDIENTE DE RESOLUCION</span>'
+                flujo_estado_html = '<span class="flujo-badge flujo-curso">SIN CONTROL</span>'
 
             reinsp_aprobada = _estado_control_aprueba(ultimo_ciclo_estado)
             acciones = ""
