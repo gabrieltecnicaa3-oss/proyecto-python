@@ -59,6 +59,84 @@ def _path_tmp_valido(path_tmp):
         return False
 
 
+def _crear_ot_resiliente(
+    db,
+    cliente,
+    obra,
+    titulo,
+    fecha_entrega,
+    estado,
+    hs_previstas,
+    tipo_estructura,
+    esquema_pintura,
+    espesor_total_requerido,
+):
+    """Crea OT tolerando esquemas MySQL viejos sin AUTO_INCREMENT en id."""
+    insert_sql = """
+    INSERT INTO ordenes_trabajo (cliente, obra, titulo, fecha_entrega, estado, estado_avance, hs_previstas, tipo_estructura, esquema_pintura, espesor_total_requerido)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    insert_params = (
+        cliente,
+        obra,
+        titulo,
+        fecha_entrega,
+        estado,
+        0,
+        hs_previstas,
+        tipo_estructura,
+        esquema_pintura,
+        espesor_total_requerido,
+    )
+
+    try:
+        cur = db.execute(insert_sql, insert_params)
+        db.commit()
+        ot_id = int(cur.lastrowid or 0)
+        if ot_id <= 0:
+            row = db.execute("SELECT COALESCE(MAX(id), 0) FROM ordenes_trabajo").fetchone()
+            ot_id = int((row[0] if row else 0) or 0)
+        return ot_id
+    except Exception as exc:
+        msg = str(exc or "")
+        # MySQL schema legacy: id obligatorio sin AUTO_INCREMENT.
+        if "Field 'id' doesn't have a default value" not in msg and "(1364" not in msg:
+            raise
+
+    # Fallback defensivo con id explícito (evita caída en producción).
+    for _ in range(3):
+        next_row = db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM ordenes_trabajo").fetchone()
+        next_id = int((next_row[0] if next_row else 1) or 1)
+        try:
+            db.execute(
+                """
+                INSERT INTO ordenes_trabajo (id, cliente, obra, titulo, fecha_entrega, estado, estado_avance, hs_previstas, tipo_estructura, esquema_pintura, espesor_total_requerido)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    next_id,
+                    cliente,
+                    obra,
+                    titulo,
+                    fecha_entrega,
+                    estado,
+                    0,
+                    hs_previstas,
+                    tipo_estructura,
+                    esquema_pintura,
+                    espesor_total_requerido,
+                ),
+            )
+            db.commit()
+            return next_id
+        except Exception as exc2:
+            if "Duplicate entry" in str(exc2 or ""):
+                continue
+            raise
+
+    raise RuntimeError("No se pudo generar id para ordenes_trabajo")
+
+
 def _cargar_piezas_excel_a_ot(db, excel_path, obra, ot_id, descripcion_ot=""):
     """Importa piezas del Excel Armado y las vincula a la OT recién creada."""
     try:
@@ -346,23 +424,18 @@ def ot_nueva():
             try:
                 obra = (request.form.get("obra") or "").strip()
                 db = get_db()
-                cursor_ot = db.execute("""
-                INSERT INTO ordenes_trabajo (cliente, obra, titulo, fecha_entrega, estado, estado_avance, hs_previstas, tipo_estructura, esquema_pintura, espesor_total_requerido)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
+                ot_id_nuevo = _crear_ot_resiliente(
+                    db,
                     request.form["cliente"],
                     obra,
                     request.form["titulo"],
                     request.form["fecha_entrega"],
                     request.form["estado"],
-                    0,
                     request.form.get("hs_previstas") or 0,
                     request.form.get("tipo_estructura") or "",
                     request.form.get("esquema_pintura") or "",
-                    request.form.get("espesor_total_requerido") or ""
-                ))
-                db.commit()
-                ot_id_nuevo = cursor_ot.lastrowid
+                    request.form.get("espesor_total_requerido") or "",
+                )
                 _asegurar_databook(obra, ot_id=ot_id_nuevo)
                 if ot_id_nuevo:
                     db.execute(
@@ -711,23 +784,18 @@ def ot_nueva():
                 esquema_pintura = request.form.get('esquema_pintura', '')
                 espesor_total_requerido = request.form.get('espesor_total_requerido', '')
                 db = get_db()
-                cursor_ot = db.execute("""
-                    INSERT INTO ordenes_trabajo (cliente, obra, titulo, fecha_entrega, estado, estado_avance, hs_previstas, tipo_estructura, esquema_pintura, espesor_total_requerido)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
+                ot_id_nuevo = _crear_ot_resiliente(
+                    db,
                     cliente,
                     obra,
                     titulo,
                     fecha_entrega,
                     estado,
-                    0,
                     hs_previstas,
                     tipo_estructura,
                     esquema_pintura,
-                    espesor_total_requerido
-                ))
-                db.commit()
-                ot_id_nuevo = cursor_ot.lastrowid
+                    espesor_total_requerido,
+                )
                 _asegurar_databook(obra, ot_id=ot_id_nuevo)
                 if ot_id_nuevo:
                     db.execute(

@@ -1054,27 +1054,26 @@ def parte_carga_empleados():
 
     <div class="panel">
         <h3 style="margin:0 0 10px 0;">📋 Empleados registrados</h3>
-        <form method="get" class="filtros-grid" style="margin:0;padding:0;background:transparent;">
+        <form method="get" id="empleados-filtros-form" class="filtros-grid" style="margin:0;padding:0;background:transparent;">
             <div>
                 <label>Buscar (nombre o apellido)</label>
-                <input type="text" name="filtro" placeholder="Ej: Juan o Perez" value="__FILTRO_VAL__">
+                <input type="text" id="filtro-empleados" name="filtro" placeholder="Ej: Juan o Perez" value="__FILTRO_VAL__">
             </div>
             <div>
                 <label>Ordenar por</label>
-                <select name="orden_por">
+                <select id="orden-por-empleados" name="orden_por">
                     <option value="apellido" __ORDEN_APELLIDO_SEL__>Apellido</option>
                     <option value="nombre" __ORDEN_NOMBRE_SEL__>Nombre</option>
                 </select>
             </div>
             <div>
                 <label>Sentido</label>
-                <select name="orden">
+                <select id="orden-sentido-empleados" name="orden">
                     <option value="az" __ORDEN_AZ_SEL__>A-Z</option>
                     <option value="za" __ORDEN_ZA_SEL__>Z-A</option>
                 </select>
             </div>
             <div style="display:flex;gap:8px;">
-                <button type="submit" style="width:auto;min-width:120px;">Aplicar</button>
                 <a href="/modulo/parte/carga-empleados" class="btn" style="background:#64748b;">Limpiar</a>
             </div>
         </form>
@@ -1128,6 +1127,35 @@ def parte_carga_empleados():
 
     document.addEventListener('DOMContentLoaded', function() {
         actualizarCamposNuevo();
+
+        const filtrosForm = document.getElementById('empleados-filtros-form');
+        const filtroInput = document.getElementById('filtro-empleados');
+        const ordenPor = document.getElementById('orden-por-empleados');
+        const ordenSentido = document.getElementById('orden-sentido-empleados');
+        let filtroTimer = null;
+
+        if (filtrosForm && filtroInput) {
+            filtroInput.addEventListener('input', function() {
+                if (filtroTimer) {
+                    clearTimeout(filtroTimer);
+                }
+                filtroTimer = setTimeout(function() {
+                    filtrosForm.submit();
+                }, 300);
+            });
+        }
+
+        if (filtrosForm && ordenPor) {
+            ordenPor.addEventListener('change', function() {
+                filtrosForm.submit();
+            });
+        }
+
+        if (filtrosForm && ordenSentido) {
+            ordenSentido.addEventListener('change', function() {
+                filtrosForm.submit();
+            });
+        }
     });
     </script>
     
