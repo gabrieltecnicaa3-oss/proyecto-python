@@ -433,6 +433,7 @@ def init_db():
         material_entregado TEXT,
         cantidad INTEGER,
         fecha TEXT,
+        transporte TEXT,
         pdf_path TEXT,
         fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)
@@ -695,6 +696,16 @@ def init_db():
         if 'detalle_control' not in despacho_columns:
             try:
                 db.execute("ALTER TABLE control_despacho ADD COLUMN detalle_control TEXT")
+                db.commit()
+            except Exception:
+                pass
+
+        cursor = db.execute("PRAGMA table_info(remitos)")
+        remitos_columns = {row[1] for row in cursor.fetchall()}
+
+        if 'transporte' not in remitos_columns:
+            try:
+                db.execute("ALTER TABLE remitos ADD COLUMN transporte TEXT")
                 db.commit()
             except Exception:
                 pass
@@ -3524,6 +3535,11 @@ def pieza(pos):
         m = re.search(r"REMITO\s*:\s*([^|\n]+)", txt, flags=re.IGNORECASE)
         return str(m.group(1)).strip() if m else ""
 
+    def _remito_id_desde_codigo(remito_codigo):
+        txt = str(remito_codigo or "").strip().upper()
+        m = re.match(r"R-(\d+)$", txt)
+        return int(m.group(1)) if m else None
+
     def _estado_despacho_desde_control(conforme_txt):
         conforme_u = str(conforme_txt or "").strip().upper()
         if conforme_u in ("CONFORME", "OK", "APROBADO"):
@@ -3603,12 +3619,42 @@ def pieza(pos):
         fecha_meta = _extraer_fecha_despacho_meta(reproceso_desp)
         estado_pieza_desp = str(fila_desp[14] or "").strip().upper()
         if remito_meta or fecha_meta or estado_pieza_desp == "DESPACHADO":
+            transporte_remito = "-"
+            remito_id = _remito_id_desde_codigo(remito_meta)
+            if remito_id is not None:
+                try:
+                    remito_row = None
+                    if ot_scope_btn is not None:
+                        remito_row = db.execute(
+                            """
+                            SELECT COALESCE(transporte, '')
+                            FROM remitos
+                            WHERE id = ?
+                              AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                            ORDER BY id DESC
+                            LIMIT 1
+                            """,
+                            (remito_id, ot_scope_btn),
+                        ).fetchone()
+                    if not remito_row:
+                        remito_row = db.execute(
+                            """
+                            SELECT COALESCE(transporte, '')
+                            FROM remitos
+                            WHERE id = ?
+                            ORDER BY id DESC
+                            LIMIT 1
+                            """,
+                            (remito_id,),
+                        ).fetchone()
+                    transporte_remito = str(remito_row[0] or "").strip() or "-"
+                except Exception as exc:
+                    print(f"[pieza] error obteniendo transporte remito: {exc}")
             despachado_info = {
                 "fecha": fecha_meta or (fila_desp[3] or "-"),
-                "operario": fila_desp[4] or "-",
                 "estado": "DESPACHADO",
-                "motivo": remito_meta or "Remito generado",
-                "responsable": "-",
+                "remito": remito_meta or "-",
+                "transporte": transporte_remito,
             }
             break
 
@@ -3831,8 +3877,8 @@ def pieza(pos):
                     <span class="flujo-badge flujo-liberado">DESPACHADO</span><br>
                     <div class="meta-line"><span class="kv-label">Fecha:</span> {despachado_info.get('fecha') or '-'}</div>
                     <div class="kv-line"><span class="kv-label">Estado:</span> <span class="estado-ok">{despachado_info.get('estado') or '-'}</span></div>
-                    <div class="kv-line"><span class="kv-label">Remito:</span> {despachado_info.get('motivo') or '-'}</div>
-                    <div class="kv-line"><span class="kv-label">Chofer:</span> {despachado_info.get('chofer') or '-'}</div>
+                    <div class="kv-line"><span class="kv-label">Remito:</span> {despachado_info.get('remito') or '-'}</div>
+                    <div class="kv-line"><span class="kv-label">Transporte:</span> {despachado_info.get('transporte') or '-'}</div>
                 </div>
                 <div class="card-actions"></div>
             </div>

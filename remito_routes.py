@@ -334,9 +334,9 @@ def remitos():
                 material_entregado_value = f"{material_entregado_value},{manual_tag}" if material_entregado_value else manual_tag
 
             db.execute("""
-                INSERT INTO remitos (cliente, ot_id, material_entregado, cantidad, fecha, pdf_path)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (ot[0], ot_id, material_entregado_value, total_enviado_sum, fecha_remito, pdf_base))
+                INSERT INTO remitos (cliente, ot_id, material_entregado, cantidad, fecha, transporte, pdf_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (ot[0], ot_id, material_entregado_value, total_enviado_sum, fecha_remito, transporte, pdf_base))
 
             # Al generar el remito PDF, marcar las piezas incluidas como despachadas.
             remito_meta = f"REMITO:{remito_code}|FECHA_DESPACHO:{fecha_remito}"
