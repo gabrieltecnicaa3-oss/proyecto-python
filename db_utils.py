@@ -62,6 +62,8 @@ def _normalize_sql_for_mysql(sql):
     sql_out = str(sql)
     # SQLite-style autoincrement keyword is not accepted by MySQL parser.
     sql_out = re.sub(r"\bAUTOINCREMENT\b", "AUTO_INCREMENT", sql_out, flags=re.IGNORECASE)
+    # SQLite-specific collation token; MySQL uses different collation names.
+    sql_out = re.sub(r"\s+COLLATE\s+NOCASE\b", "", sql_out, flags=re.IGNORECASE)
     # MySQL does not allow DEFAULT on TEXT columns.
     if re.match(r"^\s*CREATE\s+TABLE", sql_out, flags=re.IGNORECASE):
         sql_out = re.sub(r"\bTEXT\s+DEFAULT\b", "VARCHAR(255) DEFAULT", sql_out, flags=re.IGNORECASE)
