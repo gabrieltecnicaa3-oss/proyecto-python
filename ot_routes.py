@@ -373,7 +373,7 @@ def ot_lista():
                 <td>{ot[9] or '---'}</td>
                 <td>{ot[4]}</td>
                 <td>{ot[5]}</td>
-                <td>{ot[6]}</td>
+                <td>{ot[7]}</td>
                 <td>
                     <a href="/modulo/ot/editar/{ot[0]}" class="btn" style="background: #ea580c;">Editar</a>
                     <a href="/modulo/ot/eliminar/{ot[0]}" class="btn" style="background: #c2410c;" onclick="return confirm('¿Eliminar?')">Eliminar</a>
@@ -884,6 +884,8 @@ def ot_editar(ot_id):
         db.commit()
         return redirect("/modulo/ot")
 
+    fecha_cierre_ot = ot[12] if len(ot) > 12 else None
+
     html = f"""
     <html>
     <head>
@@ -944,9 +946,9 @@ def ot_editar(ot_id):
         <div style="margin-top:15px; background:#f3e8e8; border:1px solid #e5a3a3; border-radius:6px; padding:10px;">
             <b>Estado de Cierre:</b>
             <p style="margin:8px 0; font-size:13px;">
-            {"🔒 <b>CERRADA</b> el " + ot[10][:16] if (len(ot) > 10 and ot[10]) else "✅ ACTIVA"}
+            {"🔒 <b>CERRADA</b> el " + str(fecha_cierre_ot)[:16] if fecha_cierre_ot else "✅ ACTIVA"}
             </p>
-            {"<button type='submit' formaction='/modulo/ot/reabrir/" + str(ot[0]) + "' formmethod='post' style='width:auto; background:#e5a3a3; padding:8px 12px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top:0;'>🔓 Reabrir OT</button>" if (len(ot) > 10 and ot[10]) else "<button type='submit' formaction='/modulo/ot/cerrar/" + str(ot[0]) + "' formmethod='post' style='width:auto; background:#667eea; padding:8px 12px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top:0;' onclick='return confirm(\"¿Cerrar esta OT? Se ocultarán todas sus piezas y procesos.\");'>🔒 Cerrar OT</button>"}
+            {"<button type='submit' formaction='/modulo/ot/reabrir/" + str(ot[0]) + "' formmethod='post' style='width:auto; background:#e5a3a3; padding:8px 12px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top:0;'>🔓 Reabrir OT</button>" if fecha_cierre_ot else "<button type='submit' formaction='/modulo/ot/cerrar/" + str(ot[0]) + "' formmethod='post' style='width:auto; background:#667eea; padding:8px 12px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top:0;' onclick='return confirm(\"¿Cerrar esta OT? Se ocultarán todas sus piezas y procesos.\");'>🔒 Cerrar OT</button>"}
         </div>
         
         <label>Esquema de pintura:</label>
@@ -992,11 +994,13 @@ def cerrar_ot(ot_id):
 @ot_bp.route("/modulo/ot/reabrir/<int:ot_id>", methods=["POST"])
 def ot_reabrir(ot_id):
     db = get_db()
-    db.execute(
+    cur = db.execute(
         "UPDATE ordenes_trabajo SET fecha_cierre = NULL, estado='Activa' WHERE id=?",
         (ot_id,)
     )
     db.commit()
+    if (cur.rowcount or 0) <= 0:
+        return redirect("/modulo/historial?mensaje=No se pudo reabrir la OT")
     return redirect("/modulo/ot?mensaje=OT reabierta")
 
 
@@ -1081,7 +1085,7 @@ def historial_ots():
             </tr>
         """
         for ot in ots_cerradas:
-            cierre_txt = (ot[10][:16] if (len(ot) > 10 and ot[10]) else "-")
+            cierre_txt = (str(ot[12])[:16] if (len(ot) > 12 and ot[12]) else "-")
             html += f"""
             <tr style="background:#f0f0f0;">
                 <td><b>{ot[0]}</b></td>
