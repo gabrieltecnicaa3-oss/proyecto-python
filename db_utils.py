@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover - fallback when MySQL dependency is missin
 _DB_ENGINE_RAW = os.getenv("DB_ENGINE", "auto").strip().lower()
 if _DB_ENGINE_RAW in ("", "auto"):
     # In cloud deployments we prefer MySQL automatically when credentials are available.
-    if os.getenv("MYSQL_HOST") and os.getenv("MYSQL_DB"):
+    if os.getenv("MYSQL_HOST") and os.getenv("MYSQL_DB") and os.getenv("MYSQL_USER") and os.getenv("MYSQL_PASSWORD"):
         DB_ENGINE = "mysql"
     else:
         DB_ENGINE = "sqlite"
@@ -142,16 +142,22 @@ def get_db():
     if DB_ENGINE == "mysql":
         if pymysql is None:
             raise RuntimeError("PyMySQL is not installed. Install it with: pip install pymysql")
-        mysql_conn = pymysql.connect(
-            host=os.getenv("MYSQL_HOST", "127.0.0.1"),
-            port=int(os.getenv("MYSQL_PORT", "3306")),
-            user=os.getenv("MYSQL_USER", "appuser"),
-            password=os.getenv("MYSQL_PASSWORD", "App1234!"),
-            database=os.getenv("MYSQL_DB", "gestion_produccion"),
-            charset="utf8mb4",
-            autocommit=False,
-        )
-        return MySQLCompatConnection(mysql_conn)
+        try:
+            mysql_conn = pymysql.connect(
+                host=os.getenv("MYSQL_HOST", "127.0.0.1"),
+                port=int(os.getenv("MYSQL_PORT", "3306")),
+                user=os.getenv("MYSQL_USER", "appuser"),
+                password=os.getenv("MYSQL_PASSWORD", "App1234!"),
+                database=os.getenv("MYSQL_DB", "gestion_produccion"),
+                charset="utf8mb4",
+                autocommit=False,
+            )
+            return MySQLCompatConnection(mysql_conn)
+        except Exception:
+            # In auto mode, fail open to SQLite to keep the app available.
+            if _DB_ENGINE_RAW in ("", "auto"):
+                return sqlite3.connect("database.db")
+            raise
     return sqlite3.connect("database.db")
 
 
