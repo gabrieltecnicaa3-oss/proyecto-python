@@ -550,6 +550,39 @@ def init_db():
         usuario_modificacion TEXT
     )
     """)
+
+    # Compatibilidad MySQL: asegurar AUTO_INCREMENT en PK id para tablas ya creadas.
+    try:
+        es_mysql = False
+        try:
+            db.execute("SELECT 1 FROM INFORMATION_SCHEMA.TABLES LIMIT 1").fetchone()
+            es_mysql = True
+        except Exception:
+            es_mysql = False
+
+        if es_mysql:
+            tablas_ai = [
+                "procesos",
+                "ordenes_trabajo",
+                "recepcion_materiales",
+                "control_proceso",
+                "control_despacho",
+                "remitos",
+                "partes_trabajo",
+                "empleados_parte",
+                "usuarios",
+                "hallazgos_calidad",
+                "trazabilidad_estados",
+                "control_pintura",
+            ]
+            for tabla in tablas_ai:
+                try:
+                    db.execute(f"ALTER TABLE {tabla} MODIFY COLUMN id BIGINT NOT NULL AUTO_INCREMENT")
+                    db.commit()
+                except Exception:
+                    pass
+    except Exception:
+        pass
     
     db.commit()
     

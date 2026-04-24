@@ -77,6 +77,19 @@ def _normalize_sql_for_mysql(sql):
     sql_out = re.sub(r"\s+COLLATE\s+NOCASE\b", "", sql_out, flags=re.IGNORECASE)
     # MySQL does not allow DEFAULT on TEXT columns.
     if re.match(r"^\s*CREATE\s+TABLE", sql_out, flags=re.IGNORECASE):
+        # SQLite PK style must be mapped to MySQL auto-increment semantics.
+        sql_out = re.sub(
+            r"\b([A-Za-z_][A-Za-z0-9_]*)\s+INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b",
+            r"\1 BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY",
+            sql_out,
+            flags=re.IGNORECASE,
+        )
+        sql_out = re.sub(
+            r"\b([A-Za-z_][A-Za-z0-9_]*)\s+INTEGER\s+PRIMARY\s+KEY\b",
+            r"\1 BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY",
+            sql_out,
+            flags=re.IGNORECASE,
+        )
         sql_out = re.sub(r"\bTEXT\s+DEFAULT\b", "VARCHAR(255) DEFAULT", sql_out, flags=re.IGNORECASE)
         # MySQL does not allow UNIQUE indexes on TEXT/BLOB without key length.
         sql_out = re.sub(r"\bTEXT\s+UNIQUE\b", "VARCHAR(255) UNIQUE", sql_out, flags=re.IGNORECASE)
