@@ -962,6 +962,30 @@ def calidad_despacho():
         filename = filename.replace(" ", "_").replace("/", "-")
 
         _guardar_pdf_databook(obra, "calidad_despacho", filename, pdf_buffer.getvalue(), ot_id=ot_id_doc)
+        try:
+            detalle_control_json = json.dumps({
+                "remito_asociado": remito_asociado,
+                "resultado_general": resultado_general,
+                "items": detalle_items,
+            }, ensure_ascii=False)
+            db.execute(
+                """
+                INSERT INTO control_despacho (ot_id, obra, fecha, responsable, conforme, observaciones, detalle_control)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ot_id_doc,
+                    obra,
+                    fecha,
+                    responsable,
+                    resultado_general,
+                    remito_asociado,
+                    detalle_control_json,
+                ),
+            )
+            db.commit()
+        except Exception as exc:
+            print(f"[control_despacho] error guardando control: {exc}")
         pdf_buffer.seek(0)
         
         return send_file(

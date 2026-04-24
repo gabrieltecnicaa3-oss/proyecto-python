@@ -3514,6 +3514,104 @@ def pieza(pos):
 
         return {"estado": estado_base or "-", "fecha": fecha_final, "responsable": responsable_final}
 
+    def _extraer_fecha_despacho_meta(reproceso_txt):
+        txt = str(reproceso_txt or "")
+        m = re.search(r"FECHA_DESPACHO\s*:\s*([^|\n]+)", txt, flags=re.IGNORECASE)
+        return str(m.group(1)).strip() if m else ""
+
+    def _extraer_remito_meta(reproceso_txt):
+        txt = str(reproceso_txt or "")
+        m = re.search(r"REMITO\s*:\s*([^|\n]+)", txt, flags=re.IGNORECASE)
+        return str(m.group(1)).strip() if m else ""
+
+    def _estado_despacho_desde_control(conforme_txt):
+        conforme_u = str(conforme_txt or "").strip().upper()
+        if conforme_u in ("CONFORME", "OK", "APROBADO"):
+            return "OK"
+        if conforme_u == "NO CONFORME":
+            return "NO CONFORME"
+        if conforme_u == "NO APLICA":
+            return "NO APLICA"
+        return conforme_u or "-"
+
+    def _motivo_despacho_desde_control(detalle_control_txt, observaciones_txt):
+        remito_asociado = str(observaciones_txt or "").strip()
+        try:
+            detalle = json.loads(detalle_control_txt) if detalle_control_txt else {}
+        except Exception:
+            detalle = {}
+
+        items = detalle.get("items") if isinstance(detalle, dict) else []
+        hallazgos = []
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                estado_item = str(item.get("estado") or "").strip().upper()
+                if estado_item == "NO CONFORME":
+                    etiqueta = str(item.get("label") or "").strip()
+                    observacion = str(item.get("observacion") or "").strip()
+                    texto = etiqueta or "Item sin detalle"
+                    if observacion:
+                        texto = f"{texto}: {observacion}"
+                    hallazgos.append(texto)
+
+        if hallazgos:
+            return " | ".join(hallazgos)
+        if remito_asociado:
+            return f"Control final conforme | Remito: {remito_asociado}"
+        return "Control final de despacho"
+
+    despacho_control = None
+    try:
+        if obra_scope_btn:
+            if ot_scope_btn is not None:
+                despacho_control = db.execute(
+                    """
+                    SELECT COALESCE(fecha, ''), COALESCE(responsable, ''), COALESCE(conforme, ''),
+                           COALESCE(observaciones, ''), COALESCE(detalle_control, '')
+                    FROM control_despacho
+                    WHERE TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, ''))
+                      AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (obra_scope_btn, ot_scope_btn),
+                ).fetchone()
+            if not despacho_control:
+                despacho_control = db.execute(
+                    """
+                    SELECT COALESCE(fecha, ''), COALESCE(responsable, ''), COALESCE(conforme, ''),
+                           COALESCE(observaciones, ''), COALESCE(detalle_control, '')
+                    FROM control_despacho
+                    WHERE TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, ''))
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (obra_scope_btn,),
+                ).fetchone()
+    except Exception as exc:
+        print(f"[pieza] error obteniendo control_despacho: {exc}")
+
+    despachado_info = None
+    for fila_desp in reversed(todas_filas):
+        proceso_desp = str(fila_desp[2] or "").strip().upper()
+        if proceso_desp not in ("DESPACHO", "P/DESPACHO"):
+            continue
+        reproceso_desp = str(fila_desp[6] or "").strip()
+        remito_meta = _extraer_remito_meta(reproceso_desp)
+        fecha_meta = _extraer_fecha_despacho_meta(reproceso_desp)
+        estado_pieza_desp = str(fila_desp[14] or "").strip().upper()
+        if remito_meta or fecha_meta or estado_pieza_desp == "DESPACHADO":
+            despachado_info = {
+                "fecha": fecha_meta or (fila_desp[3] or "-"),
+                "operario": fila_desp[4] or "-",
+                "estado": "DESPACHADO",
+                "motivo": remito_meta or "Remito generado",
+                "responsable": "-",
+            }
+            break
+
     # Pre-group PINTURA records by etapa (preserving id order = oldest first)
     pintura_groups = {}  # etapa -> list of rows
     pintura_row_ids = set()
@@ -3690,22 +3788,54 @@ def pieza(pos):
                 </form>
                 '''
 
+            titulo_proceso = r[2]
+            fecha_mostrar = r[3]
+            estado_mostrar = r[5]
+            motivo_mostrar = accion_txt if accion_txt else '-'
             responsable_txt = responsable_por_firma.get(str(firma_txt).strip().lower(), "")
+            if proc_u in ("DESPACHO", "P/DESPACHO"):
+                titulo_proceso = "P/DESPACHO"
+                if despacho_control:
+                    fecha_mostrar = despacho_control[0] or fecha_mostrar
+                    responsable_txt = str(despacho_control[1] or "").strip() or responsable_txt
+                    estado_mostrar = _estado_despacho_desde_control(despacho_control[2])
+                    motivo_mostrar = _motivo_despacho_desde_control(despacho_control[4], despacho_control[3])
+                    estado_class = _estado_cls(str(estado_mostrar or "").strip().upper())
+                    flujo_estado_html = _estado_badge(estado_mostrar)
+
             html += f"""
             <div class="card">
                 <div class="card-info">
-                    <div class="process-title">{r[2]}</div>
+                    <div class="process-title">{titulo_proceso}</div>
                     {flujo_estado_html}<br>
-                    <div class="meta-line"><span class="kv-label">Fecha:</span> {r[3]}</div>
+                    <div class="meta-line"><span class="kv-label">Fecha:</span> {fecha_mostrar}</div>
                     <div class="meta-line"><span class="kv-label">Operario:</span> {r[4]}</div>
-                    <div class="kv-line"><span class="kv-label">Estado:</span> <span class="{estado_class}">{r[5]}</span></div>
-                    <div class="kv-line"><span class="kv-label">Motivo:</span> {accion_txt if accion_txt else '-'}</div>
+                    <div class="kv-line"><span class="kv-label">Estado:</span> <span class="{estado_class}">{estado_mostrar}</span></div>
+                    <div class="kv-line"><span class="kv-label">Motivo:</span> {motivo_mostrar}</div>
                     <div class="kv-line"><span class="kv-label">Responsable:</span> {responsable_txt if responsable_txt else '-'}</div>
                     {historico_control_html}
                     <div class="reins-title">RE-INSPECCION</div>
                     {reinspeccion_html}
                 </div>
                 <div class="card-actions">{acciones}</div>
+            </div>
+            """
+
+        if despachado_info:
+            html += f"""
+            <div class="card">
+                <div class="card-info">
+                    <div class="process-title">DESPACHADO</div>
+                    <span class="flujo-badge flujo-liberado">DESPACHADO</span><br>
+                    <div class="meta-line"><span class="kv-label">Fecha:</span> {despachado_info.get('fecha') or '-'}</div>
+                    <div class="meta-line"><span class="kv-label">Operario:</span> {despachado_info.get('operario') or '-'}</div>
+                    <div class="kv-line"><span class="kv-label">Estado:</span> <span class="estado-ok">{despachado_info.get('estado') or '-'}</span></div>
+                    <div class="kv-line"><span class="kv-label">Motivo:</span> {despachado_info.get('motivo') or '-'}</div>
+                    <div class="kv-line"><span class="kv-label">Responsable:</span> {despachado_info.get('responsable') or '-'}</div>
+                    <div class="reins-title">RE-INSPECCION</div>
+                    <div class="reins-content-empty">Sin ciclos registrados</div>
+                </div>
+                <div class="card-actions"></div>
             </div>
             """
 
