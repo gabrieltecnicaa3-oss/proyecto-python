@@ -808,32 +808,8 @@ def parte_carga_empleados():
     edit_id_txt = (request.args.get("edit_id") or "").strip()
     edit_id = int(edit_id_txt) if edit_id_txt.isdigit() else None
 
-    orden_por = (request.args.get("orden_por") or "apellido").strip().lower()
-    if orden_por not in ("apellido", "nombre"):
-        orden_por = "apellido"
-    orden = (request.args.get("orden") or "az").strip().lower()
-    if orden not in ("az", "za"):
-        orden = "az"
-    filtro = (request.args.get("filtro") or "").strip()
-
-    if orden_por == "nombre":
-        campo_principal = "LOWER(TRIM(COALESCE(nombre_base, nombre, ''))) COLLATE NOCASE"
-        campo_secundario = "LOWER(TRIM(COALESCE(apellido, ''))) COLLATE NOCASE"
-    else:
-        campo_principal = "LOWER(TRIM(COALESCE(apellido, ''))) COLLATE NOCASE"
-        campo_secundario = "LOWER(TRIM(COALESCE(nombre_base, nombre, ''))) COLLATE NOCASE"
-    direccion = "ASC" if orden == "az" else "DESC"
-
-    where_sql = ""
-    where_params = []
-    if filtro:
-        filtro_like = f"%{filtro.lower()}%"
-        where_sql = """
-        WHERE LOWER(TRIM(COALESCE(nombre_base, ''))) LIKE ?
-           OR LOWER(TRIM(COALESCE(apellido, ''))) LIKE ?
-           OR LOWER(TRIM(COALESCE(nombre, ''))) LIKE ?
-        """
-        where_params = [filtro_like, filtro_like, filtro_like]
+    campo_principal = "LOWER(TRIM(COALESCE(apellido, ''))) COLLATE NOCASE"
+    campo_secundario = "LOWER(TRIM(COALESCE(nombre_base, nombre, ''))) COLLATE NOCASE"
 
     empleados_catalogo = db.execute(
         f"""
@@ -847,20 +823,13 @@ def parte_carga_empleados():
                COALESCE(firma_electronica, ''),
                COALESCE(firma_imagen_path, '')
         FROM empleados_parte
-        {where_sql}
-        ORDER BY {campo_principal} {direccion},
-                 {campo_secundario} {direccion}
+        ORDER BY {campo_principal} ASC,
+                 {campo_secundario} ASC
         """,
-        where_params,
+        (),
     ).fetchall()
 
     filtros_link = {}
-    if filtro:
-        filtros_link["filtro"] = filtro
-    if orden_por != "apellido":
-        filtros_link["orden_por"] = orden_por
-    if orden != "az":
-        filtros_link["orden"] = orden
     filtros_link_qs = urlencode(filtros_link)
 
     mensaje = (request.args.get("mensaje") or "").strip()
@@ -1054,29 +1023,7 @@ def parte_carga_empleados():
 
     <div class="panel">
         <h3 style="margin:0 0 10px 0;">📋 Empleados registrados</h3>
-        <form method="get" id="empleados-filtros-form" class="filtros-grid" style="margin:0;padding:0;background:transparent;">
-            <div>
-                <label>Buscar (nombre o apellido)</label>
-                <input type="text" id="filtro-empleados" name="filtro" placeholder="Ej: Juan o Perez" value="__FILTRO_VAL__">
-            </div>
-            <div>
-                <label>Ordenar por</label>
-                <select id="orden-por-empleados" name="orden_por">
-                    <option value="apellido" __ORDEN_APELLIDO_SEL__>Apellido</option>
-                    <option value="nombre" __ORDEN_NOMBRE_SEL__>Nombre</option>
-                </select>
-            </div>
-            <div>
-                <label>Sentido</label>
-                <select id="orden-sentido-empleados" name="orden">
-                    <option value="az" __ORDEN_AZ_SEL__>A-Z</option>
-                    <option value="za" __ORDEN_ZA_SEL__>Z-A</option>
-                </select>
-            </div>
-            <div style="display:flex;gap:8px;">
-                <a href="/modulo/parte/carga-empleados" class="btn" style="background:#64748b;">Limpiar</a>
-            </div>
-        </form>
+        <div style="color:#64748b;font-size:13px;">Listado ordenado automáticamente de la A a la Z (apellido, nombre).</div>
     </div>
 
     <div class="table-wrap">
@@ -1131,49 +1078,9 @@ def parte_carga_empleados():
         actualizarCamposNuevo();
 
         const filtrosForm = document.getElementById('empleados-filtros-form');
-        const filtroInput = document.getElementById('filtro-empleados');
-        const ordenPor = document.getElementById('orden-por-empleados');
-        const ordenSentido = document.getElementById('orden-sentido-empleados');
-        const tbody = document.getElementById('empleados-tbody');
-
-        function aplicarFiltroDinamico() {
-            if (!tbody || !filtroInput) return;
-            const q = (filtroInput.value || '').trim().toLowerCase();
-            const rows = Array.from(tbody.querySelectorAll('tr'));
-            rows.forEach(function(row) {
-                const celdas = row.querySelectorAll('td');
-                if (celdas.length < 2) return;
-                const nombre = (celdas[0].textContent || '').toLowerCase();
-                const apellido = (celdas[1].textContent || '').toLowerCase();
-                const visible = !q || nombre.includes(q) || apellido.includes(q);
-                row.style.display = visible ? '' : 'none';
-            });
+        if (filtrosForm) {
+            filtrosForm.remove();
         }
-
-        if (filtrosForm && filtroInput) {
-            filtroInput.addEventListener('input', function() {
-                aplicarFiltroDinamico();
-            });
-            filtroInput.addEventListener('keydown', function(ev) {
-                if (ev.key === 'Enter') {
-                    ev.preventDefault();
-                }
-            });
-        }
-
-        if (filtrosForm && ordenPor) {
-            ordenPor.addEventListener('change', function() {
-                filtrosForm.submit();
-            });
-        }
-
-        if (filtrosForm && ordenSentido) {
-            ordenSentido.addEventListener('change', function() {
-                filtrosForm.submit();
-            });
-        }
-
-        aplicarFiltroDinamico();
     });
     </script>
     
@@ -1191,11 +1098,6 @@ def parte_carga_empleados():
     html = html.replace("__FORM_FIRMA__", html_lib.escape(form_firma))
     html = html.replace("__FORM_BOTON__", html_lib.escape(form_btn))
     html = html.replace("__FORM_CANCELAR__", '<a href="/modulo/parte/carga-empleados" class="btn" style="display:inline-block;margin-top:10px;background:#9ca3af;">Cancelar edición</a>' if form_empleado_id else "")
-    html = html.replace("__FILTRO_VAL__", html_lib.escape(filtro))
-    html = html.replace("__ORDEN_APELLIDO_SEL__", "selected" if orden_por == "apellido" else "")
-    html = html.replace("__ORDEN_NOMBRE_SEL__", "selected" if orden_por == "nombre" else "")
-    html = html.replace("__ORDEN_AZ_SEL__", "selected" if orden == "az" else "")
-    html = html.replace("__ORDEN_ZA_SEL__", "selected" if orden == "za" else "")
     return html
 
 

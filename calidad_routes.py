@@ -1792,25 +1792,32 @@ def calidad_escaneo_form_armado_soldadura():
         if str(data.get("firma", "")).strip() and str(data.get("firma_url", "")).strip()
     }
 
-    def _pdf_firma_cell_as(firma_txt):
+    def _pdf_firma_cell_as(firma_txt, responsable_txt=""):
         """Devuelve Image de ReportLab si existe archivo, sino Paragraph."""
-        if not firma_txt:
-            return Paragraph("-", base_style)
-        url = imagen_por_firma.get(firma_txt.lower(), "")
-        if url and "/firma-supervisor/" in url:
-            from urllib.parse import unquote as _uq
-            archivo = _uq(url.rsplit("/", 1)[-1])
-            ruta = os.path.join(_FIRMAS_EMPLEADOS_DIR, archivo)
-            if os.path.isfile(ruta):
-                try:
-                    img = Image(ruta)
-                    max_w, max_h = 2.0 * cm, 0.9 * cm
-                    escala = min(max_w / float(img.drawWidth), max_h / float(img.drawHeight), 1.0)
-                    img.drawWidth *= escala
-                    img.drawHeight *= escala
-                    return img
-                except Exception:
-                    pass
+        ruta = ""
+        responsable_norm = str(responsable_txt or "").strip()
+        if responsable_norm and responsable_norm != "-":
+            ruta = _ruta_firma_responsable(responsables_control, responsable_norm)
+
+        if not ruta:
+            firma_norm = str(firma_txt or "").strip()
+            url = imagen_por_firma.get(firma_norm.lower(), "") if firma_norm else ""
+            if url and "/firma-supervisor/" in url:
+                from urllib.parse import unquote as _uq
+                archivo = _uq(url.rsplit("/", 1)[-1])
+                ruta = os.path.join(_FIRMAS_EMPLEADOS_DIR, archivo)
+
+        if ruta and os.path.isfile(ruta):
+            try:
+                img = Image(ruta)
+                max_w, max_h = 2.0 * cm, 0.9 * cm
+                escala = min(max_w / float(img.drawWidth), max_h / float(img.drawHeight), 1.0)
+                img.drawWidth *= escala
+                img.drawHeight *= escala
+                return img
+            except Exception:
+                pass
+
         return Paragraph(firma_txt or "-", base_style)
 
     def obtener_avance_ot(ot_id_sel, obra_sel):
@@ -2071,11 +2078,11 @@ def calidad_escaneo_form_armado_soldadura():
                 Paragraph(r["armado"] or "PENDIENTE", base_style),
                 Paragraph(r["armado_fecha"] or "-", base_style),
                 Paragraph(r["armado_responsable"] or "-", base_style),
-                _pdf_firma_cell_as(r["armado_firma_digital"]),
+                _pdf_firma_cell_as(r["armado_firma_digital"], r.get("armado_responsable") or ""),
                 Paragraph(r["soldadura"] or "PENDIENTE", base_style),
                 Paragraph(r["soldadura_fecha"] or "-", base_style),
                 Paragraph(r["soldadura_responsable"] or "-", base_style),
-                _pdf_firma_cell_as(r["soldadura_firma_digital"]),
+                _pdf_firma_cell_as(r["soldadura_firma_digital"], r.get("soldadura_responsable") or ""),
             ])
 
         # Total ancho: 19.8cm (igual que área Áºtil del PDF)
@@ -4219,12 +4226,26 @@ def control_pintura_nuevo():
                     esp_tot_v = fe + te
                     p_v["esp_total"] = str(int(round(esp_tot_v))) if esp_tot_v > 0 else "-"
                 except Exception:
+                    esp_tot_v = 0.0
                     p_v["esp_total"] = "-"
+
+                try:
+                    esp_req_prev = float(str(espesor_sel or "0").replace(",", ".") or "0")
+                except Exception:
+                    esp_req_prev = 0.0
+
                 ests_v = [p_v["superficie"]["estado"], p_v["fondo"]["estado"], p_v["terminacion"]["estado"]]
+                term_est = str(p_v["terminacion"].get("estado") or "").strip().upper()
+                term_ok = term_est in ("OK", "OBS", "OM")
                 if any(e == "NO CONFORME" for e in ests_v if e != "-"):
                     p_v["estado_resumen"] = "NO CONFORME"
+                elif term_ok:
+                    if esp_req_prev > 0 and esp_tot_v < esp_req_prev:
+                        p_v["estado_resumen"] = "NO CONFORME"
+                    else:
+                        p_v["estado_resumen"] = "OK"
                 elif any(e != "-" for e in ests_v):
-                    p_v["estado_resumen"] = "OK"
+                    p_v["estado_resumen"] = "PENDIENTE TERMINACION"
                 else:
                     p_v["estado_resumen"] = "-"
             piezas_preview_list = [piezas_preview[k] for k in sorted(piezas_preview.keys())]
@@ -4849,9 +4870,14 @@ def control_pintura_nuevo():
                 const te = parseFloat(String(ter.esp || '0').replace('-','0')) || 0;
                 const espTot = (fe + te) > 0 ? `${{Math.round(fe + te)}} μm` : '-';
                 const ests = [sup.estado, fon.estado, ter.estado].filter(e => e && e !== '-');
+                const espReq = parseFloat(String(document.getElementById('espesor_final')?.value || '0').replace(',', '.')) || 0;
+                const termEstado = String(ter.estado || '').toUpperCase();
+                const termOk = ['OK', 'OBS', 'OM'].includes(termEstado);
                 let estadoRes = p.estado_resumen || '-';
                 if (ests.some(e => e === 'NO CONFORME')) estadoRes = 'NO CONFORME';
-                else if (ests.length > 0) estadoRes = 'OK';
+                else if (termOk && (espReq <= 0 || (fe + te) >= espReq)) estadoRes = 'OK';
+                else if (termOk && espReq > 0 && (fe + te) < espReq) estadoRes = 'NO CONFORME';
+                else if (ests.length > 0) estadoRes = 'PENDIENTE TERMINACION';
                 const ec = estadoRes === 'OK' ? '#15803d' : estadoRes === 'NO CONFORME' ? '#b91c1c' : '#374151';
                 const cc = (e) => e === 'OK' ? '#15803d' : e === 'NO CONFORME' ? '#b91c1c' : '#374151';
                 return `<tr style="background:${{bg}};">
@@ -4979,6 +5005,44 @@ def control_pintura_nuevo():
                     responsable,
                     responsable,
                 )
+
+            def _to_float_local(value):
+                txt = str(value or "").strip().replace(",", ".")
+                if not txt:
+                    return 0.0
+                try:
+                    return float(txt)
+                except Exception:
+                    return 0.0
+
+            def _extraer_espesor_desde_detalle(detalle_txt, etiqueta):
+                txt = str(detalle_txt or "")
+                marker = f"{etiqueta}:"
+                idx = txt.lower().find(marker.lower())
+                if idx < 0:
+                    return 0.0
+                frag = txt[idx + len(marker):].strip()
+                numero = ""
+                for ch in frag:
+                    if ch.isdigit() or ch in (".", ","):
+                        numero += ch
+                    elif numero:
+                        break
+                return _to_float_local(numero)
+
+            espesor_req_val = 0.0
+            if ot_id is not None:
+                row_req = db.execute(
+                    """
+                    SELECT COALESCE(espesor_total_requerido, '')
+                    FROM ordenes_trabajo
+                    WHERE id = ?
+                    LIMIT 1
+                    """,
+                    (ot_id,),
+                ).fetchone()
+                if row_req:
+                    espesor_req_val = _to_float_local(row_req[0])
             
             if etapa == "SUPERFICIE":
                 piezas = request.form.getlist("piezas_superficie")
@@ -5015,14 +5079,58 @@ def control_pintura_nuevo():
                 if not piezas:
                     return "Debes seleccionar al menos una pieza", 400
                 for p in piezas:
+                    espesor_term_val = _to_float_local(espesor)
+                    row_fondo = db.execute(
+                        """
+                        SELECT COALESCE(reproceso, '')
+                        FROM procesos
+                        WHERE TRIM(COALESCE(posicion, '')) = TRIM(?)
+                          AND UPPER(TRIM(COALESCE(proceso, ''))) = 'PINTURA_FONDO'
+                          AND eliminado = 0
+                          AND (
+                              (? IS NOT NULL AND COALESCE(ot_id, -1) = COALESCE(?, -1))
+                              OR
+                              (? IS NULL AND TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, '')))
+                          )
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """,
+                        (p, ot_id, ot_id, ot_id, obra),
+                    ).fetchone()
+                    espesor_fondo_val = _extraer_espesor_desde_detalle((row_fondo[0] if row_fondo else ""), "Espesor fondo")
+                    espesor_total_val = espesor_fondo_val + espesor_term_val
+
+                    estado_term = estado_sel
+                    motivo_term = motivo_nc
+                    if estado_term in ("OK", "OBS", "OM") and espesor_req_val > 0 and espesor_total_val < espesor_req_val:
+                        estado_term = "NC"
+                        if not motivo_term:
+                            motivo_term = f"Espesor total insuficiente ({espesor_total_val:.1f} < {espesor_req_val:.1f} um)"
+
+                    estado_pieza_term = "RE-INSPECCION" if estado_term == "NC" else "APROBADA"
+                    re_inspeccion_term = ""
+                    if estado_term == "NC":
+                        re_inspeccion_term = _agregar_ciclo_reinspeccion(
+                            "",
+                            "PINTURA",
+                            fecha,
+                            operario,
+                            "NC",
+                            motivo_term,
+                            responsable,
+                            responsable,
+                        )
+
                     detalle_term = "ETAPA:TERMINACION"
                     if espesor:
                         detalle_term += f" | Espesor terminacion: {espesor}μm"
-                    if estado_sel == "NC" and motivo_nc:
-                        detalle_term = (detalle_term + " | " if detalle_term else "") + f"Motivo NC: {motivo_nc}"
+                    if espesor_req_val > 0:
+                        detalle_term += f" | Espesor requerido: {espesor_req_val:.1f}μm"
+                    if estado_term == "NC" and motivo_term:
+                        detalle_term = (detalle_term + " | " if detalle_term else "") + f"Motivo NC: {motivo_term}"
                     db.execute(
                         "INSERT INTO procesos (posicion, obra, ot_id, proceso, fecha, operario, estado, reproceso, re_inspeccion, firma_digital, estado_pieza, eliminado) VALUES (?,?,?,?,?,?,?,?,?,?,?,0)",
-                        (p, obra, ot_id, "PINTURA", fecha, operario, estado_sel, detalle_term, re_inspeccion_txt, responsable, estado_pieza),
+                        (p, obra, ot_id, "PINTURA", fecha, operario, estado_term, detalle_term, re_inspeccion_term, responsable, estado_pieza_term),
                     )
                 db.commit()
 

@@ -33,6 +33,28 @@ estado_bp = Blueprint("estado", __name__)
 
 
 def _ot_has_column(db, column_name):
+    objetivo = str(column_name or "").strip().lower()
+    if not objetivo:
+        return False
+
+    # MySQL
+    try:
+        row = db.execute(
+            """
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.COLUMNS
+                        WHERE TABLE_SCHEMA = DATABASE()
+                            AND LOWER(TABLE_NAME) = 'ordenes_trabajo'
+              AND LOWER(COLUMN_NAME) = ?
+            """,
+            (objetivo,),
+        ).fetchone()
+        if row and int(row[0] or 0) > 0:
+            return True
+    except Exception:
+        pass
+
+    # SQLite
     try:
         rows = db.execute("PRAGMA table_info(ordenes_trabajo)").fetchall()
         for row in rows:
@@ -40,7 +62,7 @@ def _ot_has_column(db, column_name):
                 col = str(row[1] or "").strip().lower()
             except Exception:
                 col = ""
-            if col == str(column_name or "").strip().lower():
+            if col == objetivo:
                 return True
     except Exception:
         return False

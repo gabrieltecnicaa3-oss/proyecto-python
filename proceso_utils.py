@@ -190,22 +190,29 @@ def obtener_procesos_completados(pos, obra=None, ot_id=None):
     db = get_db()
     if ot_id is not None:
         rows = db.execute(
-            "SELECT proceso, estado, re_inspeccion FROM procesos WHERE posicion=? AND ot_id=? ORDER BY id",
+            "SELECT proceso, estado, re_inspeccion, reproceso FROM procesos WHERE posicion=? AND ot_id=? ORDER BY id",
             (pos, ot_id)
         ).fetchall()
     elif obra:
         rows = db.execute(
-            "SELECT proceso, estado, re_inspeccion FROM procesos WHERE posicion=? AND obra=? ORDER BY id",
+            "SELECT proceso, estado, re_inspeccion, reproceso FROM procesos WHERE posicion=? AND obra=? ORDER BY id",
             (pos, obra)
         ).fetchall()
     else:
-        rows = db.execute("SELECT proceso, estado, re_inspeccion FROM procesos WHERE posicion=? ORDER BY id", (pos,)).fetchall()
+        rows = db.execute("SELECT proceso, estado, re_inspeccion, reproceso FROM procesos WHERE posicion=? ORDER BY id", (pos,)).fetchall()
 
     aprobados = set()
-    for proceso, estado, reinspeccion in rows:
+    for proceso, estado, reinspeccion, reproceso in rows:
         proc = (proceso or "").strip().upper()
         if proc not in ORDEN_PROCESOS:
             continue
+
+        # En control de pintura por etapas, solo TERMINACION puede cerrar PINTURA.
+        if proc == "PINTURA":
+            repro_u = str(reproceso or "").strip().upper()
+            if "ETAPA:SUPERFICIE" in repro_u or "ETAPA:FONDO" in repro_u:
+                continue
+
         if _proceso_aprobado(estado, reinspeccion):
             aprobados.add(proc)
 
