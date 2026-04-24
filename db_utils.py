@@ -26,6 +26,17 @@ else:
     DB_ENGINE = _DB_ENGINE_RAW
 
 
+def _env_flag_true(name, default=False):
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in ("1", "true", "yes", "on", "si")
+
+
+# Availability-first mode: if MySQL is down/misconfigured, continue with SQLite.
+MYSQL_FAIL_OPEN = _env_flag_true("MYSQL_FAIL_OPEN", default=True)
+
+
 class _StaticCursor:
     def __init__(self, rows):
         self._rows = rows
@@ -141,6 +152,9 @@ def is_integrity_error(exc):
 def get_db():
     if DB_ENGINE == "mysql":
         if pymysql is None:
+            if MYSQL_FAIL_OPEN:
+                print("[db_utils] PyMySQL no disponible; fallback a SQLite por MYSQL_FAIL_OPEN")
+                return sqlite3.connect("database.db")
             raise RuntimeError("PyMySQL is not installed. Install it with: pip install pymysql")
         try:
             mysql_conn = pymysql.connect(
@@ -153,9 +167,9 @@ def get_db():
                 autocommit=False,
             )
             return MySQLCompatConnection(mysql_conn)
-        except Exception:
-            # In auto mode, fail open to SQLite to keep the app available.
-            if _DB_ENGINE_RAW in ("", "auto"):
+        except Exception as exc:
+            if MYSQL_FAIL_OPEN or _DB_ENGINE_RAW in ("", "auto"):
+                print(f"[db_utils] Error MySQL ({exc}); fallback a SQLite")
                 return sqlite3.connect("database.db")
             raise
     return sqlite3.connect("database.db")
