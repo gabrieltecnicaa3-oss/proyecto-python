@@ -149,11 +149,21 @@ def is_integrity_error(exc):
     return isinstance(exc, (sqlite3.IntegrityError,) + mysql_cls)
 
 
+def _connect_sqlite():
+    conn = sqlite3.connect("database.db", timeout=30)
+    try:
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        pass
+    return conn
+
+
 def get_db():
     if DB_ENGINE == "mysql":
         if pymysql is None:
             print("[db_utils] PyMySQL no disponible; fallback a SQLite")
-            return sqlite3.connect("database.db")
+            return _connect_sqlite()
         try:
             mysql_conn = pymysql.connect(
                 host=os.getenv("MYSQL_HOST", "127.0.0.1"),
@@ -167,8 +177,8 @@ def get_db():
             return MySQLCompatConnection(mysql_conn)
         except Exception as exc:
             print(f"[db_utils] Error MySQL ({exc}); fallback a SQLite")
-            return sqlite3.connect("database.db")
-    return sqlite3.connect("database.db")
+            return _connect_sqlite()
+    return _connect_sqlite()
 
 
 def _resolver_ot_id_para_obra(db, obra):

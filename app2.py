@@ -837,12 +837,19 @@ def init_db():
 
 # Inicializar BD de forma diferida (lazy) en la primera solicitud
 _db_initialized = False
+_db_init_error = ""
 
 def _lazy_init_db():
-    global _db_initialized
+    global _db_initialized, _db_init_error
     if not _db_initialized:
-        init_db()
-        _db_initialized = True
+        try:
+            init_db()
+            _db_initialized = True
+        except Exception as exc:
+            # Evita un bucle de 500 en cada request si hay un fallo transitorio de migración/lock.
+            _db_init_error = str(exc)
+            _db_initialized = True
+            print(f"[app2] init_db fallo en lazy init: {exc}")
 
 
 def _auth_guard():
