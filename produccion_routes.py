@@ -2,12 +2,58 @@ import os
 
 from flask import Blueprint, request
 from db_utils import get_db
-from proceso_utils import obtener_procesos_completados
+from proceso_utils import obtener_procesos_completados, ORDEN_PROCESOS, _proceso_aprobado
 from qr_utils import find_col, load_clean_excel
 
 produccion_bp = Blueprint("produccion", __name__)
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))
 _DATABOOKS_DIR = os.path.join(_APP_DIR, "Reportes Produccion")
+
+# Cache de DataFrames de Excel: evita re-leer el mismo archivo en cada request.
+# Clave: ruta absoluta del archivo. Valor: (mtime, DataFrame).
+_excel_df_cache: dict = {}
+
+
+def _get_df_cached(excel_path):
+    """Devuelve el DataFrame del Excel usando cache basado en mtime."""
+    if not excel_path or not os.path.isfile(excel_path):
+        return None
+    try:
+        mtime = os.path.getmtime(excel_path)
+        cached = _excel_df_cache.get(excel_path)
+        if cached and cached[0] == mtime:
+            return cached[1]
+        df = load_clean_excel(excel_path)
+        _excel_df_cache[excel_path] = (mtime, df)
+        return df
+    except Exception:
+        return None
+
+
+def _aprobados_de_filas(filas):
+    """Replica la logica de obtener_procesos_completados sin acceso a DB.
+
+    filas: lista de tuplas (proceso, estado, re_inspeccion, reproceso).
+    Retorna lista de procesos aprobados en orden, sin saltos.
+    """
+    aprobados = set()
+    for proceso, estado, re_inspeccion, reproceso in filas:
+        proc = (proceso or "").strip().upper()
+        if proc not in ORDEN_PROCESOS:
+            continue
+        if proc == "PINTURA":
+            repro_u = str(reproceso or "").strip().upper()
+            if "ETAPA:SUPERFICIE" in repro_u or "ETAPA:FONDO" in repro_u:
+                continue
+        if _proceso_aprobado(estado, re_inspeccion):
+            aprobados.add(proc)
+    completados = []
+    for proc in ORDEN_PROCESOS:
+        if proc in aprobados:
+            completados.append(proc)
+        else:
+            break
+    return completados
 
 
 def _to_float(value, default=0.0):
@@ -59,7 +105,9 @@ def _kg_por_pos_desde_excel_armado(excel_path):
     if not excel_path:
         return {}
     try:
-        df = load_clean_excel(excel_path)
+        df = _get_df_cached(excel_path)
+        if df is None:
+            return {}
         col_pos = find_col(df, "POS")
         col_cant = find_col(df, "CANT")
         col_peso = find_col(df, "PESO")
@@ -87,7 +135,9 @@ def _avance_desde_excel_armado(excel_path):
     if not excel_path:
         return 0.0, 0.0, False
     try:
-        df = load_clean_excel(excel_path)
+        df = _get_df_cached(excel_path)
+        if df is None:
+            return 0.0, 0.0, False
         col_cant = find_col(df, "CANT")
         col_peso = find_col(df, "PESO")
         col_total = find_col(df, "TOTAL")
@@ -129,31 +179,30 @@ def _avance_estimado_excel_sin_total(db, ot_id, excel_path):
     if not excel_path:
         return 0.0, 0.0
     try:
-        df = load_clean_excel(excel_path)
+        df = _get_df_cached(excel_path)
+        if df is None:
+            return 0.0, 0.0
         col_pos = find_col(df, "POS")
         col_cant = find_col(df, "CANT")
         col_peso = find_col(df, "PESO")
         if not col_pos or not col_cant or not col_peso:
             return 0.0, 0.0
 
-        # Progreso por posición real registrada en BD, consolidado por posición base.
-        posiciones_bd = db.execute(
-            """
-            SELECT DISTINCT TRIM(COALESCE(posicion, ''))
-            FROM procesos
-            WHERE ot_id = ?
-              AND TRIM(COALESCE(posicion, '')) <> ''
-            """,
+        # Batch: una sola consulta para todos los procesos de la OT.
+        all_proc_rows = db.execute(
+            "SELECT TRIM(COALESCE(posicion,'')), proceso, estado, re_inspeccion, reproceso"
+            " FROM procesos WHERE ot_id=? ORDER BY id",
             (ot_id,),
         ).fetchall()
+        filas_por_pos: dict = {}
+        for _pos, _proc, _est, _reinsp, _repro in all_proc_rows:
+            if _pos:
+                filas_por_pos.setdefault(_pos, []).append((_proc, _est, _reinsp, _repro))
 
         ratio_por_base = {}
-        for (pos_real,) in posiciones_bd:
-            pos_real_txt = str(pos_real or "").strip()
-            if not pos_real_txt:
-                continue
+        for pos_real_txt, filas in filas_por_pos.items():
             base = _pos_base(pos_real_txt)
-            aprobados = set(obtener_procesos_completados(pos_real_txt, ot_id=ot_id))
+            aprobados = set(_aprobados_de_filas(filas))
             ratio = _avance_ratio_desde_aprobados(aprobados)
             ratio_por_base[base] = max(ratio_por_base.get(base, 0.0), ratio)
 
@@ -285,18 +334,14 @@ def _persistir_avance_ot(db, ot_id, progreso_calculado, progreso_actual):
 
 
 def _desglose_ot(db, ot_id):
-    posiciones_rows = db.execute(
-        """
-        SELECT DISTINCT TRIM(COALESCE(posicion, ''))
-        FROM procesos
-        WHERE ot_id = ?
-          AND eliminado = 0
-          AND TRIM(COALESCE(posicion, '')) <> ''
-        """,
+    # Obtener posiciones validas (no eliminadas) — una sola consulta.
+    pos_rows = db.execute(
+        "SELECT DISTINCT TRIM(COALESCE(posicion,''))"
+        " FROM procesos"
+        " WHERE ot_id=? AND eliminado=0 AND TRIM(COALESCE(posicion,''))<>''",
         (ot_id,),
     ).fetchall()
-
-    posiciones = [str(r[0] or "").strip() for r in posiciones_rows if str(r[0] or "").strip()]
+    posiciones = [str(r[0] or "").strip() for r in pos_rows if str(r[0] or "").strip()]
     total = len(posiciones)
     conteo = {
         "ARMADO": 0,
@@ -307,8 +352,19 @@ def _desglose_ot(db, ot_id):
     if total == 0:
         return total, conteo
 
+    # Batch: una sola consulta para todos los procesos de la OT.
+    all_rows = db.execute(
+        "SELECT TRIM(COALESCE(posicion,'')), proceso, estado, re_inspeccion, reproceso"
+        " FROM procesos WHERE ot_id=? ORDER BY id",
+        (ot_id,),
+    ).fetchall()
+    filas_por_pos: dict = {}
+    for _pos, _proc, _est, _reinsp, _repro in all_rows:
+        if _pos:
+            filas_por_pos.setdefault(_pos, []).append((_proc, _est, _reinsp, _repro))
+
     for pos in posiciones:
-        aprobados = set(obtener_procesos_completados(pos, ot_id=ot_id))
+        aprobados = set(_aprobados_de_filas(filas_por_pos.get(pos, [])))
         for proceso in ("ARMADO", "SOLDADURA", "PINTURA"):
             if proceso in aprobados:
                 conteo[proceso] += 1
