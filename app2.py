@@ -552,6 +552,16 @@ def init_db():
     )
     """)
 
+    # Indices para acelerar panel de produccion con alto volumen de OTs/procesos.
+    try:
+        db.execute("CREATE INDEX IF NOT EXISTS idx_procesos_ot_id ON procesos(ot_id)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_procesos_ot_id_id ON procesos(ot_id, id)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_procesos_ot_pos_elim ON procesos(ot_id, posicion, eliminado)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_ots_estado_cierre_mant ON ordenes_trabajo(estado, fecha_cierre, es_mantenimiento)")
+        db.commit()
+    except Exception:
+        pass
+
     # Compatibilidad MySQL: asegurar AUTO_INCREMENT en PK id para tablas ya creadas.
     try:
         es_mysql = False

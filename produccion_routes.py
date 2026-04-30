@@ -1,4 +1,5 @@
 import os
+import time
 
 from flask import Blueprint, request
 from db_utils import get_db
@@ -12,6 +13,17 @@ _DATABOOKS_DIR = os.path.join(_APP_DIR, "Reportes Produccion")
 # Cache de DataFrames de Excel: evita re-leer el mismo archivo en cada request.
 # Clave: ruta absoluta del archivo. Valor: (mtime, DataFrame).
 _excel_df_cache: dict = {}
+
+# Cache de rutas de Excel por obra: evita os.walk en cada request.
+# Clave: obra. Valor: (dir_mtime, excel_path, ts).
+_excel_path_cache: dict = {}
+
+# Cache de avance+desglose por OT: evita recalcular en ráfaga de requests.
+# Clave: ot_id. Valor: (max_proc_id, avance, total_piezas, conteo, ts).
+_avance_cache: dict = {}
+
+_EXCEL_PATH_CACHE_TTL_SECONDS = 45
+_AVANCE_CACHE_TTL_SECONDS = 8
 
 
 def _get_df_cached(excel_path):
@@ -81,6 +93,17 @@ def _buscar_excel_armado(obra):
     if not os.path.isdir(carpeta_obra):
         return ""
 
+    # Devolver desde cache si no vencio TTL y el directorio no fue modificado
+    try:
+        now = time.time()
+        dir_mtime = os.path.getmtime(carpeta_obra)
+        cached = _excel_path_cache.get(obra_txt)
+        if cached and cached[0] == dir_mtime and (now - cached[2]) <= _EXCEL_PATH_CACHE_TTL_SECONDS:
+            return cached[1]
+    except Exception:
+        dir_mtime = None
+        now = time.time()
+
     candidatos = []
     for carpeta_ot in os.listdir(carpeta_obra):
         ruta_ot = os.path.join(carpeta_obra, carpeta_ot)
@@ -95,10 +118,15 @@ def _buscar_excel_armado(obra):
                         candidatos.append(ruta)
 
     if not candidatos:
+        if dir_mtime is not None:
+            _excel_path_cache[obra_txt] = (dir_mtime, "", now)
         return ""
 
     candidatos.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    return candidatos[0]
+    result = candidatos[0]
+    if dir_mtime is not None:
+        _excel_path_cache[obra_txt] = (dir_mtime, result, now)
+    return result
 
 
 def _kg_por_pos_desde_excel_armado(excel_path):
@@ -374,6 +402,149 @@ def _desglose_ot(db, ot_id):
     return total, conteo
 
 
+def _avance_y_desglose_ot(db, ot_id):
+    """Calcula avance % y desglose de procesos en una sola pasada.
+
+    Usa cache en memoria (_avance_cache) basado en MAX(procesos.id): si los
+    registros de procesos no cambiaron desde la última llamada, devuelve el
+    resultado cacheado sin tocar Excel ni re-procesar filas.
+    """
+    # 1. Revisar cache: evita recálculo de requests consecutivos
+    try:
+        now = time.time()
+        max_row = db.execute(
+            "SELECT MAX(id) FROM procesos WHERE ot_id=?", (ot_id,)
+        ).fetchone()
+        max_proc_id = max_row[0] if max_row else None
+        cached = _avance_cache.get(ot_id)
+        if (
+            cached
+            and cached[0] == max_proc_id
+            and max_proc_id is not None
+            and (now - cached[4]) <= _AVANCE_CACHE_TTL_SECONDS
+        ):
+            return cached[1], cached[2], cached[3]
+    except Exception:
+        max_proc_id = None
+        now = time.time()
+
+    # 2. Obtener obra
+    obra_row = db.execute(
+        "SELECT TRIM(COALESCE(obra,'')) FROM ordenes_trabajo WHERE id=?", (ot_id,)
+    ).fetchone()
+    obra = (obra_row[0] if obra_row else "") or ""
+
+    excel_path = _buscar_excel_armado(obra)
+
+    # 3. Batch: todos los procesos de la OT en una sola query (incluye cantidad/peso para fallback)
+    all_rows = db.execute(
+        "SELECT TRIM(COALESCE(posicion,'')), proceso, estado, re_inspeccion, reproceso,"
+        " COALESCE(eliminado,0), COALESCE(cantidad,0), COALESCE(peso,0)"
+        " FROM procesos WHERE ot_id=? ORDER BY id",
+        (ot_id,),
+    ).fetchall()
+
+    filas_por_pos: dict = {}
+    valid_positions: set = set()
+    kg_por_pos_meta: dict = {}
+
+    for _pos, _proc, _est, _reinsp, _repro, _elim, _cant, _peso in all_rows:
+        if not _pos:
+            continue
+        filas_por_pos.setdefault(_pos, []).append((_proc, _est, _reinsp, _repro))
+        if not _elim:
+            valid_positions.add(_pos)
+            kg = _to_float(_cant, 0.0) * _to_float(_peso, 0.0)
+            if kg > 0:
+                kg_por_pos_meta[_pos] = max(kg_por_pos_meta.get(_pos, 0.0), kg)
+
+    # 4. Desglose (conteo por proceso y posiciones totales)
+    total_piezas = len(valid_positions)
+    conteo = {"ARMADO": 0, "SOLDADURA": 0, "PINTURA": 0, "P/DESPACHO": 0}
+    aprobados_por_pos: dict = {}
+    for pos in valid_positions:
+        ap = set(_aprobados_de_filas(filas_por_pos.get(pos, [])))
+        aprobados_por_pos[pos] = ap
+        for proc in ("ARMADO", "SOLDADURA", "PINTURA"):
+            if proc in ap:
+                conteo[proc] += 1
+        if "P/DESPACHO" in ap or "DESPACHO" in ap:
+            conteo["P/DESPACHO"] += 1
+
+    # 5. Avance — path 1: Excel con columna TOTAL exacta
+    total_excel, procesado_excel, tiene_total_excel = _avance_desde_excel_armado(excel_path)
+    if total_excel > 0 and tiene_total_excel:
+        pct = max(0, min(100, round((procesado_excel / total_excel) * 100)))
+        _avance_cache[ot_id] = (max_proc_id, pct, total_piezas, conteo, now)
+        return pct, total_piezas, conteo
+
+    # 6. Avance — path 2: Excel sin TOTAL + estados de BD (todos pre-cargados)
+    if excel_path:
+        df = _get_df_cached(excel_path)
+        if df is not None:
+            col_pos = find_col(df, "POS")
+            col_cant = find_col(df, "CANT")
+            col_peso = find_col(df, "PESO")
+            if col_pos and col_cant and col_peso:
+                ratio_por_base: dict = {}
+                for pos_real, filas in filas_por_pos.items():
+                    base = _pos_base(pos_real)
+                    ap = aprobados_por_pos.get(pos_real) or set(_aprobados_de_filas(filas))
+                    ratio = _avance_ratio_desde_aprobados(ap)
+                    ratio_por_base[base] = max(ratio_por_base.get(base, 0.0), ratio)
+
+                total_kg = 0.0
+                procesado_kg = 0.0
+                for _, row in df.iterrows():
+                    pos_excel = str(row.get(col_pos, "") or "").strip()
+                    if not pos_excel:
+                        continue
+                    base = _pos_base(pos_excel)
+                    cant = _to_float(row.get(col_cant, 0), 0.0)
+                    peso = _to_float(row.get(col_peso, 0), 0.0)
+                    if cant <= 0 or peso <= 0:
+                        continue
+                    total_kg += cant * peso
+                    ratio = ratio_por_base.get(base, 0.0)
+                    procesado_kg += peso * ratio
+
+                if total_kg > 0:
+                    pct = max(0, min(100, round((procesado_kg / total_kg) * 100)))
+                    _avance_cache[ot_id] = (max_proc_id, pct, total_piezas, conteo, now)
+                    return pct, total_piezas, conteo
+
+    # 7. Avance — path 3: fallback con metadatos de cantidad/peso de procesos
+    if not kg_por_pos_meta:
+        _avance_cache[ot_id] = (max_proc_id, 0, total_piezas, conteo, now)
+        return 0, total_piezas, conteo
+
+    total_kg = 0.0
+    avance_kg = 0.0
+    for posicion, kg_pieza in kg_por_pos_meta.items():
+        if kg_pieza <= 0:
+            continue
+        total_kg += kg_pieza
+        ap = aprobados_por_pos.get(posicion, set())
+        av = 0.0
+        if "ARMADO" in ap:
+            av += 70.0
+        if "SOLDADURA" in ap:
+            av += 10.0
+        if "PINTURA" in ap:
+            av += 15.0
+        if "P/DESPACHO" in ap or "DESPACHO" in ap:
+            av += 5.0
+        avance_kg += kg_pieza * (av / 100.0)
+
+    if total_kg <= 0:
+        _avance_cache[ot_id] = (max_proc_id, 0, total_piezas, conteo, now)
+        return 0, total_piezas, conteo
+
+    pct = max(0, min(100, round((avance_kg / total_kg) * 100)))
+    _avance_cache[ot_id] = (max_proc_id, pct, total_piezas, conteo, now)
+    return pct, total_piezas, conteo
+
+
 @produccion_bp.route("/modulo/produccion")
 def produccion():
     db = get_db()
@@ -393,10 +564,9 @@ def produccion():
     filas_ot = []
     hubo_cambios = False
     for ot_id, cliente, obra, titulo, tipo_estructura, fecha_entrega, estado, estado_avance_actual in ots_en_curso:
-        progreso = calcular_avance_ot(db, ot_id)
+        progreso, total_piezas, conteo_procesos = _avance_y_desglose_ot(db, ot_id)
         if _persistir_avance_ot(db, ot_id, progreso, estado_avance_actual):
             hubo_cambios = True
-        total_piezas, conteo_procesos = _desglose_ot(db, ot_id)
         filas_ot.append({
             "ot_id": int(ot_id),
             "cliente": cliente or "",
