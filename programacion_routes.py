@@ -527,6 +527,10 @@ def programacion_index():
     db = get_db()
     today = date.today()
 
+    vista = (request.args.get("vista") or "").strip()
+    fi_raw = request.args.get("fi")
+    ff_raw = request.args.get("ff")
+
     def_fi = date(today.year, today.month, 1)
     m3 = today.month + 2
     y3 = today.year + (1 if m3 > 12 else 0)
@@ -534,8 +538,18 @@ def programacion_index():
     _, ld = monthrange(y3, m3)
     def_ff = date(y3, m3, ld)
 
-    fi_vista = _parse_date(request.args.get("fi")) or def_fi
-    ff_vista = _parse_date(request.args.get("ff")) or def_ff
+    # Vista presets (semana / mensual) cuando no hay fechas explícitas
+    if not fi_raw and not ff_raw:
+        if vista == "semana":
+            def_fi = today - timedelta(days=today.weekday())
+            def_ff = def_fi + timedelta(days=6)
+        elif vista == "mensual":
+            def_fi = date(today.year, today.month, 1)
+            _, ld2 = monthrange(today.year, today.month)
+            def_ff = date(today.year, today.month, ld2)
+
+    fi_vista = _parse_date(fi_raw) or def_fi
+    ff_vista = _parse_date(ff_raw) or def_ff
     if ff_vista <= fi_vista:
         ff_vista = fi_vista + timedelta(days=89)
     obra_fil = (request.args.get("obra") or "").strip()
@@ -561,6 +575,8 @@ def programacion_index():
         }
         for r in rows
     ]
+    if obra_fil:
+        entradas = [e for e in entradas if obra_fil.lower() in (e.get("obra") or "").lower()]
 
     def _lunes_semana(d):
         return d - timedelta(days=d.weekday())
@@ -794,6 +810,9 @@ def programacion_index():
 
     fi_str = fi_vista.strftime("%Y-%m-%d")
     ff_str = ff_vista.strftime("%Y-%m-%d")
+    obra_qs = ("&obra=" + html_lib.escape(obra_fil)) if obra_fil else ""
+    btn_semana_active = "background:#6366f1;color:#fff;border-color:#6366f1;" if vista == "semana" else ""
+    btn_mensual_active = "background:#6366f1;color:#fff;border-color:#6366f1;" if vista == "mensual" else ""
     obras_opts = '<option value="">— Todas las obras —</option>' + "".join(
         f'<option value="{html_lib.escape(o)}" {"selected" if o == obra_fil else ""}>'
         f'{html_lib.escape(o)}</option>'
@@ -967,8 +986,12 @@ function printSection(sectionId) {{
 </div>
 
 <div class="panel" id="gantt-section">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <h3 style="margin:0;">Diagrama de Gantt</h3>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <h3 style="margin:0;">Diagrama de Gantt</h3>
+            <a href="/modulo/programacion?vista=semana{obra_qs}" class="btn btn-sm" style="{btn_semana_active}">📆 Semana</a>
+            <a href="/modulo/programacion?vista=mensual{obra_qs}" class="btn btn-sm" style="{btn_mensual_active}">📅 Mensual</a>
+        </div>
         <button onclick="printSection('gantt-section')" class="btn btn-sec btn-sm">🖨️ Imprimir Gantt</button>
     </div>
     {gantt}
