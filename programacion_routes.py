@@ -538,6 +538,7 @@ def programacion_index():
     ff_vista = _parse_date(request.args.get("ff")) or def_ff
     if ff_vista <= fi_vista:
         ff_vista = fi_vista + timedelta(days=89)
+    obra_fil = (request.args.get("obra") or "").strip()
 
     rows = db.execute("""
         SELECT p.id, p.ot_id, p.fecha_inicio, p.fecha_fin,
@@ -556,7 +557,7 @@ def programacion_index():
             "hs_programadas": r[4], "cantidad_recursos": r[5], "observaciones": r[6],
             "obra": r[7], "titulo": r[8], "cliente": r[9], "estado_ot": r[10], "fecha_entrega": r[11],
             "avance": int(r[12] or 0),
-            "es_subcontrato": float(r[13] or 0) == 0,
+            "es_subcontrato": float(r[13] or 0) == 0 or int(r[5] or 0) == 0,
         }
         for r in rows
     ]
@@ -586,10 +587,21 @@ def programacion_index():
         WHERE fecha_cierre IS NULL AND (es_mantenimiento IS NULL OR es_mantenimiento = 0)
         ORDER BY id ASC
     """).fetchall()
+
+    # Lista de obras para filtro (union de programadas + activas)
+    obras_lista = sorted({
+        str(r[7] or "").strip() for r in rows
+        if str(r[7] or "").strip()
+    } | {
+        str(r[1] or "").strip() for r in ots_activas_cumpl
+        if str(r[1] or "").strip()
+    })
     entradas_semana = [
         {"ot_id": r[0], "obra": r[1], "titulo": r[2], "fecha_entrega": r[3]}
         for r in ots_activas_cumpl
     ]
+    if obra_fil:
+        entradas_semana = [e for e in entradas_semana if obra_fil.lower() in (e.get("obra") or "").lower()]
 
     semana_key = semana_sel.strftime("%Y-%m-%d")
     cumplimiento_rows_html = ""
@@ -715,7 +727,22 @@ def programacion_index():
         chart_svg = "<div style='color:#64748b;font-style:italic;'>Sin datos suficientes para graficar.</div>"
 
     operarios_count = db.execute(
-        "SELECT COUNT(*) FROM empleados_parte"
+        """
+        SELECT COUNT(DISTINCT TRIM(COALESCE(nombre, '')))
+        FROM empleados_parte
+        WHERE (
+            LOWER(TRIM(COALESCE(puesto_tipo, ''))) = 'operario'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%operario%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%soldador%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%armador%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%medio%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%ayudante%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%pintor%'
+        )
+        AND TRIM(COALESCE(nombre, '')) <> ''
+        AND LOWER(TRIM(COALESCE(puesto_tipo, puesto, ''))) NOT LIKE '%supervisor%'
+        AND LOWER(TRIM(COALESCE(puesto_tipo, puesto, ''))) NOT LIKE '%encargado%'
+        """
     ).fetchone()[0] or 0
     gantt = _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=operarios_count)
 
@@ -767,6 +794,11 @@ def programacion_index():
 
     fi_str = fi_vista.strftime("%Y-%m-%d")
     ff_str = ff_vista.strftime("%Y-%m-%d")
+    obras_opts = '<option value="">— Todas las obras —</option>' + "".join(
+        f'<option value="{html_lib.escape(o)}" {"selected" if o == obra_fil else ""}>'
+        f'{html_lib.escape(o)}</option>'
+        for o in obras_lista
+    )
 
     no_prog = "<p style='color:#9a3412;font-style:italic;padding:10px 0;'>No hay programaciones cargadas. <a href='/modulo/programacion/nueva'>Agregar la primera →</a></p>"
     tabla_html = (
@@ -789,6 +821,8 @@ def programacion_index():
     <form method="get" action="/modulo/programacion" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
         <label>Semana (lunes):</label>
         <input type="date" name="semana" value="{semana_str}" style="width:170px;">
+        <label>Obra:</label>
+        <select name="obra" style="min-width:160px;">{obras_opts}</select>
         <input type="hidden" name="fi" value="{fi_str}">
         <input type="hidden" name="ff" value="{ff_str}">
         <button type="submit" class="btn btn-sec">Ver semana</button>
@@ -925,6 +959,8 @@ function printSection(sectionId) {{
         <input type="date" name="fi" value="{fi_str}" style="width:160px;">
         <label>Hasta:</label>
         <input type="date" name="ff" value="{ff_str}" style="width:160px;">
+        <label>Obra:</label>
+        <select name="obra" style="min-width:180px;">{obras_opts}</select>
         <button type="submit" class="btn">Aplicar</button>
         <a href="/modulo/programacion" class="btn btn-sec">Restablecer</a>
     </form>
