@@ -429,7 +429,7 @@ def _form_html(ots_activas, prog=None, error=""):
 
     fi_val = str(prog.get("fecha_inicio") or "") if es_edicion else ""
     ff_val = str(prog.get("fecha_fin") or "") if es_edicion else ""
-    cant_rec_val = int(prog.get("cantidad_recursos") or 1) if es_edicion else 1
+    cant_rec_val = int(prog.get("cantidad_recursos", 1)) if es_edicion else 1
     obs_val = html_lib.escape(str(prog.get("observaciones") or "")) if es_edicion else ""
 
     err_html = f'<div class="err">{html_lib.escape(error)}</div>' if error else ""
@@ -469,7 +469,7 @@ def _form_html(ots_activas, prog=None, error=""):
         <div class="form-group">
             <label>Cantidad de Recursos *</label>
             <input type="number" name="cantidad_recursos" id="rec" value="{cant_rec_val}"
-                   min="1" max="200" step="1" required oninput="calcHoras()">
+                   min="0" max="200" step="1" required oninput="calcHoras()">
         </div>
         <div class="form-group" style="align-self:end;">
             <div class="hs-preview" id="hs-preview-box">
@@ -1106,7 +1106,7 @@ def programacion_nueva():
         ot_id_txt = (request.form.get("ot_id") or "").strip()
         fecha_inicio = (request.form.get("fecha_inicio") or "").strip()
         fecha_fin = (request.form.get("fecha_fin") or "").strip()
-        cant_rec_txt = (request.form.get("cantidad_recursos") or "1").strip()
+        cant_rec_txt = (request.form.get("cantidad_recursos") or "0").strip()
         observaciones = (request.form.get("observaciones") or "").strip()
 
         error = ""
@@ -1121,9 +1121,9 @@ def programacion_nueva():
             return _form_html(ots_activas, error=error)
 
         try:
-            cant_rec = max(1, int(cant_rec_txt))
+            cant_rec = max(0, int(cant_rec_txt))
         except Exception:
-            cant_rec = 1
+            cant_rec = 0
 
         fi_d = _parse_date(fecha_inicio)
         ff_d = _parse_date(fecha_fin)
@@ -1170,7 +1170,7 @@ def programacion_editar(prog_id):
         ot_id_txt = (request.form.get("ot_id") or "").strip()
         fecha_inicio = (request.form.get("fecha_inicio") or "").strip()
         fecha_fin = (request.form.get("fecha_fin") or "").strip()
-        cant_rec_txt = (request.form.get("cantidad_recursos") or "1").strip()
+        cant_rec_txt = (request.form.get("cantidad_recursos") or "0").strip()
         observaciones = (request.form.get("observaciones") or "").strip()
 
         error = ""
@@ -1185,9 +1185,9 @@ def programacion_editar(prog_id):
             return _form_html(ots_activas, prog=prog, error=error)
 
         try:
-            cant_rec = max(1, int(cant_rec_txt))
+            cant_rec = max(0, int(cant_rec_txt))
         except Exception:
-            cant_rec = 1
+            cant_rec = 0
 
         fi_d = _parse_date(fecha_inicio)
         ff_d = _parse_date(fecha_fin)
