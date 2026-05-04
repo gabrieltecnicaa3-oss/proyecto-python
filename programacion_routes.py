@@ -538,7 +538,7 @@ def programacion_index():
     _, ld = monthrange(y3, m3)
     def_ff = date(y3, m3, ld)
 
-    # Vista presets (semana / mensual) cuando no hay fechas explícitas
+    # Vista presets cuando no hay fechas explícitas
     if not fi_raw and not ff_raw:
         if vista == "semana":
             def_fi = today - timedelta(days=today.weekday())
@@ -547,6 +547,7 @@ def programacion_index():
             def_fi = date(today.year, today.month, 1)
             _, ld2 = monthrange(today.year, today.month)
             def_ff = date(today.year, today.month, ld2)
+        # "trimestral" o sin vista: 3 meses (ya calculado arriba en def_fi/def_ff)
 
     fi_vista = _parse_date(fi_raw) or def_fi
     ff_vista = _parse_date(ff_raw) or def_ff
@@ -811,8 +812,10 @@ def programacion_index():
     fi_str = fi_vista.strftime("%Y-%m-%d")
     ff_str = ff_vista.strftime("%Y-%m-%d")
     obra_qs = ("&obra=" + html_lib.escape(obra_fil)) if obra_fil else ""
-    btn_semana_active = "background:#6366f1;color:#fff;border-color:#6366f1;" if vista == "semana" else ""
-    btn_mensual_active = "background:#6366f1;color:#fff;border-color:#6366f1;" if vista == "mensual" else ""
+    _btn_active = "background:#6366f1;color:#fff;border-color:#6366f1;"
+    btn_trimestral_active = _btn_active if vista in ("", "trimestral") else ""
+    btn_semana_active    = _btn_active if vista == "semana"    else ""
+    btn_mensual_active   = _btn_active if vista == "mensual"   else ""
     obras_opts = '<option value="">— Todas las obras —</option>' + "".join(
         f'<option value="{html_lib.escape(o)}" {"selected" if o == obra_fil else ""}>'
         f'{html_lib.escape(o)}</option>'
@@ -989,8 +992,9 @@ function printSection(sectionId) {{
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <h3 style="margin:0;">Diagrama de Gantt</h3>
-            <a href="/modulo/programacion?vista=semana{obra_qs}" class="btn btn-sm" style="{btn_semana_active}">📆 Semana</a>
+            <a href="/modulo/programacion?vista=trimestral{obra_qs}" class="btn btn-sm" style="{btn_trimestral_active}">📊 Trimestral</a>
             <a href="/modulo/programacion?vista=mensual{obra_qs}" class="btn btn-sm" style="{btn_mensual_active}">📅 Mensual</a>
+            <a href="/modulo/programacion?vista=semana{obra_qs}" class="btn btn-sm" style="{btn_semana_active}">📆 Semana</a>
         </div>
         <button onclick="printSection('gantt-section')" class="btn btn-sec btn-sm">🖨️ Imprimir Gantt</button>
     </div>
