@@ -341,7 +341,7 @@ def ot_lista():
                 <b>📁 {html_lib.escape(obra_key)}</b>
                 &nbsp;&nbsp;
                 {'&nbsp;'.join(
-                    f'<a href="/modulo/ot/editar/{o[0]}" style="background:#ea580c;color:white;padding:3px 9px;border-radius:4px;font-size:12px;text-decoration:none;">OT-{o[0]}: {html_lib.escape(str(o[3] or ""))}</a>'
+                    f'<a href="/modulo/ot/editar/{o[0]}" style="background:{"#64748b" if float(o[8] or 0)==0 else "#ea580c"};color:white;padding:3px 9px;border-radius:4px;font-size:12px;text-decoration:none;">{"⚙ " if float(o[8] or 0)==0 else ""}OT-{o[0]}: {html_lib.escape(str(o[3] or ""))}</a>'
                     for o in ots_obra
                 )}
             </div>
@@ -364,12 +364,20 @@ def ot_lista():
         """
         for ot in ots:
             estado_class = f"estado-{ot[5].lower().replace(' ', '')}"
+            es_subcontrato = float(ot[8] or 0) == 0
+            subcontrato_chip = (
+                '<span style="display:inline-block;font-size:11px;font-weight:700;padding:2px 7px;'
+                'border-radius:999px;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;'
+                'margin-left:4px;vertical-align:middle;">⚙ Subcontrato</span>'
+                if es_subcontrato else ''
+            )
+            row_style = 'background:#f8fafc;border-left:4px solid #94a3b8;' if es_subcontrato else ''
             html += f"""
-            <tr class="{estado_class}">
+            <tr class="{estado_class}" style="{row_style}">
                 <td><b>{ot[0]}</b></td>
                 <td>{ot[1]}</td>
                 <td>{ot[2]}</td>
-                <td>{ot[3]}</td>
+                <td>{ot[3]}{subcontrato_chip}</td>
                 <td>{ot[9] or '---'}</td>
                 <td>{ot[4]}</td>
                 <td>{ot[5]}</td>
