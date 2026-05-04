@@ -76,7 +76,7 @@ h3{color:#9a3412;margin:0 0 12px 0;}
 .g-weeks-strip{position:absolute;left:0;right:0;top:50%;height:50%;display:flex;}
 .g-week-tick{position:absolute;top:0;height:100%;display:flex;align-items:center;font-size:9px;color:rgba(255,255,255,0.85);padding-left:3px;border-left:1px solid rgba(255,255,255,0.2);}
 .g-body{background:#fff;border-radius:0 0 8px 8px;}
-.g-row{display:grid;grid-template-columns:260px 150px 1fr 80px;border-bottom:1px solid #ffedd5;min-height:52px;}
+.g-row{display:grid;grid-template-columns:260px 150px 1fr 80px;border-bottom:1px solid #ffedd5;min-height:62px;}
 .g-row:last-child{border-bottom:none;}
 .g-row:hover{background:#fffaf5;}
 .g-label{padding:8px 10px;display:flex;flex-direction:column;justify-content:center;gap:3px;}
@@ -86,7 +86,7 @@ h3{color:#9a3412;margin:0 0 12px 0;}
 .g-sub{font-size:11px;color:#9a3412;margin-left:14px;}
 .g-chips{display:flex;flex-wrap:wrap;gap:3px;margin-left:14px;margin-top:2px;}
 .g-chip{background:#ffedd5;color:#9a3412;border:1px solid #fdba74;border-radius:999px;padding:1px 7px;font-size:10px;}
-.g-track{position:relative;min-height:52px;}
+.g-track{position:relative;min-height:62px;}
 .g-gridline{position:absolute;top:0;bottom:0;width:1px;background:#ffedd5;z-index:0;pointer-events:none;}
 .g-today-line{position:absolute;top:0;bottom:0;width:2px;background:#ef4444;opacity:.7;z-index:2;pointer-events:none;}
 .g-today-line::after{content:"hoy";position:absolute;top:2px;left:4px;font-size:9px;color:#ef4444;white-space:nowrap;}
@@ -196,6 +196,8 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
 
         bar_start = max(fi, fi_vista)
         bar_end = min(ff, ff_vista)
+        avance = max(0, min(100, int(e.get("avance") or 0)))
+        es_sub = e.get("es_subcontrato", False)
 
         if bar_start > ff_vista or bar_end < fi_vista:
             bar_html = '<span class="g-out-range">fuera de rango visible</span>'
@@ -212,21 +214,89 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
             )
             if cant_rec:
                 tip += f"\n{cant_rec} recurso(s) asignado(s)"
-            # Show label only if wide enough (>5%)
-            label_txt = f"{_fmt(fi)} – {_fmt(ff)}" if width > 6 else ""
-            bar_html = (
-                f'<div class="g-bar" style="left:{left:.2f}%;width:{width:.2f}%;background:{color};" '
-                f'title="{html_lib.escape(tip)}">{label_txt}</div>'
-            )
+            tip += f"\nAvance real: {avance}%"
+            if es_sub:
+                tip += "\n⚠ SUBCONTRATO (hs previstas = 0)"
 
+            # ── Barra planificada (arriba) ──
+            if es_sub:
+                # Subcontrato: barra con rayas diagonales (patrón CSS), color gris azulado
+                planned_bar = (
+                    f'<div class="g-bar" style="left:{left:.2f}%;width:{width:.2f}%;top:30%;height:16px;'
+                    f'background:repeating-linear-gradient(45deg,#64748b 0,#64748b 4px,#94a3b8 4px,#94a3b8 10px);'
+                    f'opacity:0.85;" title="{html_lib.escape(tip)}"></div>'
+                )
+            else:
+                planned_bar = (
+                    f'<div class="g-bar" style="left:{left:.2f}%;width:{width:.2f}%;top:15%;height:14px;'
+                    f'background:{color};opacity:0.35;border-radius:4px;" '
+                    f'title="{html_lib.escape(tip)}"></div>'
+                )
+
+            # ── Barra avance real (abajo) ──
+            if es_sub:
+                avance_bar = ""  # subcontrato no tiene barra de avance propio
+            else:
+                avance_width = width * avance / 100
+                avance_color = "#16a34a"
+                if avance > 0:
+                    # Etiqueta dentro de la barra si hay espacio, si no fuera a la derecha
+                    if avance_width > 4:
+                        inner_lbl = f"{avance}%"
+                        outer_lbl = ""
+                    else:
+                        inner_lbl = ""
+                        right_pos = left + avance_width
+                        outer_lbl = (
+                            f'<div style="position:absolute;left:{right_pos:.2f}%;top:58%;'
+                            f'font-size:9px;font-weight:700;color:{avance_color};'
+                            f'white-space:nowrap;padding-left:3px;line-height:14px;">{avance}%</div>'
+                        )
+                    avance_bar = (
+                        f'<div class="g-bar" style="left:{left:.2f}%;width:{avance_width:.2f}%;top:58%;height:14px;'
+                        f'background:{avance_color};border-radius:4px;opacity:0.9;" '
+                        f'title="Avance real: {avance}%">{inner_lbl}</div>'
+                        + outer_lbl
+                    )
+                else:
+                    # avance 0%: mostrar etiqueta "0%" a la izquierda del inicio de barra
+                    outer_lbl = (
+                        f'<div style="position:absolute;left:{left:.2f}%;top:58%;'
+                        f'font-size:9px;font-weight:700;color:#64748b;'
+                        f'white-space:nowrap;padding-left:3px;line-height:14px;">0%</div>'
+                    )
+                    avance_bar = outer_lbl
+
+            # ── Etiqueta de fechas (encima de ambas barras) ──
+            if not es_sub and width > 8:
+                date_label = (
+                    f'<div style="position:absolute;left:{left:.2f}%;width:{width:.2f}%;top:2px;'
+                    f'font-size:9px;color:#431407;font-weight:700;white-space:nowrap;overflow:hidden;'
+                    f'padding:0 4px;">{_fmt(fi)} – {_fmt(ff)}</div>'
+                )
+            else:
+                date_label = ""
+
+            bar_html = date_label + planned_bar + avance_bar
+
+        avance_chip_color = "#16a34a"
+        avance_chip = (
+            f'<span class="g-chip" style="background:{avance_chip_color}1a;border-color:{avance_chip_color}66;'
+            f'color:{avance_chip_color};font-weight:800;">{avance}% avance</span>'
+        ) if not es_sub else ""
+        sub_chip = (
+            '<span class="g-chip" style="background:#f1f5f9;border-color:#94a3b8;'
+            'color:#475569;font-weight:700;">⚙ Subcontrato</span>'
+        ) if es_sub else ""
         rec_chips = f'<span class="g-chip">{cant_rec} rec.</span>' if cant_rec else ""
+        dot_style = "background:repeating-linear-gradient(45deg,#64748b 0,#64748b 3px,#94a3b8 3px,#94a3b8 6px);" if es_sub else f"background:{color};"
 
         rows_html += f"""
         <div class="g-row">
             <div class="g-label">
-                <div><span class="g-dot" style="background:{color};"></span><span class="g-ot">OT {ot_id} — {obra}</span></div>
+                <div><span class="g-dot" style="{dot_style}"></span><span class="g-ot">OT {ot_id} — {obra}</span></div>
                 <div class="g-sub">{titulo}</div>
-                <div class="g-chips">{rec_chips}</div>
+                <div class="g-chips">{rec_chips}{avance_chip}{sub_chip}</div>
             </div>
             <div class="g-need">{_fmt(fecha_nec)}</div>
             <div class="g-track">
@@ -264,7 +334,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
             for e in entradas:
                 fi_e = _parse_date(e.get("fecha_inicio"))
                 ff_e = _parse_date(e.get("fecha_fin"))
-                if fi_e and ff_e and fi_e <= week_end and ff_e >= d:
+                if fi_e and ff_e and fi_e <= week_end and ff_e >= d and not e.get("es_subcontrato"):
                     total_rec += int(e.get("cantidad_recursos") or 0)
             semanas.append((vis_s, vis_e, total_rec))
         d += timedelta(days=7)
@@ -473,7 +543,8 @@ def programacion_index():
         SELECT p.id, p.ot_id, p.fecha_inicio, p.fecha_fin,
                COALESCE(p.hs_programadas, 0), COALESCE(p.cantidad_recursos, 0), COALESCE(p.observaciones, ''),
                COALESCE(ot.obra, ''), COALESCE(ot.titulo, ''),
-               COALESCE(ot.cliente, ''), COALESCE(ot.estado, ''), COALESCE(ot.fecha_entrega, '')
+               COALESCE(ot.cliente, ''), COALESCE(ot.estado, ''), COALESCE(ot.fecha_entrega, ''),
+               COALESCE(ot.estado_avance, 0), COALESCE(ot.hs_previstas, 0)
         FROM programacion p
         LEFT JOIN ordenes_trabajo ot ON ot.id = p.ot_id
         ORDER BY p.fecha_inicio ASC, p.ot_id ASC
@@ -484,6 +555,8 @@ def programacion_index():
             "id": r[0], "ot_id": r[1], "fecha_inicio": r[2], "fecha_fin": r[3],
             "hs_programadas": r[4], "cantidad_recursos": r[5], "observaciones": r[6],
             "obra": r[7], "titulo": r[8], "cliente": r[9], "estado_ot": r[10], "fecha_entrega": r[11],
+            "avance": int(r[12] or 0),
+            "es_subcontrato": float(r[13] or 0) == 0,
         }
         for r in rows
     ]
@@ -647,7 +720,7 @@ def programacion_index():
     gantt = _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=operarios_count)
 
     # KPIs
-    total_hs = sum(float(e.get("hs_programadas") or 0) for e in entradas)
+    total_hs = sum(float(e.get("hs_programadas") or 0) for e in entradas if not e.get("es_subcontrato"))
     ots_unicas = len({e["ot_id"] for e in entradas})
     en_curso = sum(
         1 for e in entradas
