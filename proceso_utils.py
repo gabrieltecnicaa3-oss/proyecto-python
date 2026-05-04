@@ -13,6 +13,23 @@ def _normalizar_etiqueta(value):
     return str(value or "").strip().upper()
 
 
+def _esquema_sin_pintura(esquema):
+    esquema_u = _normalizar_etiqueta(esquema)
+    if not esquema_u:
+        return False
+    marcas_no_pintura = {
+        "N/A",
+        "NA",
+        "NO APLICA",
+        "SIN PINTURA",
+        "NO REQUIERE PINTURA",
+    }
+    if esquema_u in marcas_no_pintura:
+        return True
+    # Galvanizado implica que no se realiza control de pintura en taller.
+    return "GALVANIZ" in esquema_u
+
+
 def _ot_no_requiere_pintura(db, obra=None, ot_id=None):
     """Retorna True si la OT/obra está configurada como sin pintura."""
     row = None
@@ -40,18 +57,13 @@ def _ot_no_requiere_pintura(db, obra=None, ot_id=None):
             (obra,),
         ).fetchone()
 
-    esquema = _normalizar_etiqueta(row[0] if row else "")
-    if not esquema:
-        return False
-    marcas_no_pintura = {
-        "N/A",
-        "NA",
-        "NO APLICA",
-        "NO APLICA",
-        "SIN PINTURA",
-        "NO REQUIERE PINTURA",
-    }
-    return esquema in marcas_no_pintura
+    return _esquema_sin_pintura(row[0] if row else "")
+
+
+def obtener_orden_procesos_ot(db, obra=None, ot_id=None):
+    if _ot_no_requiere_pintura(db, obra=obra, ot_id=ot_id):
+        return ["ARMADO", "SOLDADURA", "DESPACHO"]
+    return list(ORDEN_PROCESOS)
 
 
 def _extraer_ciclos_reinspeccion(reinspeccion_txt):
@@ -188,6 +200,8 @@ def _obtener_timeline_pieza(db, pos, obra=None):
 def obtener_procesos_completados(pos, obra=None, ot_id=None):
     """Retorna lista de procesos aprobados (OK efectivo) en orden, sin saltos."""
     db = get_db()
+    orden_flujo = obtener_orden_procesos_ot(db, obra=obra, ot_id=ot_id)
+
     if ot_id is not None:
         rows = db.execute(
             "SELECT proceso, estado, re_inspeccion, reproceso FROM procesos WHERE posicion=? AND ot_id=? ORDER BY id",
@@ -217,7 +231,7 @@ def obtener_procesos_completados(pos, obra=None, ot_id=None):
             aprobados.add(proc)
 
     completados = []
-    for proc in ORDEN_PROCESOS:
+    for proc in orden_flujo:
         if proc in aprobados:
             completados.append(proc)
         else:
@@ -235,9 +249,7 @@ def validar_siguiente_proceso(pos, nuevo_proceso, obra=None, ot_id=None):
     procesos_hechos = obtener_procesos_completados(pos, obra, ot_id)
     db = get_db()
 
-    orden_flujo = list(ORDEN_PROCESOS)
-    if _ot_no_requiere_pintura(db, obra=obra, ot_id=ot_id):
-        orden_flujo = ["ARMADO", "SOLDADURA", "DESPACHO"]
+    orden_flujo = obtener_orden_procesos_ot(db, obra=obra, ot_id=ot_id)
 
     # Si el proceso ya existe, es una edición
     if nuevo_proceso in procesos_hechos:

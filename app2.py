@@ -3,11 +3,13 @@ from proceso_utils import (
     ORDEN_PROCESOS,
     _extraer_ciclos_reinspeccion,
     _estado_control_aprueba,
+    _ot_no_requiere_pintura,
     _proceso_aprobado,
     _estado_pieza_persistente,
     _registrar_trazabilidad,
     _agregar_ciclo_reinspeccion,
     _obtener_timeline_pieza,
+    obtener_orden_procesos_ot,
     obtener_procesos_completados,
     pieza_completada,
     validar_siguiente_proceso,
@@ -2168,38 +2170,7 @@ def home(page=1):
         ots_options += f'<option value="{int(ot_id_opt)}" {selected}>{html_lib.escape(etiqueta)}</option>'
 
     def _ot_no_requiere_pintura_panel(pos_sel, obra_sel, ot_id_sel=None):
-        row_esq = db.execute(
-            """
-            SELECT COALESCE(ot.esquema_pintura, '')
-            FROM procesos p
-            LEFT JOIN ordenes_trabajo ot ON ot.id = p.ot_id
-            WHERE TRIM(COALESCE(p.posicion, '')) = TRIM(?)
-              AND TRIM(COALESCE(p.obra, '')) = TRIM(COALESCE(?, ''))
-              AND COALESCE(p.ot_id, -1) = COALESCE(?, -1)
-              AND p.eliminado = 0
-            ORDER BY p.id DESC
-            LIMIT 1
-            """,
-            (pos_sel, obra_sel or '', ot_id_sel),
-        ).fetchone()
-
-        esquema = str((row_esq[0] if row_esq else '') or '').strip().upper()
-        if not esquema and obra_sel:
-            row_ot = db.execute(
-                """
-                SELECT COALESCE(esquema_pintura, '')
-                FROM ordenes_trabajo
-                WHERE TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, ''))
-                  AND fecha_cierre IS NULL
-                  AND (es_mantenimiento IS NULL OR es_mantenimiento = 0)
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (obra_sel,),
-            ).fetchone()
-            esquema = str((row_ot[0] if row_ot else '') or '').strip().upper()
-
-        return esquema in {"N/A", "NA", "NO APLICA", "SIN PINTURA", "NO REQUIERE PINTURA"}
+                return _ot_no_requiere_pintura(db, obra=obra_sel, ot_id=ot_id_sel)
 
     def obtener_resumen_panel_pieza(pos_sel, obra_sel, ot_id_sel=None):
         def _extraer_fecha_despacho_meta(reproceso_txt):
@@ -3959,6 +3930,9 @@ def pieza(pos):
     procesos_completados_btn = obtener_procesos_completados(pos, obra_url if obra_url else None, ot_scope_btn)
     soldadura_aprobada = "SOLDADURA" in procesos_completados_btn
     pintura_aprobada = "PINTURA" in procesos_completados_btn
+    ot_sin_pintura = _ot_no_requiere_pintura(db, obra=obra_url if obra_url else None, ot_id=ot_scope_btn)
+    if ot_sin_pintura:
+        pintura_aprobada = True
     # Si pintura ya está aprobada, el siguiente paso es despacho; si no, y soldadura está OK, va a pintura.
     if not es_completada and obra_url and not soldadura_aprobada:
         sol_rows = db.execute(
@@ -3970,7 +3944,7 @@ def pieza(pos):
         btn_href = "#"
     elif pintura_aprobada:
         btn_href = f"/cargar/{quote(pos)}?obra={quote(obra_url)}{ot_qs}"
-    elif soldadura_aprobada:
+    elif soldadura_aprobada and not ot_sin_pintura:
         btn_href = f"/modulo/calidad/escaneo/control-pintura?obra={quote(obra_url)}" + (f"&ot_id={ot_scope_btn}" if ot_scope_btn is not None else "")
     else:
         btn_href = f"/cargar/{quote(pos)}?obra={quote(obra_url)}{ot_qs}"
@@ -4520,6 +4494,11 @@ def cargar(pos):
                 obra_ot_actual = _obra or obra_qs
                 break
 
+    orden_procesos_ot = obtener_orden_procesos_ot(
+        db,
+        obra=obra_ot_actual if obra_ot_actual else None,
+        ot_id=ot_id_existente,
+    )
     procesos_hechos = obtener_procesos_completados(pos, obra_ot_actual if obra_ot_actual else None, ot_id_existente)
     try:
         operarios_disponibles = _obtener_operarios_disponibles(db)
@@ -4539,10 +4518,10 @@ def cargar(pos):
     siguiente_proceso = None
     if len(procesos_hechos) == 0:
         siguiente_proceso = "ARMADO"
-    elif len(procesos_hechos) < len(ORDEN_PROCESOS):
+    elif len(procesos_hechos) < len(orden_procesos_ot):
         try:
-            idx = ORDEN_PROCESOS.index(procesos_hechos[-1])
-            siguiente_proceso = ORDEN_PROCESOS[idx + 1]
+            idx = orden_procesos_ot.index(procesos_hechos[-1])
+            siguiente_proceso = orden_procesos_ot[idx + 1]
         except (ValueError, IndexError):
             # Si hay error, forzar al primer proceso
             siguiente_proceso = "ARMADO"
@@ -4550,7 +4529,7 @@ def cargar(pos):
     
     # Generar opciones de proceso
     opciones = ""
-    for proc in ORDEN_PROCESOS:
+    for proc in orden_procesos_ot:
         if proc not in procesos_hechos:
             selected = "selected" if proc == siguiente_proceso else ""
             opciones += f'<option {selected}>{proc}</option>'

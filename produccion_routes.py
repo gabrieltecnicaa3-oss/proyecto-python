@@ -3,7 +3,7 @@ import time
 
 from flask import Blueprint, request
 from db_utils import get_db
-from proceso_utils import obtener_procesos_completados, ORDEN_PROCESOS, _proceso_aprobado
+from proceso_utils import obtener_procesos_completados, ORDEN_PROCESOS, _ot_no_requiere_pintura, _proceso_aprobado
 from qr_utils import find_col, load_clean_excel
 
 produccion_bp = Blueprint("produccion", __name__)
@@ -42,12 +42,13 @@ def _get_df_cached(excel_path):
         return None
 
 
-def _aprobados_de_filas(filas):
+def _aprobados_de_filas(filas, orden_flujo=None):
     """Replica la logica de obtener_procesos_completados sin acceso a DB.
 
     filas: lista de tuplas (proceso, estado, re_inspeccion, reproceso).
     Retorna lista de procesos aprobados en orden, sin saltos.
     """
+    flujo = list(orden_flujo or ORDEN_PROCESOS)
     aprobados = set()
     for proceso, estado, re_inspeccion, reproceso in filas:
         proc = (proceso or "").strip().upper()
@@ -60,7 +61,7 @@ def _aprobados_de_filas(filas):
         if _proceso_aprobado(estado, re_inspeccion):
             aprobados.add(proc)
     completados = []
-    for proc in ORDEN_PROCESOS:
+    for proc in flujo:
         if proc in aprobados:
             completados.append(proc)
         else:
@@ -190,16 +191,32 @@ def _avance_desde_excel_armado(excel_path):
         return 0.0, 0.0, False
 
 
-def _avance_ratio_desde_aprobados(aprobados):
+def _pesos_avance_por_ot(db, ot_id, obra=""):
+    if _ot_no_requiere_pintura(db, obra=obra, ot_id=ot_id):
+        return {
+            "ARMADO": 70.0,
+            "SOLDADURA": 10.0,
+            "PINTURA": 0.0,
+            "DESPACHO": 25.0,
+        }
+    return {
+        "ARMADO": 70.0,
+        "SOLDADURA": 10.0,
+        "PINTURA": 15.0,
+        "DESPACHO": 5.0,
+    }
+
+
+def _avance_ratio_desde_aprobados(aprobados, pesos):
     ratio = 0.0
     if "ARMADO" in aprobados:
-        ratio += 0.70
+        ratio += pesos["ARMADO"] / 100.0
     if "SOLDADURA" in aprobados:
-        ratio += 0.10
+        ratio += pesos["SOLDADURA"] / 100.0
     if "PINTURA" in aprobados:
-        ratio += 0.15
+        ratio += pesos["PINTURA"] / 100.0
     if "P/DESPACHO" in aprobados or "DESPACHO" in aprobados:
-        ratio += 0.05
+        ratio += pesos["DESPACHO"] / 100.0
     return ratio
 
 
@@ -227,11 +244,19 @@ def _avance_estimado_excel_sin_total(db, ot_id, excel_path):
             if _pos:
                 filas_por_pos.setdefault(_pos, []).append((_proc, _est, _reinsp, _repro))
 
+        obra_row = db.execute(
+            "SELECT TRIM(COALESCE(obra, '')) FROM ordenes_trabajo WHERE id = ?",
+            (ot_id,),
+        ).fetchone()
+        obra = (obra_row[0] if obra_row else "") or ""
+        pesos = _pesos_avance_por_ot(db, ot_id, obra)
+        orden_flujo = ["ARMADO", "SOLDADURA", "DESPACHO"] if _ot_no_requiere_pintura(db, obra=obra, ot_id=ot_id) else list(ORDEN_PROCESOS)
+
         ratio_por_base = {}
         for pos_real_txt, filas in filas_por_pos.items():
             base = _pos_base(pos_real_txt)
-            aprobados = set(_aprobados_de_filas(filas))
-            ratio = _avance_ratio_desde_aprobados(aprobados)
+            aprobados = set(_aprobados_de_filas(filas, orden_flujo=orden_flujo))
+            ratio = _avance_ratio_desde_aprobados(aprobados, pesos)
             ratio_por_base[base] = max(ratio_por_base.get(base, 0.0), ratio)
 
         total_kg = 0.0
@@ -265,6 +290,7 @@ def calcular_avance_ot(db, ot_id):
         (ot_id,),
     ).fetchone()
     obra = (obra_row[0] if obra_row else "") or ""
+    pesos = _pesos_avance_por_ot(db, ot_id, obra)
 
     # Fuente principal: Excel de ARMADO en DataBooks/<obra>/3-Produccion
     excel_path = _buscar_excel_armado(obra)
@@ -328,13 +354,13 @@ def calcular_avance_ot(db, ot_id):
         procesos_aprobados = set(obtener_procesos_completados(posicion, ot_id=ot_id))
         avance_pieza = 0.0
         if "ARMADO" in procesos_aprobados:
-            avance_pieza += 70.0
+            avance_pieza += pesos["ARMADO"]
         if "SOLDADURA" in procesos_aprobados:
-            avance_pieza += 10.0
+            avance_pieza += pesos["SOLDADURA"]
         if "PINTURA" in procesos_aprobados:
-            avance_pieza += 15.0
+            avance_pieza += pesos["PINTURA"]
         if "P/DESPACHO" in procesos_aprobados or "DESPACHO" in procesos_aprobados:
-            avance_pieza += 5.0
+            avance_pieza += pesos["DESPACHO"]
 
         avance_kg += kg_pieza * (avance_pieza / 100.0)
 
@@ -362,6 +388,7 @@ def _persistir_avance_ot(db, ot_id, progreso_calculado, progreso_actual):
 
 
 def _desglose_ot(db, ot_id):
+    orden_flujo = ["ARMADO", "SOLDADURA", "DESPACHO"] if _ot_no_requiere_pintura(db, ot_id=ot_id) else list(ORDEN_PROCESOS)
     # Obtener posiciones validas (no eliminadas) — una sola consulta.
     pos_rows = db.execute(
         "SELECT DISTINCT TRIM(COALESCE(posicion,''))"
@@ -392,7 +419,7 @@ def _desglose_ot(db, ot_id):
             filas_por_pos.setdefault(_pos, []).append((_proc, _est, _reinsp, _repro))
 
     for pos in posiciones:
-        aprobados = set(_aprobados_de_filas(filas_por_pos.get(pos, [])))
+        aprobados = set(_aprobados_de_filas(filas_por_pos.get(pos, []), orden_flujo=orden_flujo))
         for proceso in ("ARMADO", "SOLDADURA", "PINTURA"):
             if proceso in aprobados:
                 conteo[proceso] += 1
@@ -435,6 +462,8 @@ def _avance_y_desglose_ot(db, ot_id):
         "SELECT TRIM(COALESCE(obra,'')) FROM ordenes_trabajo WHERE id=?", (ot_id,)
     ).fetchone()
     obra = (obra_row[0] if obra_row else "") or ""
+    pesos = _pesos_avance_por_ot(db, ot_id, obra)
+    orden_flujo = ["ARMADO", "SOLDADURA", "DESPACHO"] if _ot_no_requiere_pintura(db, obra=obra, ot_id=ot_id) else list(ORDEN_PROCESOS)
 
     excel_path = _buscar_excel_armado(obra)
 
@@ -465,7 +494,7 @@ def _avance_y_desglose_ot(db, ot_id):
     conteo = {"ARMADO": 0, "SOLDADURA": 0, "PINTURA": 0, "P/DESPACHO": 0}
     aprobados_por_pos: dict = {}
     for pos in valid_positions:
-        ap = set(_aprobados_de_filas(filas_por_pos.get(pos, [])))
+        ap = set(_aprobados_de_filas(filas_por_pos.get(pos, []), orden_flujo=orden_flujo))
         aprobados_por_pos[pos] = ap
         for proc in ("ARMADO", "SOLDADURA", "PINTURA"):
             if proc in ap:
@@ -491,8 +520,8 @@ def _avance_y_desglose_ot(db, ot_id):
                 ratio_por_base: dict = {}
                 for pos_real, filas in filas_por_pos.items():
                     base = _pos_base(pos_real)
-                    ap = aprobados_por_pos.get(pos_real) or set(_aprobados_de_filas(filas))
-                    ratio = _avance_ratio_desde_aprobados(ap)
+                    ap = aprobados_por_pos.get(pos_real) or set(_aprobados_de_filas(filas, orden_flujo=orden_flujo))
+                    ratio = _avance_ratio_desde_aprobados(ap, pesos)
                     ratio_por_base[base] = max(ratio_por_base.get(base, 0.0), ratio)
 
                 total_kg = 0.0
@@ -529,13 +558,13 @@ def _avance_y_desglose_ot(db, ot_id):
         ap = aprobados_por_pos.get(posicion, set())
         av = 0.0
         if "ARMADO" in ap:
-            av += 70.0
+            av += pesos["ARMADO"]
         if "SOLDADURA" in ap:
-            av += 10.0
+            av += pesos["SOLDADURA"]
         if "PINTURA" in ap:
-            av += 15.0
+            av += pesos["PINTURA"]
         if "P/DESPACHO" in ap or "DESPACHO" in ap:
-            av += 5.0
+            av += pesos["DESPACHO"]
         avance_kg += kg_pieza * (av / 100.0)
 
     if total_kg <= 0:

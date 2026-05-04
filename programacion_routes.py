@@ -597,13 +597,25 @@ def programacion_index():
     for r in cumplimiento_rows:
         cumpl_idx[(int(r[0]), str(r[1]))] = (float(r[2] or 0), str(r[3] or ""))
 
-    # Cumplimiento: mostrar TODAS las OTs activas, independientemente de si tienen programacion cargada
+    # Cumplimiento: mostrar solo OTs con actividad (programacion solapada) en la semana seleccionada.
     ots_activas_cumpl = db.execute("""
         SELECT id, COALESCE(obra, ''), COALESCE(titulo, ''), COALESCE(fecha_entrega, '')
         FROM ordenes_trabajo
         WHERE fecha_cierre IS NULL AND (es_mantenimiento IS NULL OR es_mantenimiento = 0)
         ORDER BY id ASC
     """).fetchall()
+
+    ot_ids_con_actividad_semana = set()
+    for e in entradas:
+        fi_e = _parse_date(e.get("fecha_inicio"))
+        ff_e = _parse_date(e.get("fecha_fin"))
+        if not fi_e or not ff_e:
+            continue
+        if fi_e <= semana_fin and ff_e >= semana_sel:
+            try:
+                ot_ids_con_actividad_semana.add(int(e.get("ot_id") or 0))
+            except Exception:
+                continue
 
     # Lista de obras para filtro (union de programadas + activas)
     obras_lista = sorted({
@@ -616,6 +628,7 @@ def programacion_index():
     entradas_semana = [
         {"ot_id": r[0], "obra": r[1], "titulo": r[2], "fecha_entrega": r[3]}
         for r in ots_activas_cumpl
+        if int(r[0] or 0) in ot_ids_con_actividad_semana
     ]
     if obra_fil:
         entradas_semana = [e for e in entradas_semana if obra_fil.lower() in (e.get("obra") or "").lower()]
