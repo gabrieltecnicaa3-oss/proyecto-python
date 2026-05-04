@@ -423,7 +423,9 @@ def _avance_y_desglose_ot(db, ot_id):
             and max_proc_id is not None
             and (now - cached[4]) <= _AVANCE_CACHE_TTL_SECONDS
         ):
-            return cached[1], cached[2], cached[3]
+            total_kg_c = cached[5] if len(cached) > 5 else 0.0
+            avance_kg_c = cached[6] if len(cached) > 6 else 0.0
+            return cached[1], cached[2], cached[3], total_kg_c, avance_kg_c
     except Exception:
         max_proc_id = None
         now = time.time()
@@ -475,8 +477,8 @@ def _avance_y_desglose_ot(db, ot_id):
     total_excel, procesado_excel, tiene_total_excel = _avance_desde_excel_armado(excel_path)
     if total_excel > 0 and tiene_total_excel:
         pct = max(0, min(100, round((procesado_excel / total_excel) * 100)))
-        _avance_cache[ot_id] = (max_proc_id, pct, total_piezas, conteo, now)
-        return pct, total_piezas, conteo
+        _avance_cache[ot_id] = (max_proc_id, pct, total_piezas, conteo, now, total_excel, procesado_excel)
+        return pct, total_piezas, conteo, total_excel, procesado_excel
 
     # 6. Avance — path 2: Excel sin TOTAL + estados de BD (todos pre-cargados)
     if excel_path:
@@ -510,13 +512,13 @@ def _avance_y_desglose_ot(db, ot_id):
 
                 if total_kg > 0:
                     pct = max(0, min(100, round((procesado_kg / total_kg) * 100)))
-                    _avance_cache[ot_id] = (max_proc_id, pct, total_piezas, conteo, now)
-                    return pct, total_piezas, conteo
+                    _avance_cache[ot_id] = (max_proc_id, pct, total_piezas, conteo, now, total_kg, procesado_kg)
+                    return pct, total_piezas, conteo, total_kg, procesado_kg
 
     # 7. Avance — path 3: fallback con metadatos de cantidad/peso de procesos
     if not kg_por_pos_meta:
-        _avance_cache[ot_id] = (max_proc_id, 0, total_piezas, conteo, now)
-        return 0, total_piezas, conteo
+        _avance_cache[ot_id] = (max_proc_id, 0, total_piezas, conteo, now, 0.0, 0.0)
+        return 0, total_piezas, conteo, 0.0, 0.0
 
     total_kg = 0.0
     avance_kg = 0.0
@@ -537,12 +539,12 @@ def _avance_y_desglose_ot(db, ot_id):
         avance_kg += kg_pieza * (av / 100.0)
 
     if total_kg <= 0:
-        _avance_cache[ot_id] = (max_proc_id, 0, total_piezas, conteo, now)
-        return 0, total_piezas, conteo
+        _avance_cache[ot_id] = (max_proc_id, 0, total_piezas, conteo, now, 0.0, 0.0)
+        return 0, total_piezas, conteo, 0.0, 0.0
 
     pct = max(0, min(100, round((avance_kg / total_kg) * 100)))
-    _avance_cache[ot_id] = (max_proc_id, pct, total_piezas, conteo, now)
-    return pct, total_piezas, conteo
+    _avance_cache[ot_id] = (max_proc_id, pct, total_piezas, conteo, now, total_kg, avance_kg)
+    return pct, total_piezas, conteo, total_kg, avance_kg
 
 
 @produccion_bp.route("/modulo/produccion")
@@ -564,7 +566,7 @@ def produccion():
     filas_ot = []
     hubo_cambios = False
     for ot_id, cliente, obra, titulo, tipo_estructura, fecha_entrega, estado, estado_avance_actual in ots_en_curso:
-        progreso, total_piezas, conteo_procesos = _avance_y_desglose_ot(db, ot_id)
+        progreso, total_piezas, conteo_procesos, ot_total_kg, ot_avance_kg = _avance_y_desglose_ot(db, ot_id)
         if _persistir_avance_ot(db, ot_id, progreso, estado_avance_actual):
             hubo_cambios = True
         filas_ot.append({
@@ -578,6 +580,8 @@ def produccion():
             "progreso": int(progreso),
             "total_piezas": int(total_piezas),
             "conteo": conteo_procesos,
+            "total_kg": float(ot_total_kg or 0.0),
+            "avance_kg": float(ot_avance_kg or 0.0),
         })
 
     if hubo_cambios:
@@ -600,10 +604,12 @@ def produccion():
         if obra_key not in resumen_obra:
             resumen_obra[obra_key] = {
                 "ots": 0,
-                "avance_sum": 0,
+                "total_kg": 0.0,
+                "avance_kg": 0.0,
             }
         resumen_obra[obra_key]["ots"] += 1
-        resumen_obra[obra_key]["avance_sum"] += int(fila["progreso"])
+        resumen_obra[obra_key]["total_kg"] += fila["total_kg"]
+        resumen_obra[obra_key]["avance_kg"] += fila["avance_kg"]
 
     opciones_obra = '<option value="">Todas las obras</option>'
     for obra in obras_disponibles:
@@ -696,11 +702,13 @@ def produccion():
         html += '<div class="panel"><h3 style="margin:0 0 10px 0;color:#9a3412;">Desglose por obra</h3><div class="obra-grid">'
         for obra_key in sorted(resumen_obra.keys()):
             data = resumen_obra[obra_key]
+            avance_obra = round(data['avance_kg'] / data['total_kg'] * 100) if data['total_kg'] > 0 else 0
+            avance_obra = max(0, min(100, avance_obra))
             html += f"""
             <div class="obra-card">
                 <div class="nombre">{obra_key}</div>
-                <div class="avance">{data['avance_sum']}%</div>
-                <div style="font-size:12px;color:#7c2d12;">Avance obra = suma de avances de sus OT ({data['ots']} OT)</div>
+                <div class="avance">{avance_obra}%</div>
+                <div style="font-size:12px;color:#7c2d12;">Avance ponderado por KG ({data['ots']} OT)</div>
             </div>
             """
         html += "</div></div>"
@@ -718,7 +726,11 @@ def produccion():
                 <th>Título</th>
                 <th>Tipo de Estructura</th>
                 <th>% Avance</th>
-                <th>Desglose por proceso</th>
+                <th style="text-align:center;">Pzas</th>
+                <th style="text-align:center;">Armado</th>
+                <th style="text-align:center;">Soldadura</th>
+                <th style="text-align:center;">Pintura</th>
+                <th style="text-align:center;">P/Desp</th>
                 <th>Fecha Entrega</th>
                 <th>Estado</th>
             </tr>
@@ -729,6 +741,14 @@ def produccion():
             progreso = fila["progreso"]
             total_piezas = fila["total_piezas"]
             conteo = fila["conteo"]
+            def _chip_proceso(count, total):
+                if total == 0:
+                    return '<span class="chip">-</span>'
+                color = '#dcfce7' if count == total else ('#fff7ed' if count > 0 else '#f1f5f9')
+                border = '#86efac' if count == total else ('#fdba74' if count > 0 else '#cbd5e1')
+                text_color = '#166534' if count == total else ('#9a3412' if count > 0 else '#64748b')
+                return f'<span class="chip" style="background:{color};border-color:{border};color:{text_color};">{count}/{total}</span>'
+
             html += f"""
             <tr>
                 <td><b>{ot_id}</b></td>
@@ -741,15 +761,11 @@ def produccion():
                         <div class="progress-bar" style="width: {progreso}%">{progreso}%</div>
                     </div>
                 </td>
-                <td>
-                    <div class="desglose">
-                        <span class="chip">Pzas {total_piezas}</span>
-                        <span class="chip">A {conteo['ARMADO']}/{total_piezas}</span>
-                        <span class="chip">S {conteo['SOLDADURA']}/{total_piezas}</span>
-                        <span class="chip">P {conteo['PINTURA']}/{total_piezas}</span>
-                        <span class="chip">PD {conteo['P/DESPACHO']}/{total_piezas}</span>
-                    </div>
-                </td>
+                <td style="text-align:center;"><span class="chip">{total_piezas}</span></td>
+                <td style="text-align:center;">{_chip_proceso(conteo['ARMADO'], total_piezas)}</td>
+                <td style="text-align:center;">{_chip_proceso(conteo['SOLDADURA'], total_piezas)}</td>
+                <td style="text-align:center;">{_chip_proceso(conteo['PINTURA'], total_piezas)}</td>
+                <td style="text-align:center;">{_chip_proceso(conteo['P/DESPACHO'], total_piezas)}</td>
                 <td>{fila['fecha_entrega']}</td>
                 <td>{fila['estado']}</td>
             </tr>

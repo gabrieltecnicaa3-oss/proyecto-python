@@ -97,6 +97,9 @@ OBRA_RESTRICTED_PREFIXES = (
     "/modulo/calidad/escaneo/generar-pdf-pintura",
     "/modulo/calidad/escaneo/editar-control-pintura",
     "/modulo/calidad/escaneo/formulario-control-pintura",
+    "/modulo/programacion/nueva",
+    "/modulo/programacion/editar",
+    "/modulo/programacion/eliminar",
 )
 
 OBRA_ALLOWED_POST_PREFIXES = (
@@ -552,6 +555,34 @@ def init_db():
     )
     """)
 
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS programacion (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ot_id INTEGER NOT NULL,
+        fecha_inicio DATE NOT NULL,
+        fecha_fin DATE NOT NULL,
+        hs_programadas REAL DEFAULT 0,
+        cantidad_recursos INTEGER DEFAULT 1,
+        recursos TEXT,
+        observaciones TEXT,
+        fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)
+    )
+    """)
+
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS programacion_cumplimiento (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ot_id INTEGER NOT NULL,
+        semana_inicio DATE NOT NULL,
+        pct_cumplido REAL DEFAULT 100,
+        desvio_codigo TEXT,
+        fecha_actualizacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (ot_id, semana_inicio),
+        FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)
+    )
+    """)
+
     # Indices para acelerar panel de produccion con alto volumen de OTs/procesos.
     try:
         db.execute("CREATE INDEX IF NOT EXISTS idx_procesos_ot_id ON procesos(ot_id)")
@@ -812,7 +843,17 @@ def init_db():
                 db.commit()
             except Exception:
                 pass
-        
+
+        # Migración tabla programacion
+        try:
+            cursor = db.execute("PRAGMA table_info(programacion)")
+            prog_columns = {row[1] for row in cursor.fetchall()}
+            if 'cantidad_recursos' not in prog_columns:
+                db.execute("ALTER TABLE programacion ADD COLUMN cantidad_recursos INTEGER DEFAULT 1")
+                db.commit()
+        except Exception:
+            pass
+
         # Limpiar datos incorrectos: Si obra contiene nombres de procesos, borrar
         try:
             procesos_invalidos = ("ARMADO", "SOLDADURA", "PINTURA", "DESPACHO")
@@ -1734,6 +1775,13 @@ def dashboard():
             "titulo": "Historial de OTs",
             "desc": "Órdenes de trabajo cerradas - Archivo de OTs finalizadas",
         },
+        {
+            "href": "/modulo/programacion",
+            "css": "programacion",
+            "icon": "📆",
+            "titulo": "Programación de Fabricación",
+            "desc": "Planificación de OTs en el tiempo: fechas de inicio/fin y recursos de mano de obra asignados",
+        },
     ]
 
     cards_html = "".join(
@@ -1938,6 +1986,9 @@ def dashboard():
     .module-card.gestioncalidad {
         border-left: 5px solid #16a34a;
     }
+    .module-card.programacion {
+        border-left: 5px solid #6366f1;
+    }
     .footer {
         text-align: center;
         color: #9a3412;
@@ -2058,7 +2109,8 @@ def home(page=1):
             SELECT p.id,
                    TRIM(COALESCE(p.posicion, '')) AS posicion,
                    TRIM(COALESCE(p.obra, '')) AS obra,
-                   COALESCE(p.ot_id, 0) AS ot_id
+                   COALESCE(p.ot_id, 0) AS ot_id,
+                   TRIM(COALESCE(p.descripcion, '')) AS descripcion
             FROM procesos p
             WHERE p.eliminado = 0
               AND TRIM(COALESCE(p.posicion, '')) <> ''
@@ -2072,15 +2124,19 @@ def home(page=1):
 
     # Agrupar por posición + obra + OT para permitir códigos repetidos
     piezas = {}
+    desc_por_pieza = {}
     for r in all_rows:
         pos = str(r[1] or '').strip()
         if not pos:
             continue
         obra = str(r[2] or '').strip()
         ot_id_row = int(r[3] or 0)
+        desc = str(r[4] or '').strip() if len(r) > 4 else ''
         key = (pos, obra, ot_id_row)
         if key not in piezas:
             piezas[key] = r
+            if desc:
+                desc_por_pieza[key] = desc
 
     piezas_unicas = sorted(piezas.keys(), key=lambda x: (x[0], x[1]))
 
@@ -2737,7 +2793,7 @@ def home(page=1):
         <table>
             <tr>
                 <th>Posición</th>
-                <th>Obra</th>
+                <th>Descripción</th>
                 <th>Armado</th>
                 <th>Soldadura</th>
                 <th>Pintura</th>
@@ -2751,7 +2807,9 @@ def home(page=1):
             latest_proc, stats_proc = panel_cache.get((pos, obra_key, ot_key), ({}, {}))
             pintura_no_aplica = _ot_no_requiere_pintura_panel(pos, obra_key, ot_key)
             
-            # Obtener la obra (índice 8 — obra fue agregada con ALTER TABLE al final)
+            # Obtener descripción de la pieza
+            desc_pieza = html_lib.escape(desc_por_pieza.get((pos, obra_key, ot_key), ''))
+
             obra_raw = str(obra_key or '').strip()
             
             # Si la obra contiene nombres de procesos o está vacía, intenta obtenerla desde OT
@@ -2888,7 +2946,7 @@ def home(page=1):
             html += f"""
             <tr>
                 <td><b>{pos}</b></td>
-                <td class="obra-col">{obra}</td>
+                <td class="obra-col">{desc_pieza or '—'}</td>
                 {celdas[0]}
                 {celdas[1]}
                 {celdas[2]}
@@ -5397,6 +5455,7 @@ from remito_routes import remito_bp
 from estado_routes import estado_bp
 from produccion_routes import produccion_bp
 from generador_routes import generador_bp
+from programacion_routes import programacion_bp
 
 app.register_blueprint(gestion_calidad_bp)
 app.register_blueprint(calidad_bp)
@@ -5405,6 +5464,7 @@ app.register_blueprint(remito_bp)
 app.register_blueprint(estado_bp)
 app.register_blueprint(produccion_bp)
 app.register_blueprint(generador_bp)
+app.register_blueprint(programacion_bp)
 
 
 # ====================== BÚSQUEDA GLOBAL ======================
