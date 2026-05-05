@@ -1051,22 +1051,23 @@ def programacion_index():
 <script>
 function _printHeader(title) {{
     var origin = window.location.origin;
+    var logoHtml = '<img src="' + origin + '/logo-a3" style="height:54px;display:block;">';
     return '<div style="display:flex;justify-content:space-between;align-items:center;padding:0 0 10px 0;border-bottom:2px solid #6366f1;margin-bottom:14px;">'
       + '<div style="display:flex;align-items:center;gap:12px;">'
-        + '<img src="' + origin + '/logo-a3" style="height:54px;" onerror="this.style.display=\'none\'">'
+        + logoHtml
         + '<div>'
           + '<div style="font-size:20px;font-weight:800;color:#1e3a8a;">' + title + '</div>'
-          + '<div style="font-size:13px;color:#475569;font-style:italic;">Programación · Fabricación Estructuras Metálicas</div>'
+          + '<div style="font-size:13px;color:#475569;font-style:italic;">Programaci\u00f3n \u00b7 Fabricaci\u00f3n Estructuras Met\u00e1licas</div>'
         + '</div>'
       + '</div>'
       + '<div style="display:flex;gap:8px;align-items:center;">'
-        + '<div style="width:48px;height:48px;border-radius:50%;border:3px solid #1e3a8a;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;text-align:center;line-height:1;">'
+        + '<div style="width:48px;height:48px;border-radius:50%;border:3px solid #1e3a8a;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;text-align:center;line-height:1;font-family:Arial;">'
           + '<span style="font-size:7px;color:#334155;">ISO</span><span style="font-size:12px;font-weight:800;color:#0f172a;">9001</span>'
         + '</div>'
-        + '<div style="width:48px;height:48px;border-radius:50%;border:3px solid #be123c;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;text-align:center;line-height:1;">'
+        + '<div style="width:48px;height:48px;border-radius:50%;border:3px solid #be123c;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;text-align:center;line-height:1;font-family:Arial;">'
           + '<span style="font-size:7px;color:#334155;">ISO</span><span style="font-size:12px;font-weight:800;color:#0f172a;">45001</span>'
         + '</div>'
-        + '<div style="width:48px;height:48px;border-radius:50%;border:3px solid #111827;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;text-align:center;line-height:1;">'
+        + '<div style="width:48px;height:48px;border-radius:50%;border:3px solid #111827;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;text-align:center;line-height:1;font-family:Arial;">'
           + '<span style="font-size:7px;color:#334155;">ISO</span><span style="font-size:12px;font-weight:800;color:#0f172a;">37001</span>'
         + '</div>'
       + '</div>'
@@ -1076,20 +1077,12 @@ function _openPrintWin(title, sectionId) {{
     var section = document.getElementById(sectionId);
     if (!section) return null;
     var printWin = window.open('', '_blank', 'width=1400,height=900');
-    if (!printWin) return null;
+    if (!printWin) {{ alert('El navegador bloqu\u00f3 la ventana emergente. Permit\u00ed ventanas emergentes para este sitio.'); return null; }}
     printWin.document.write('<html><head><meta charset="utf-8"><title>' + title + '</title>');
     var styles = document.querySelectorAll('style');
     styles.forEach(function(s) {{ printWin.document.write(s.outerHTML); }});
-    printWin.document.write('<style>'
-      + '@page{{size:A4 landscape;margin:10mm;}}'
-      + 'body{{padding:0;background:#fff;}}'
-      + 'button,form,.btn,.g-btn{{display:none!important;}}'
-      + 'input,select{{pointer-events:none;border:1px solid #ddd;}}'
-      + '.g-track{{overflow:visible!important;}}'
-      + '.panel{{border:none!important;padding:0!important;}}'
-      + 'h3{{display:none!important;}}'
-    + '</style>');
-    printWin.document.write('</head><body style="padding:8px;">');
+    printWin.document.write('<style>@page{{size:A4 landscape;margin:10mm;}}body{{padding:0;background:#fff;}}button,form,.btn,.g-btn{{display:none!important;}}input,select{{pointer-events:none;border:1px solid #ddd;}}.g-track{{overflow:visible!important;}}.panel{{border:none!important;padding:0!important;}}h3{{display:none!important;}}</style>');
+    printWin.document.write('</head><body style="padding:8px;font-family:Arial,sans-serif;">');
     printWin.document.write(_printHeader(title));
     printWin.document.write(section.innerHTML);
     printWin.document.write('</body></html>');
@@ -1098,12 +1091,12 @@ function _openPrintWin(title, sectionId) {{
     return printWin;
 }}
 function printGantt() {{
-    var pw = _openPrintWin('Programación de Fabricación', 'gantt-section');
-    if (pw) setTimeout(function(){{ pw.print(); }}, 600);
+    var pw = _openPrintWin('Programaci\u00f3n de Fabricaci\u00f3n', 'gantt-section');
+    if (pw) setTimeout(function(){{ pw.print(); }}, 700);
 }}
 function printCumplimiento() {{
     var pw = _openPrintWin('Cumplimiento de Objetivos Semanales', 'cumplimiento-section');
-    if (pw) setTimeout(function(){{ pw.print(); }}, 600);
+    if (pw) setTimeout(function(){{ pw.print(); }}, 700);
 }}
 </script>
 </head>
