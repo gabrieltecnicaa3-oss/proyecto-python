@@ -853,6 +853,11 @@ def init_db():
             if 'cantidad_recursos' not in prog_columns:
                 db.execute("ALTER TABLE programacion ADD COLUMN cantidad_recursos INTEGER DEFAULT 1")
                 db.commit()
+            if 'orden' not in prog_columns:
+                db.execute("ALTER TABLE programacion ADD COLUMN orden INTEGER DEFAULT 0")
+                # Inicializar orden = id para mantener el orden actual
+                db.execute("UPDATE programacion SET orden = id WHERE orden = 0 OR orden IS NULL")
+                db.commit()
         except Exception:
             pass
 

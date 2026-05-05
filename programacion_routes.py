@@ -491,8 +491,8 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
         rows_html += f"""
         <div class="g-row">
             <div class="g-label">
-                <div><span class="g-dot" style="{dot_style}"></span><span class="g-ot">OT {ot_id} — {obra}</span></div>
-                <div class="g-sub">{titulo}</div>
+                <div><span class="g-dot" style="{dot_style}"></span><span class="g-ot">{obra}</span></div>
+                <div class="g-sub">OT{ot_id}-{titulo}</div>
                 <div class="g-chips">{rec_chips}{avance_chip}{sub_chip}</div>
             </div>
             <div class="g-need">{_fmt(fecha_nec)}</div>
@@ -502,6 +502,16 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
                 {bar_html}
             </div>
             <div class="g-act">
+                <form method="post" action="/modulo/programacion/reordenar" style="display:inline;">
+                    <input type="hidden" name="id" value="{prog_id}">
+                    <input type="hidden" name="dir" value="up">
+                    <button type="submit" class="g-btn" title="Subir">↑</button>
+                </form>
+                <form method="post" action="/modulo/programacion/reordenar" style="display:inline;">
+                    <input type="hidden" name="id" value="{prog_id}">
+                    <input type="hidden" name="dir" value="down">
+                    <button type="submit" class="g-btn" title="Bajar">↓</button>
+                </form>
                 <a href="/modulo/programacion/editar/{prog_id}" class="g-btn" title="Editar">✏️</a>
                 <form method="post" action="/modulo/programacion/eliminar" style="display:inline;"
                       onsubmit="return confirm('¿Eliminar esta programación?');">
@@ -760,7 +770,7 @@ def programacion_index():
                COALESCE(ot.estado_avance, 0), COALESCE(ot.hs_previstas, 0)
         FROM programacion p
         LEFT JOIN ordenes_trabajo ot ON ot.id = p.ot_id
-        ORDER BY p.fecha_inicio ASC, p.ot_id ASC
+        ORDER BY COALESCE(p.orden, p.id) ASC, p.id ASC
     """).fetchall()
 
     entradas = [
@@ -1401,12 +1411,17 @@ def programacion_cumplimiento():
 @programacion_bp.route("/modulo/programacion/nueva", methods=["GET", "POST"])
 def programacion_nueva():
     db = get_db()
-    ots_activas = db.execute("""
+    # Excluir OTs que ya tienen al menos una entrada en programacion
+    ya_programadas = {r[0] for r in db.execute(
+        "SELECT DISTINCT ot_id FROM programacion"
+    ).fetchall()}
+    ots_activas_todas = db.execute("""
         SELECT id, COALESCE(obra, ''), COALESCE(titulo, ''), COALESCE(estado, '')
         FROM ordenes_trabajo
         WHERE fecha_cierre IS NULL AND (es_mantenimiento IS NULL OR es_mantenimiento = 0)
         ORDER BY id DESC
     """).fetchall()
+    ots_activas = [r for r in ots_activas_todas if int(r[0]) not in ya_programadas]
 
     if request.method == "POST":
         ot_id_txt = (request.form.get("ot_id") or "").strip()
@@ -1436,12 +1451,14 @@ def programacion_nueva():
         dias = ((ff_d - fi_d).days + 1) if fi_d and ff_d else 0
         hs = cant_rec * 10 * dias
 
+        # Asignar orden = max(orden)+1 para que aparezca al final
+        max_orden = db.execute("SELECT COALESCE(MAX(COALESCE(orden, id)), 0) FROM programacion").fetchone()[0]
         db.execute(
             """
-            INSERT INTO programacion (ot_id, fecha_inicio, fecha_fin, hs_programadas, cantidad_recursos, observaciones)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO programacion (ot_id, fecha_inicio, fecha_fin, hs_programadas, cantidad_recursos, observaciones, orden)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (int(ot_id_txt), fecha_inicio, fecha_fin, hs, cant_rec, observaciones),
+            (int(ot_id_txt), fecha_inicio, fecha_fin, hs, cant_rec, observaciones, int(max_orden) + 1),
         )
         db.commit()
         return redirect("/modulo/programacion")
@@ -1521,4 +1538,45 @@ def programacion_eliminar():
     if id_txt.isdigit():
         db.execute("DELETE FROM programacion WHERE id = ?", (int(id_txt),))
         db.commit()
+    return redirect("/modulo/programacion")
+
+
+@programacion_bp.route("/modulo/programacion/reordenar", methods=["POST"])
+def programacion_reordenar():
+    db = get_db()
+    id_txt = (request.form.get("id") or "").strip()
+    direction = (request.form.get("dir") or "").strip()
+    if not id_txt.isdigit() or direction not in ("up", "down"):
+        return redirect("/modulo/programacion")
+
+    prog_id = int(id_txt)
+    # Get all rows ordered as displayed
+    all_rows = db.execute(
+        "SELECT id, COALESCE(orden, id) as ord FROM programacion ORDER BY COALESCE(orden, id) ASC, id ASC"
+    ).fetchall()
+    ids_ordered = [r[0] for r in all_rows]
+
+    if prog_id not in ids_ordered:
+        return redirect("/modulo/programacion")
+
+    idx = ids_ordered.index(prog_id)
+    if direction == "up" and idx > 0:
+        swap_idx = idx - 1
+    elif direction == "down" and idx < len(ids_ordered) - 1:
+        swap_idx = idx + 1
+    else:
+        return redirect("/modulo/programacion")
+
+    # Swap orden values
+    id_a = ids_ordered[idx]
+    id_b = ids_ordered[swap_idx]
+    db.execute("UPDATE programacion SET orden = ? WHERE id = ?", (swap_idx + 1, id_a))
+    db.execute("UPDATE programacion SET orden = ? WHERE id = ?", (idx + 1, id_b))
+    # Renormalize all others to avoid gaps
+    remaining = [i for i in ids_ordered if i not in (id_a, id_b)]
+    counter = len(ids_ordered) + 1
+    for rid in remaining:
+        db.execute("UPDATE programacion SET orden = ? WHERE id = ?", (counter, rid))
+        counter += 1
+    db.commit()
     return redirect("/modulo/programacion")
