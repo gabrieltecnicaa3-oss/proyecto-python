@@ -1284,16 +1284,15 @@ def programacion_cumplimiento():
 
     semana_key = semana_d.strftime("%Y-%m-%d")
 
-    ots_rows = db.execute(
-        """
-        SELECT DISTINCT COALESCE(p.ot_id, 0)
-        FROM programacion p
-        WHERE p.ot_id IS NOT NULL
-        """
-    ).fetchall()
+    ot_ids_form = []
+    for key in request.form:
+        if key.startswith("pct_"):
+            try:
+                ot_ids_form.append(int(key[4:]))
+            except Exception:
+                pass
 
-    for (ot_id_raw,) in ots_rows:
-        ot_id = int(ot_id_raw or 0)
+    for ot_id in ot_ids_form:
         if ot_id <= 0:
             continue
 
