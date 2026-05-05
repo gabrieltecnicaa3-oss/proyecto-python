@@ -1789,6 +1789,13 @@ def dashboard():
             "titulo": "Programación de Fabricación",
             "desc": "Planificación de OTs en el tiempo: fechas de inicio/fin y recursos de mano de obra asignados",
         },
+        {
+            "href": "/modulo/reportes",
+            "css": "reportes",
+            "icon": "🧾",
+            "titulo": "Reportes",
+            "desc": "Informes de avance por obra: versión cliente e interna con KPIs, procesos y prioridades",
+        },
     ]
 
     cards_html = "".join(
@@ -1995,6 +2002,9 @@ def dashboard():
     }
     .module-card.programacion {
         border-left: 5px solid #6366f1;
+    }
+    .module-card.reportes {
+        border-left: 5px solid #0ea5e9;
     }
     .footer {
         text-align: center;
@@ -5440,6 +5450,7 @@ from estado_routes import estado_bp
 from produccion_routes import produccion_bp
 from generador_routes import generador_bp
 from programacion_routes import programacion_bp
+from reportes_routes import reportes_bp
 
 app.register_blueprint(gestion_calidad_bp)
 app.register_blueprint(calidad_bp)
@@ -5449,6 +5460,7 @@ app.register_blueprint(estado_bp)
 app.register_blueprint(produccion_bp)
 app.register_blueprint(generador_bp)
 app.register_blueprint(programacion_bp)
+app.register_blueprint(reportes_bp)
 
 
 # ====================== BÚSQUEDA GLOBAL ======================

@@ -36,6 +36,9 @@ def _env_flag_true(name, default=False):
 # Data-consistency-first mode: avoid silent split between MySQL and SQLite.
 MYSQL_FAIL_OPEN = _env_flag_true("MYSQL_FAIL_OPEN", default=False)
 
+_DB_DIR = os.path.dirname(os.path.abspath(__file__))
+_SQLITE_DB_PATH = os.getenv("DB_PATH", os.path.join(_DB_DIR, "database.db"))
+
 
 class _StaticCursor:
     def __init__(self, rows):
@@ -266,7 +269,12 @@ def is_integrity_error(exc):
 
 
 def _connect_sqlite():
-    conn = sqlite3.connect("database.db", timeout=30)
+    db_path = _SQLITE_DB_PATH
+    db_dir = os.path.dirname(os.path.abspath(db_path))
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+
+    conn = sqlite3.connect(db_path, timeout=30)
     try:
         conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA journal_mode=WAL")

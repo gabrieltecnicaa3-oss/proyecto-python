@@ -1,0 +1,1095 @@
+from flask import Blueprint, request, Response, redirect, url_for
+from db_utils import get_db
+from datetime import date, timedelta, datetime
+
+reportes_bp = Blueprint("reportes", __name__)
+
+# ── Constantes de proceso ─────────────────────────────────────────────────────
+STAGES  = ["ARMADO", "SOLDADURA", "PINTURA", "DESPACHO"]
+ST_LBL  = {"ARMADO": "Armado", "SOLDADURA": "Soldadura", "PINTURA": "Pintura", "DESPACHO": "Despacho"}
+ST_CLR  = {"ARMADO": "#3b82f6", "SOLDADURA": "#f97316", "PINTURA": "#22c55e", "DESPACHO": "#a855f7"}
+ST_ABR  = {"ARMADO": "% A", "SOLDADURA": "% S", "PINTURA": "% P", "DESPACHO": "% D"}
+
+_OK     = ("OK", "APROBADO", "OBS", "OBSERVACION", "OBSERVACIÓN", "OM", "OP MEJORA", "OPORTUNIDAD DE MEJORA")
+_OK_PH  = "(" + ",".join("?" * len(_OK)) + ")"
+
+
+# ── Helpers pequeños ──────────────────────────────────────────────────────────
+def _week_range(y: int, w: int):
+    d = date.fromisocalendar(y, w, 1)
+    return d, d + timedelta(days=6)
+
+
+def _pct(n, t):
+    return round(n / t * 100) if t else 0
+
+
+def _pct_clr(p):
+    return "#22c55e" if p >= 80 else "#f59e0b" if p >= 30 else "#ef4444"
+
+
+def _priority(fe_str):
+  try:
+    d = (datetime.strptime(str(fe_str)[:10], "%Y-%m-%d").date() - date.today()).days
+    if d <= 15:
+      return "URGENTE", "#ef4444", "#fef2f2"
+    if d <= 30:
+      return "ALTA", "#f59e0b", "#fffbeb"
+  except Exception:
+    pass
+  return "NORMAL", "#6b7280", "#f9fafb"
+
+
+def _fd(s):
+    try:
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d").strftime("%d-%b-%Y")
+    except Exception:
+        return s or "–"
+
+
+def _e(s):
+    if s is None:
+        return "–"
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# ── Recolección de datos ──────────────────────────────────────────────────────
+def _collect(db, obra, year, week, week_start, week_end):
+    ws  = week_start.strftime("%Y-%m-%d")
+    we  = week_end.strftime("%Y-%m-%d")
+    six = (week_start - timedelta(weeks=5)).strftime("%Y-%m-%d")
+
+    # OTs de la obra
+    ots = db.execute(
+        "SELECT id, titulo, tipo_estructura, fecha_entrega, cliente, hs_previstas, estado_avance "
+        "FROM ordenes_trabajo WHERE obra=? AND estado != 'INACTIVO' "
+        "ORDER BY fecha_entrega ASC, id ASC",
+        (obra,)
+    ).fetchall()
+
+    if not ots:
+        return None
+
+    ot_ids  = [r[0] for r in ots]
+    ph      = ",".join("?" * len(ot_ids))
+    cliente = next((r[4] for r in ots if r[4]), obra)
+
+    # Total piezas por OT
+    rows = db.execute(
+        f"SELECT ot_id, COUNT(DISTINCT posicion) FROM procesos "
+        f"WHERE ot_id IN ({ph}) AND eliminado=0 GROUP BY ot_id",
+        ot_ids
+    ).fetchall()
+    total_by_ot  = {r[0]: r[1] for r in rows}
+    total_global = sum(total_by_ot.values())
+
+    # Piezas aprobadas por etapa por OT
+    appr = {oid: {s: 0 for s in STAGES} for oid in ot_ids}
+    for stage in STAGES:
+        srows = db.execute(
+            f"SELECT ot_id, COUNT(DISTINCT posicion) FROM procesos "
+            f"WHERE ot_id IN ({ph}) AND proceso=? "
+            f"AND UPPER(TRIM(estado)) IN {_OK_PH} AND eliminado=0 GROUP BY ot_id",
+            ot_ids + [stage] + list(_OK)
+        ).fetchall()
+        for r in srows:
+            if r[0] in appr:
+                appr[r[0]][stage] = r[1]
+
+    # Avance global calculado desde piezas (crédito 25% por etapa)
+    n_arm_g = sum(appr[oid]["ARMADO"]    for oid in ot_ids)
+    n_sol_g = sum(appr[oid]["SOLDADURA"] for oid in ot_ids)
+    n_pin_g = sum(appr[oid]["PINTURA"]   for oid in ot_ids)
+    n_des_g = sum(appr[oid]["DESPACHO"]  for oid in ot_ids)
+    avance_global_pct = _pct(n_arm_g + n_sol_g + n_pin_g + n_des_g, total_global * 4) if total_global else 0
+
+    # HS
+    hs_prev = db.execute(
+        f"SELECT COALESCE(SUM(hs_previstas),0) FROM ordenes_trabajo WHERE id IN ({ph})", ot_ids
+    ).fetchone()[0] or 0.0
+    hs_cons = db.execute(
+        f"SELECT COALESCE(SUM(horas),0) FROM partes_trabajo "
+        f"WHERE ot_id IN ({ph}) AND fecha BETWEEN ? AND ?",
+        ot_ids + [ws, we]
+    ).fetchone()[0] or 0.0
+    hs_segun    = avance_global_pct / 100.0 * hs_prev
+    eficiencia  = round(hs_cons / hs_segun * 100, 1) if hs_segun else 0.0
+
+    # KG en período
+    kg_prod = db.execute(
+        f"SELECT COALESCE(SUM(peso),0) FROM procesos "
+        f"WHERE ot_id IN ({ph}) AND proceso='ARMADO' "
+        f"AND UPPER(TRIM(estado)) IN {_OK_PH} AND fecha BETWEEN ? AND ? AND eliminado=0",
+        ot_ids + list(_OK) + [ws, we]
+    ).fetchone()[0] or 0.0
+    kg_desp = db.execute(
+        f"SELECT COALESCE(SUM(peso),0) FROM procesos "
+        f"WHERE ot_id IN ({ph}) AND proceso='DESPACHO' "
+        f"AND UPPER(TRIM(estado)) IN {_OK_PH} AND fecha BETWEEN ? AND ? AND eliminado=0",
+        ot_ids + list(_OK) + [ws, we]
+    ).fetchone()[0] or 0.0
+
+    # Tonelaje total de la obra (suma peso de todas las piezas armadas registradas)
+    kg_total = db.execute(
+        f"SELECT COALESCE(SUM(peso),0) FROM procesos "
+        f"WHERE ot_id IN ({ph}) AND proceso='ARMADO' AND eliminado=0",
+        ot_ids
+    ).fetchone()[0] or 0.0
+
+    # Producción semanal últimas 6 semanas (piezas armadas aprobadas)
+    weekly_data = {}
+    week_labels  = []
+    for i in range(5, -1, -1):
+        wk_d = week_start - timedelta(weeks=i)
+        y2, w2, _ = wk_d.isocalendar()
+        key = (y2, w2)
+        weekly_data[key] = {"n": 0, "label": f"S{w2}"}
+        week_labels.append(f"S{w2}")
+
+    prod_rows = db.execute(
+        f"SELECT fecha, COUNT(DISTINCT posicion) FROM procesos "
+        f"WHERE ot_id IN ({ph}) AND proceso='ARMADO' "
+        f"AND UPPER(TRIM(estado)) IN {_OK_PH} "
+        f"AND fecha >= ? AND eliminado=0 GROUP BY fecha",
+        ot_ids + list(_OK) + [six]
+    ).fetchall()
+    for fecha_str, n in prod_rows:
+        try:
+            dd = datetime.strptime(str(fecha_str)[:10], "%Y-%m-%d").date()
+            key = (dd.isocalendar()[0], dd.isocalendar()[1])
+            if key in weekly_data:
+                weekly_data[key]["n"] += n
+        except Exception:
+            pass
+    week_vals = [weekly_data[k]["n"] for k in sorted(weekly_data.keys())]
+
+    # Variación semanal vs semana anterior
+    prev_ws = (week_start - timedelta(weeks=1)).strftime("%Y-%m-%d")
+    prev_we = (week_start - timedelta(days=1)).strftime("%Y-%m-%d")
+    n_prev = db.execute(
+        f"SELECT COUNT(DISTINCT posicion) FROM procesos "
+        f"WHERE ot_id IN ({ph}) AND proceso='ARMADO' "
+        f"AND UPPER(TRIM(estado)) IN {_OK_PH} AND fecha BETWEEN ? AND ? AND eliminado=0",
+        ot_ids + list(_OK) + [prev_ws, prev_we]
+    ).fetchone()[0] or 0
+    n_this = db.execute(
+        f"SELECT COUNT(DISTINCT posicion) FROM procesos "
+        f"WHERE ot_id IN ({ph}) AND proceso='ARMADO' "
+        f"AND UPPER(TRIM(estado)) IN {_OK_PH} AND fecha BETWEEN ? AND ? AND eliminado=0",
+        ot_ids + list(_OK) + [ws, we]
+    ).fetchone()[0] or 0
+
+    # Fecha desde (primer registro)
+    first_fecha = db.execute(
+        f"SELECT MIN(fecha) FROM procesos WHERE ot_id IN ({ph}) AND eliminado=0", ot_ids
+    ).fetchone()[0]
+
+    # Programación (Gantt)
+    prog_rows = db.execute(
+        f"SELECT p.ot_id, p.fecha_inicio, p.fecha_fin "
+        f"FROM programacion p "
+        f"WHERE p.ot_id IN ({ph}) "
+        f"ORDER BY p.fecha_inicio ASC",
+        ot_ids
+    ).fetchall()
+
+    # Estado por OT: cumplido / en término / atrasado
+    today_d = date.today()
+    n_cumplido = 0
+    n_en_termino = 0
+    n_atrasado = 0
+    for ot in ots:
+        ot_id, _, _, fe, _, _, _ = ot
+        total = total_by_ot.get(ot_id, 0)
+        n_des = appr[ot_id]["DESPACHO"]
+        # Cumplido: todas las piezas despachadas
+        if total > 0 and n_des >= total:
+            n_cumplido += 1
+            continue
+        # Determinar si está atrasado
+        try:
+            fe_date = datetime.strptime(str(fe)[:10], "%Y-%m-%d").date()
+            dias_restantes = (fe_date - today_d).days
+        except Exception:
+            dias_restantes = 999
+        if dias_restantes < 0:
+            # fecha ya pasó y no está completada
+            n_atrasado += 1
+        else:
+            n_en_termino += 1
+
+    return dict(
+        obra=obra, cliente=cliente,
+        ots=ots, ot_ids=ot_ids,
+        total_by_ot=total_by_ot, total_global=total_global,
+        appr=appr,
+        avance_global_pct=avance_global_pct,
+        n_arm_g=n_arm_g, n_sol_g=n_sol_g, n_pin_g=n_pin_g, n_des_g=n_des_g,
+        hs_prev=hs_prev, hs_cons=hs_cons, hs_segun=hs_segun, eficiencia=eficiencia,
+        kg_prod=kg_prod, kg_desp=kg_desp, kg_total=kg_total,
+        week_labels=week_labels, week_vals=week_vals,
+        first_fecha=first_fecha, n_prev=n_prev, n_this=n_this,
+        year=year, week=week, week_start=week_start, week_end=week_end,
+        n_cumplido=n_cumplido, n_en_termino=n_en_termino, n_atrasado=n_atrasado,
+        prog_rows=prog_rows,
+    )
+
+
+# ── SVG Gantt de programación ────────────────────────────────────────────────
+def _svg_gantt(prog_rows, ots):
+    """Genera SVG Gantt desde filas de programacion.
+    prog_rows: list of (ot_id, fecha_inicio, fecha_fin)
+    ots: list de OT tuples (id, titulo, tipo_est, fecha_entrega, ...)
+    """
+    if not prog_rows:
+        return '<p style="color:#9ca3af;font-size:.85rem;margin:12px 0">Sin datos de programación para esta obra. Cargá fechas desde el módulo Programación.</p>'
+
+    ot_info = {ot[0]: ot for ot in ots}
+    today   = date.today()
+
+    fechas_i, fechas_f, valid_rows = [], [], []
+    for r in prog_rows:
+        try:
+            fi = datetime.strptime(str(r[1])[:10], "%Y-%m-%d").date()
+            ff = datetime.strptime(str(r[2])[:10], "%Y-%m-%d").date()
+            fechas_i.append(fi)
+            fechas_f.append(ff)
+            valid_rows.append((r[0], fi, ff))
+        except Exception:
+            pass
+
+    if not fechas_i:
+        return '<p style="color:#9ca3af;font-size:.85rem;margin:12px 0">Sin datos de programación para esta obra.</p>'
+
+    for ot in ots:
+        if ot[3]:
+            try:
+                fe = datetime.strptime(str(ot[3])[:10], "%Y-%m-%d").date()
+                fechas_f.append(fe)
+            except Exception:
+                pass
+
+    date_min = min(fechas_i) - timedelta(days=3)
+    date_max = max(fechas_f) + timedelta(days=10)
+    total_days = max((date_max - date_min).days, 1)
+
+    ROW_H, LABEL_W, CHART_W, HEADER_H = 30, 180, 680, 28
+    COLORS = ["#3b82f6", "#f97316", "#22c55e", "#a855f7", "#ec4899", "#14b8a6", "#f59e0b", "#6366f1"]
+
+    by_ot = {}
+    for ot_id, fi, ff in valid_rows:
+        by_ot.setdefault(ot_id, []).append((fi, ff))
+    ot_order = sorted(by_ot.keys(), key=lambda oid: min(fi for fi, _ in by_ot[oid]))
+
+    n_rows = len(ot_order)
+    H = HEADER_H + n_rows * ROW_H + 24
+    W = LABEL_W + CHART_W
+
+    def day_x(d):
+        return LABEL_W + int((d - date_min).days / total_days * CHART_W)
+
+    grid = ""
+    cur = date(date_min.year, date_min.month, 1)
+    while cur <= date_max:
+        x = day_x(cur)
+        if x >= LABEL_W:
+            grid += f'<line x1="{x}" y1="{HEADER_H}" x2="{x}" y2="{H-16}" stroke="#e5e7eb" stroke-width="1"/>'
+            grid += f'<text x="{x+3}" y="{HEADER_H-6}" font-size="9" fill="#9ca3af">{cur.strftime("%b %Y")}</text>'
+        if cur.month == 12:
+            cur = date(cur.year + 1, 1, 1)
+        else:
+            cur = date(cur.year, cur.month + 1, 1)
+
+    if date_min <= today <= date_max:
+        tx = day_x(today)
+        grid += f'<line x1="{tx}" y1="{HEADER_H}" x2="{tx}" y2="{H-16}" stroke="#ef4444" stroke-width="2" stroke-dasharray="4,3"/>'
+        grid += f'<text x="{tx+2}" y="{HEADER_H-6}" font-size="8" fill="#ef4444" font-weight="700">HOY</text>'
+
+    bars = ""
+    for i, ot_id in enumerate(ot_order):
+        y_base = HEADER_H + i * ROW_H
+        ot     = ot_info.get(ot_id)
+        titulo = _e(ot[1])[:28] if ot else f"OT {ot_id}"
+        clr    = COLORS[i % len(COLORS)]
+
+        bars += (f'<text x="4" y="{y_base + 13}" font-size="10" fill="#e36c09" font-weight="700">OT {ot_id}</text>'
+                 f'<text x="4" y="{y_base + 24}" font-size="8" fill="#6b7280">{titulo}</text>')
+
+        for fi, ff in by_ot[ot_id]:
+            x1 = day_x(fi)
+            x2 = day_x(ff)
+            bw = max(x2 - x1, 6)
+            bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw}" height="{ROW_H - 14}" fill="{clr}" rx="3" opacity="0.82"/>'
+
+        if ot and ot[3]:
+            try:
+                fe_d = datetime.strptime(str(ot[3])[:10], "%Y-%m-%d").date()
+                if date_min <= fe_d <= date_max:
+                    fx = day_x(fe_d)
+                    fy = y_base + ROW_H // 2
+                    bars += f'<polygon points="{fx},{fy-6} {fx+5},{fy} {fx},{fy+6} {fx-5},{fy}" fill="#dc2626"/>'
+            except Exception:
+                pass
+
+        bars += f'<line x1="0" y1="{y_base + ROW_H}" x2="{W}" y2="{y_base + ROW_H}" stroke="#f3f4f6" stroke-width="1"/>'
+
+    lx = LABEL_W + 10
+    ly = H - 8
+    legend = (f'<line x1="{lx}" y1="{ly-5}" x2="{lx}" y2="{ly+5}" stroke="#ef4444" stroke-width="2" stroke-dasharray="3,2"/>'
+              f'<text x="{lx+6}" y="{ly+4}" font-size="9" fill="#6b7280">Hoy</text>'
+              f'<polygon points="{lx+42},{ly-5} {lx+47},{ly} {lx+42},{ly+5} {lx+37},{ly}" fill="#dc2626"/>'
+              f'<text x="{lx+51}" y="{ly+4}" font-size="9" fill="#6b7280">F. Entrega</text>')
+
+    return (f'<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" '
+            f'style="width:100%;display:block;overflow:visible">'
+            f'{grid}{bars}{legend}</svg>')
+
+
+# ── SVG gráfico de barras semanal ─────────────────────────────────────────────
+def _svg_bars(labels, values):
+    if not values or max(values) == 0:
+        return '<p style="color:#9ca3af;font-size:.85rem;margin:12px 0">Sin datos de producción en el período.</p>'
+    W, CHART_H, BAR_W = 580, 80, 60
+    max_v = max(values) or 1
+    n     = len(values)
+    gap   = (W - n * BAR_W) // (n + 1)
+    rects = ""
+    for i, (lbl, val) in enumerate(zip(labels, values)):
+        x     = gap + i * (BAR_W + gap)
+        bh    = max(2, int(val / max_v * CHART_H))
+        y     = CHART_H - bh
+        alpha = "ff" if val > 0 else "55"
+        rects += f'<rect x="{x}" y="{y}" width="{BAR_W}" height="{bh}" fill="#e36c09{alpha}" rx="3"/>'
+        if val > 0:
+            rects += f'<text x="{x + BAR_W // 2}" y="{y - 5}" text-anchor="middle" font-size="11" fill="#1f2937" font-weight="600">{val}</text>'
+        rects += f'<text x="{x + BAR_W // 2}" y="{CHART_H + 18}" text-anchor="middle" font-size="11" fill="#6b7280">{lbl}</text>'
+    H_total = CHART_H + 30
+    return (f'<svg viewBox="0 0 {W} {H_total}" xmlns="http://www.w3.org/2000/svg" '
+            f'style="width:100%;max-width:{W}px;display:block">{rects}</svg>')
+
+
+# ── Renderizado del reporte completo ──────────────────────────────────────────
+def _render_html(d, tipo, periodo_tipo="SEMANAL"):
+    obra        = _e(d["obra"])
+    cliente     = _e(d["cliente"])
+    ots         = d["ots"]
+    is_interno  = tipo == "INTERNO"
+    week_start  = d["week_start"]
+    week_end    = d["week_end"]
+    periodo     = f"{week_start.strftime('%d %b')} – {week_end.strftime('%d %b %Y')}"
+    semana_lbl  = f"Semana {d['week']}"
+    today_str   = date.today().strftime("%d de %B de %Y")
+    avance_pct  = d["avance_global_pct"]
+    total_g     = d["total_global"]
+    n_ots       = len(ots)
+
+    datos_desde = "–"
+    if d["first_fecha"]:
+        try:
+            datos_desde = datetime.strptime(str(d["first_fecha"])[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+        except Exception:
+            datos_desde = d["first_fecha"]
+
+    is_mensual   = periodo_tipo == "MENSUAL"
+    periodo_lbl  = week_start.strftime("%B %Y").capitalize() if is_mensual else f"Semana {d['week']}"
+    report_title = "INFORME DE AVANCE MENSUAL" if is_mensual else "INFORME DE AVANCE SEMANAL"
+    badge_css = "background:#fff3cd;color:#856404;border:1px solid #f0d06a" if not is_interno else "background:#d1f0e0;color:#166534;border:1px solid #86efac"
+
+    # ── CSS ──────────────────────────────────────────────────────────────────
+    css = """
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, Helvetica, sans-serif; background: #f8f9fa; color: #1f2937; font-size: 13px; }
+    .report-wrap { max-width: 960px; margin: 0 auto; padding: 20px 16px 40px; }
+
+    /* Header */
+    .rpt-header { background: linear-gradient(135deg, #c95a06 0%, #e36c09 60%, #f59e0b 100%);
+        color: #fff; border-radius: 10px 10px 0 0; padding: 18px 24px;
+        display: flex; align-items: center; justify-content: space-between; }
+    .rpt-header-left { display: flex; align-items: center; gap: 16px; }
+    .rpt-header-logo { height: 44px; background: #fff; border-radius: 6px; padding: 4px 8px; object-fit: contain; }
+    .rpt-title { font-size: 15px; font-weight: 700; letter-spacing: .3px; text-shadow: 0 1px 2px rgba(0,0,0,.2); }
+    .rpt-subtitle { font-size: 12px; opacity: .88; margin-top: 3px; }
+    .rpt-header-right { text-align: right; }
+    .rpt-date { font-size: 12px; opacity: .85; }
+    .rpt-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700;
+        background: rgba(255,255,255,.22); border: 1px solid rgba(255,255,255,.4); margin-bottom: 4px; }
+
+    /* Ficha técnica */
+    .ficha { background: #fff; border: 1px solid #e5e7eb; border-top: none; }
+    .ficha-row { display: grid; grid-template-columns: 1fr 1fr 1fr; border-bottom: 1px solid #e5e7eb; }
+    .ficha-row:last-child { border-bottom: none; }
+    .ficha-cell { padding: 9px 16px; border-right: 1px solid #e5e7eb; }
+    .ficha-cell:last-child { border-right: none; }
+    .fc-label { display: block; font-size: 10.5px; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 2px; }
+    .fc-val { display: block; font-size: 13px; font-weight: 700; color: #1f2937; }
+    .fc-val.orange { color: #e36c09; }
+    .fc-val.big { font-size: 22px; }
+
+    /* Secciones */
+    .section { background: #fff; border: 1px solid #e5e7eb; border-top: none; padding: 0; }
+    .section-header { background: #fff7ed; border-bottom: 1px solid #fed7aa; border-left: 4px solid #e36c09;
+        padding: 8px 16px; font-size: 12px; font-weight: 700; color: #c95a06; text-transform: uppercase;
+        letter-spacing: .5px; }
+    .section-body { padding: 14px 16px; }
+
+    /* KPIs */
+    .kpi-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; padding: 14px 16px; }
+    .kpi-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 10px; text-align: center; }
+    .kpi-box.hl { background: #fff7ed; border-color: #fed7aa; }
+    .kpi-val { font-size: 18px; font-weight: 700; color: #e36c09; line-height: 1.1; }
+    .kpi-lbl { font-size: 10px; color: #6b7280; margin-top: 4px; line-height: 1.3; }
+    .kpi-note { font-size: 10.5px; color: #9ca3af; font-style: italic; padding: 0 16px 10px; }
+
+    /* Tabla principal */
+    .main-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .main-table th { background: #1f2937; color: #fff; padding: 7px 8px; text-align: center; font-size: 11px; white-space: nowrap; }
+    .main-table td { padding: 6px 8px; border-bottom: 1px solid #f3f4f6; text-align: center; vertical-align: middle; }
+    .main-table tbody tr:hover { background: #fafafa; }
+    .main-table tfoot td { background: #f3f4f6; font-weight: 700; border-top: 2px solid #d1d5db; }
+    .tc-ot { font-weight: 700; color: #e36c09; }
+    .tc-titulo { text-align: left; font-weight: 600; max-width: 180px; }
+    .tc-fe { white-space: nowrap; font-size: 11px; }
+    .legend-row { font-size: 11px; color: #6b7280; padding: 8px 16px; border-top: 1px solid #f3f4f6; }
+    .leg-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
+
+    /* Gráfico de barras horizontal */
+    .bar-legend { display: flex; gap: 16px; padding: 10px 16px 0; flex-wrap: wrap; }
+    .leg-seg { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #374151; }
+    .axis-labels { display: flex; justify-content: space-between; padding: 4px 16px 0 200px; font-size: 10px; color: #9ca3af; }
+    .bar-row { display: flex; align-items: center; padding: 5px 16px; border-bottom: 1px solid #f3f4f6; min-height: 36px; }
+    .bar-row:last-child { border-bottom: none; }
+    .bar-ot-label { width: 184px; flex-shrink: 0; }
+    .bar-ot-id { font-size: 11px; font-weight: 700; color: #e36c09; margin-right: 5px; }
+    .bar-ot-titulo { font-size: 11px; color: #374151; }
+    .bar-track { flex: 1; background: #f3f4f6; border-radius: 4px; height: 18px; overflow: hidden; position: relative; }
+    .bar-inner { display: flex; height: 100%; }
+    .bar-seg { height: 100%; transition: width .3s; }
+    .bar-fe { width: 80px; text-align: right; font-size: 10px; color: #6b7280; white-space: nowrap; margin-left: 8px; }
+
+    /* Cronograma */
+    .pri-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+    .mini-bar-wrap { display: inline-flex; align-items: center; gap: 5px; vertical-align: middle; }
+    .mini-bar-bg { background: #e5e7eb; border-radius: 3px; height: 12px; width: 70px; display: inline-block; overflow: hidden; vertical-align: middle; }
+    .mini-bar-fill { height: 100%; border-radius: 3px; }
+    .estado-badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; background: #dbeafe; color: #1d4ed8; font-weight: 600; }
+    .estado-badge.done { background: #dcfce7; color: #166534; }
+    .estado-badge.none { background: #f3f4f6; color: #6b7280; }
+
+    /* Producción semanal */
+    .prod-section { padding: 14px 16px; }
+    .prod-summary { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-top: 12px; font-size: 12px; }
+    .prod-kpi { background: #f9fafb; border-radius: 6px; padding: 10px 12px; text-align: center; border: 1px solid #e5e7eb; }
+    .prod-kpi strong { display: block; font-size: 18px; font-weight: 700; color: #e36c09; }
+
+    /* Observaciones */
+    .obs-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; }
+    .obs-col { padding: 12px 14px; border-right: 1px solid #e5e7eb; }
+    .obs-col:last-child { border-right: none; }
+    .obs-col-header { font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 2px solid; }
+    .obs-col.alertas .obs-col-header { color: #dc2626; border-color: #fca5a5; }
+    .obs-col.situacion .obs-col-header { color: #16a34a; border-color: #86efac; }
+    .obs-col.acciones .obs-col-header { color: #2563eb; border-color: #93c5fd; }
+    .obs-col ul { list-style: none; padding: 0; }
+    .obs-col ul li { font-size: 11.5px; color: #374151; padding: 3px 0; padding-left: 12px; position: relative; line-height: 1.4; }
+    .obs-col ul li::before { content: "•"; position: absolute; left: 0; color: #9ca3af; }
+
+    /* Footer firmas */
+    .firma-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 20px 24px 10px; margin-top: 24px; max-width: 520px; margin-left: auto; margin-right: auto; }
+    .firma-box { text-align: center; }
+    .firma-line { border-top: 1px solid #374151; margin: 0 10%; margin-bottom: 6px; padding-top: 6px; }
+    .firma-cargo { font-size: 11px; color: #6b7280; }
+    .firma-nombre { font-size: 11.5px; font-weight: 600; color: #1f2937; margin-top: 2px; }
+
+    /* Print */
+    @media print {
+        body { background: #fff; font-size: 11px; }
+        .report-wrap { max-width: 100%; padding: 0; }
+        .no-print { display: none !important; }
+        .section, .ficha, .rpt-header { break-inside: avoid; }
+        @page { size: A4 landscape; margin: 10mm; }
+        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    }
+    """
+
+    # ── Secciones ────────────────────────────────────────────────────────────
+
+    # Ficha técnica
+    ficha_html = f"""
+<div class="ficha">
+  <div class="ficha-row">
+    <div class="ficha-cell"><span class="fc-label">Obra / Proyecto</span><span class="fc-val orange">{obra}</span></div>
+    <div class="ficha-cell"><span class="fc-label">Cliente</span><span class="fc-val">{cliente}</span></div>
+    <div class="ficha-cell"><span class="fc-label">Avance global</span><span class="fc-val orange big">{avance_pct}%</span></div>
+  </div>
+  <div class="ficha-row">
+    <div class="ficha-cell"><span class="fc-label">Período</span><span class="fc-val">{periodo}</span></div>
+    <div class="ficha-cell"><span class="fc-label">OTs activas</span><span class="fc-val">{n_ots} OTs</span></div>
+    <div class="ficha-cell"><span class="fc-label">Total piezas</span><span class="fc-val">{total_g} pzas</span></div>
+  </div>
+  <div class="ficha-row">
+    <div class="ficha-cell"><span class="fc-label">Fecha emisión</span><span class="fc-val">{today_str}</span></div>
+    <div class="ficha-cell"><span class="fc-label">Período</span><span class="fc-val">{periodo_lbl}</span></div>
+    <div class="ficha-cell"><span class="fc-label">Datos desde</span><span class="fc-val">{datos_desde}</span></div>
+  </div>
+</div>"""
+
+    # Sección 1 – KPIs de cumplimiento (visible en ambos tipos)
+    sec_num = [0]
+
+    def next_sec(title):
+        sec_num[0] += 1
+        return f"{sec_num[0]}. {title}"
+
+    n_cum = d.get("n_cumplido", 0)
+    n_ent = d.get("n_en_termino", 0)
+    n_atr = d.get("n_atrasado", 0)
+
+    h_kpi_estado = next_sec("ESTADO DE CUMPLIMIENTO – OTs")
+    kpi_estado_html = f"""
+<div class="section">
+  <div class="section-header">{h_kpi_estado}</div>
+  <div class="kpi-row" style="grid-template-columns:repeat(3,1fr)">
+    <div class="kpi-box" style="background:#dcfce7;border-color:#86efac">
+      <div class="kpi-val" style="color:#166534">{n_cum}</div>
+      <div class="kpi-lbl">✔ Cumplidas / Despachadas</div>
+    </div>
+    <div class="kpi-box" style="background:#dbeafe;border-color:#93c5fd">
+      <div class="kpi-val" style="color:#1d4ed8">{n_ent}</div>
+      <div class="kpi-lbl">⏳ En término</div>
+    </div>
+    <div class="kpi-box" style="background:#fee2e2;border-color:#fca5a5">
+      <div class="kpi-val" style="color:#dc2626">{n_atr}</div>
+      <div class="kpi-lbl">⚠ Atrasadas (f. vencida)</div>
+    </div>
+  </div>
+</div>"""
+
+    kpi_html = ""
+    if is_interno:
+        h = next_sec("INDICADORES DE PRODUCCIÓN – PERÍODO ACTUAL")
+        kpi_html = f"""
+<div class="section">
+  <div class="section-header">{h}</div>
+  <div class="kpi-row">
+    <div class="kpi-box"><div class="kpi-val">{d['hs_prev']:,.1f} hs</div><div class="kpi-lbl">HS Previstas (OTs activas)</div></div>
+    <div class="kpi-box"><div class="kpi-val">{d['hs_cons']:,.1f} hs</div><div class="kpi-lbl">HS Consumidas (período)</div></div>
+    <div class="kpi-box hl"><div class="kpi-val">{d['hs_segun']:,.1f} hs</div><div class="kpi-lbl">HS según Avance</div></div>
+    <div class="kpi-box"><div class="kpi-val">{d['eficiencia']:.1f}%</div><div class="kpi-lbl">Eficiencia HS (%)</div></div>
+    <div class="kpi-box"><div class="kpi-val">{d['kg_prod']:,.1f} kg</div><div class="kpi-lbl">KG Producidos</div></div>
+    <div class="kpi-box"><div class="kpi-val">{d['kg_desp']:,.1f} kg</div><div class="kpi-lbl">KG Despachados</div></div>
+  </div>
+  <p class="kpi-note">Datos desde {datos_desde}. Las HS Consumidas se actualizan al registrar partes diarios en el sistema.</p>
+</div>"""
+
+    # Sección Estado OTs por proceso
+    appr        = d["appr"]
+    total_by_ot = d["total_by_ot"]
+
+    table_rows = ""
+    for ot in ots:
+        ot_id, titulo, tipo_est, fe, _, _, _ = ot
+        total = total_by_ot.get(ot_id, 0)
+        cells = ""
+        for stage in STAGES:
+            n   = appr[ot_id][stage]
+            pct = _pct(n, total)
+            clr = _pct_clr(pct)
+            cells += f'<td class="proc-frac">{n}/{total}</td><td style="color:{clr};font-weight:700">{pct}%</td>'
+        fe_fmt = _fd(fe)
+        tipo_s = _e(tipo_est) or "–"
+        table_rows += f"""<tr>
+      <td class="tc-ot">{ot_id}</td>
+      <td class="tc-titulo">{_e(titulo)}</td>
+      <td>{tipo_s}</td>
+      <td>{total}</td>
+      {cells}
+      <td class="tc-fe">{fe_fmt}</td>
+    </tr>"""
+
+    tot_cells = ""
+    for stage in STAGES:
+        nt  = sum(appr[oid][stage] for oid in d["ot_ids"])
+        pt  = _pct(nt, total_g)
+        clr = _pct_clr(pt)
+        tot_cells += f'<td><b>{nt}/{total_g}</b></td><td style="color:{clr};font-weight:700"><b>{pt}%</b></td>'
+
+    h_estado = next_sec("ESTADO DE OTs POR PROCESO")
+    estado_html = f"""
+<div class="section">
+  <div class="section-header">{h_estado}</div>
+  <table class="main-table">
+    <thead>
+      <tr>
+        <th>OT</th><th>Título</th><th>Tipo</th><th>Pzas</th>
+        <th>Armado</th><th>% A</th>
+        <th>Soldadura</th><th>% S</th>
+        <th>Pintura</th><th>% P</th>
+        <th>Despacho</th><th>% D</th>
+        <th>F. Entrega</th>
+      </tr>
+    </thead>
+    <tbody>{table_rows}</tbody>
+    <tfoot>
+      <tr><td colspan="3"><b>TOTALES</b></td><td><b>{total_g}</b></td>{tot_cells}<td>–</td></tr>
+    </tfoot>
+  </table>
+  <div class="legend-row">
+    <span class="leg-dot" style="background:#22c55e"></span>≥80%&nbsp;
+    <span class="leg-dot" style="background:#f59e0b"></span>30–79%&nbsp;
+    <span class="leg-dot" style="background:#ef4444"></span>&lt;30%&nbsp;&nbsp;|&nbsp;&nbsp;
+    A=Armado · S=Soldadura · P=Pintura · D=Despacho
+  </div>
+</div>"""
+
+    # Sección Avance gráfico
+    leg_items = "".join(
+        f'<span class="leg-seg"><span class="leg-dot" style="background:{ST_CLR[s]};width:12px;height:12px;border-radius:3px"></span>{ST_LBL[s]}</span>'
+        for s in STAGES
+    )
+    bar_rows = ""
+    for ot in ots:
+        ot_id, titulo, tipo_est, fe, _, _, _ = ot
+        total = total_by_ot.get(ot_id, 0)
+        segs  = ""
+        if total:
+            for stage in STAGES:
+                n   = appr[ot_id][stage]
+                pct = _pct(n, total)
+                if pct > 0:
+                    segs += f'<div class="bar-seg" style="width:{pct}%;background:{ST_CLR[stage]};" title="{ST_LBL[stage]}: {n}/{total} ({pct}%)"></div>'
+        fe_fmt = _fd(fe)
+        bar_rows += f"""<div class="bar-row">
+      <div class="bar-ot-label"><span class="bar-ot-id">OT {ot_id}</span><span class="bar-ot-titulo">{_e(titulo)}</span></div>
+      <div class="bar-track"><div class="bar-inner">{segs}</div></div>
+      <div class="bar-fe">{fe_fmt}</div>
+    </div>"""
+
+    h_grafico = next_sec("AVANCE POR OT – VISTA GRÁFICA")
+    grafico_html = f"""
+<div class="section">
+  <div class="section-header">{h_grafico}</div>
+  <div class="bar-legend">{leg_items}</div>
+  <div class="axis-labels"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
+  {bar_rows}
+</div>"""
+
+    # Sección Producción semanal (solo INTERNO)
+    prod_html = ""
+    if is_interno:
+        svg_chart  = _svg_bars(d["week_labels"], d["week_vals"])
+        n_this     = d["n_this"]
+        n_prev     = d["n_prev"]
+        variacion  = n_this - n_prev
+        var_sign   = "+" if variacion >= 0 else ""
+        var_clr    = "#22c55e" if variacion >= 0 else "#ef4444"
+        h_prod     = next_sec("PRODUCCIÓN SEMANAL – ÚLTIMAS 6 SEMANAS")
+        prod_html  = f"""
+<div class="section">
+  <div class="section-header">{h_prod}</div>
+  <div class="prod-section">
+    {svg_chart}
+    <div class="prod-summary">
+      <div class="prod-kpi"><strong>{n_this}</strong>Piezas armadas esta semana</div>
+      <div class="prod-kpi"><strong style="color:{var_clr}">{var_sign}{variacion}</strong>Variación vs semana anterior</div>
+      <div class="prod-kpi"><strong>{d['kg_prod']:,.1f} kg</strong>KG producidos en período</div>
+    </div>
+  </div>
+</div>"""
+
+    # Sección Cronograma
+    ots_sorted = sorted(ots, key=lambda r: (r[3] or "9999-99-99", r[0]))
+    crono_rows = ""
+    for ot in ots_sorted:
+        ot_id, titulo, tipo_est, fe, _, _, _ = ot
+        total   = total_by_ot.get(ot_id, 0)
+        n_sol   = appr[ot_id]["SOLDADURA"]
+        n_pin   = appr[ot_id]["PINTURA"]
+        n_des   = appr[ot_id]["DESPACHO"]
+        n_arm   = appr[ot_id]["ARMADO"]
+        pct_sol = _pct(n_sol, total)
+        pct_pin = _pct(n_pin, total)
+        pct_des = _pct(n_des, total)
+        pri_lbl, pri_col, pri_bg = _priority(fe)
+        fe_fmt  = _fd(fe)
+
+        def mb(pct, clr):
+            return (f'<span class="mini-bar-wrap"><span style="color:{clr};font-weight:700;min-width:28px;display:inline-block">{pct}%</span>'
+                    f'<span class="mini-bar-bg"><span class="mini-bar-fill" style="width:{pct}%;background:{clr}"></span></span></span>')
+
+        if n_des == total and total > 0:
+            est_cls, est_lbl = "done", "Completada"
+        elif n_arm > 0:
+            est_cls, est_lbl = "",     "En proceso"
+        else:
+            est_cls, est_lbl = "none", "Sin iniciar"
+
+        crono_rows += f"""<tr>
+      <td><span class="pri-badge" style="background:{pri_bg};color:{pri_col}">{pri_lbl}</span></td>
+      <td class="tc-ot">{ot_id}</td>
+      <td class="tc-titulo">{_e(titulo)}</td>
+      <td>{total}</td>
+      <td>{mb(pct_sol, '#f97316')}</td>
+      <td>{mb(pct_pin, '#22c55e')}</td>
+      <td>{mb(pct_des, '#a855f7')}</td>
+      <td class="tc-fe">{fe_fmt}</td>
+      <td><span class="estado-badge {est_cls}">{est_lbl}</span></td>
+    </tr>"""
+
+    h_crono = next_sec("CRONOGRAMA DE ENTREGAS Y PRIORIDADES")
+    crono_html = f"""
+<div class="section">
+  <div class="section-header">{h_crono}</div>
+  <table class="main-table">
+    <thead>
+      <tr><th>Prior.</th><th>OT</th><th>Título</th><th>Pzas</th>
+          <th>Soldadura %</th><th>Pintura %</th><th>Despacho %</th>
+          <th>F. Entrega</th><th>Estado</th></tr>
+    </thead>
+    <tbody>{crono_rows}</tbody>
+  </table>
+</div>"""
+
+    # Sección Gantt
+    h_gantt   = next_sec("PROGRAMACIÓN DE FABRICACIÓN – DIAGRAMA GANTT")
+    gantt_svg = _svg_gantt(d.get("prog_rows", []), ots)
+    gantt_html = f"""
+<div class="section">
+  <div class="section-header">{h_gantt}</div>
+  <div class="section-body" style="overflow-x:auto;padding:14px 12px">
+    {gantt_svg}
+    <div style="font-size:10px;color:#9ca3af;margin-top:6px">Las barras representan la programación cargada en el módulo Programación. ◆ = Fecha de entrega comprometida.</div>
+  </div>
+</div>"""
+
+    # Sección Observaciones (solo INTERNO)
+    obs_html = ""
+    if is_interno:
+        alertas   = []
+        situacion = []
+        acciones  = []
+
+        if avance_pct < 20:
+            alertas.append(f"Avance global {avance_pct}%: obra en etapa inicial.")
+
+        sin_mov  = [f"OT {ot[0]}" for ot in ots if appr[ot[0]]["ARMADO"] == 0]
+        urgentes = [ot for ot in ots if _priority(ot[3])[0] == "URGENTE"]
+
+        if sin_mov:
+            alertas.append(f"{len(sin_mov)} OTs sin piezas iniciadas (0%): {', '.join(sin_mov[:6])}.")
+        if d["hs_cons"] == 0:
+            alertas.append("0 hs consumidas registradas – verificar carga de partes diarios.")
+        for ot in urgentes:
+            alertas.append(f"OT {ot[0]} ({_e(ot[1])[:22]}): entrega {_fd(ot[3])}, requiere máxima atención.")
+
+        ots_avanzadas = sorted(
+            [(ot[0], ot[1], appr[ot[0]]) for ot in ots if appr[ot[0]]["ARMADO"] > 0],
+            key=lambda x: x[2]["ARMADO"], reverse=True
+        )
+        for ot_id, titulo, ot_appr in ots_avanzadas[:4]:
+            total  = total_by_ot.get(ot_id, 0)
+            n_a    = ot_appr["ARMADO"]
+            n_s    = ot_appr["SOLDADURA"]
+            n_p    = ot_appr["PINTURA"]
+            parts  = [f"{n_a}/{total} armado"]
+            if n_s: parts.append(f"{n_s} soldadura")
+            if n_p: parts.append(f"{n_p} pintura")
+            situacion.append(f"OT {ot_id} ({_e(titulo)[:28]}): {', '.join(parts)}.")
+        if d["kg_prod"] > 0:
+            situacion.append(f"{d['kg_prod']:,.1f} kg producidos en el período.")
+
+        if sin_mov:
+            acciones.append(f"Activar inicio en OTs sin movimiento ({', '.join(sin_mov[:5])}).")
+        if d["hs_cons"] == 0:
+            acciones.append("Regularizar carga de hs consumidas en el sistema.")
+        for ot in urgentes[:3]:
+            acciones.append(f"Priorizar OT {ot[0]} – {_e(ot[1])[:22]} (entrega {_fd(ot[3])}).")
+        if not acciones:
+            acciones.append("Continuar plan de producción según programación vigente.")
+
+        def _li(items):
+            if not items:
+                return '<li style="color:#9ca3af">Sin observaciones</li>'
+            return "".join(f"<li>{i}</li>" for i in items)
+
+        h_obs    = next_sec("OBSERVACIONES Y PRÓXIMOS PASOS")
+        obs_html = f"""
+<div class="section">
+  <div class="section-header">{h_obs}</div>
+  <div class="obs-grid">
+    <div class="obs-col alertas">
+      <div class="obs-col-header">■ Alertas / Desvíos</div>
+      <ul>{_li(alertas)}</ul>
+    </div>
+    <div class="obs-col situacion">
+      <div class="obs-col-header">✓ Situación actual</div>
+      <ul>{_li(situacion)}</ul>
+    </div>
+    <div class="obs-col acciones">
+      <div class="obs-col-header">→ Acciones semana próxima</div>
+      <ul>{_li(acciones)}</ul>
+    </div>
+  </div>
+</div>"""
+
+    # Footer firmas
+    firma_html = """
+<div class="firma-row">
+  <div class="firma-box">
+    <div class="firma-line"></div>
+    <div class="firma-cargo">Jefe de Producción</div>
+    <div class="firma-nombre">Daniel Hereñu</div>
+  </div>
+  <div class="firma-box">
+    <div class="firma-line"></div>
+    <div class="firma-cargo">Ing. Responsable</div>
+    <div class="firma-nombre">Gabriel Ibarra</div>
+  </div>
+</div>"""
+
+    tipo_label = "INFORME INTERNO" if is_interno else "INFORME PARA CLIENTE"
+
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Informe de Avance – {obra}</title>
+  <style>{css}</style>
+</head>
+<body>
+<div class="report-wrap">
+
+  <!-- Controles (no imprime) -->
+  <div class="no-print" style="display:flex;gap:10px;margin-bottom:12px;align-items:center">
+    <button onclick="window.print()" style="padding:8px 20px;background:#e36c09;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px">🖨 Imprimir / PDF</button>
+    <a href="/modulo/reportes" style="padding:8px 16px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;color:#374151;text-decoration:none">← Volver</a>
+    <span style="font-size:11px;color:#9ca3af">{tipo_label}</span>
+  </div>
+
+  <!-- Encabezado -->
+  <div class="rpt-header">
+    <div class="rpt-header-left">
+      <img src="/logo-a3" alt="A3" class="rpt-header-logo">
+      <div>
+        <div class="rpt-title">{report_title} – FABRICACIÓN ESTRUCTURAS METÁLICAS</div>
+        <div class="rpt-subtitle">{periodo_lbl} &nbsp;|&nbsp; {periodo}</div>
+      </div>
+    </div>
+    <div class="rpt-header-right">
+      <div><span class="rpt-badge">{tipo_label}</span></div>
+      <div class="rpt-date">{week_end.strftime('%d %b %Y')}</div>
+    </div>
+  </div>
+
+  {ficha_html}
+  {kpi_estado_html}
+  {kpi_html}
+  {estado_html}
+  {grafico_html}
+  {prod_html}
+  {crono_html}
+  {gantt_html}
+  {obs_html}
+  {firma_html}
+
+</div>
+</body>
+</html>"""
+
+
+# ── Rutas ─────────────────────────────────────────────────────────────────────
+
+@reportes_bp.route("/modulo/reportes")
+def reportes_index():
+    import calendar
+    db     = get_db()
+    obras  = [r[0] for r in db.execute(
+        "SELECT DISTINCT obra FROM ordenes_trabajo WHERE obra IS NOT NULL AND obra != '' ORDER BY obra"
+    ).fetchall()]
+
+    today      = date.today()
+    iso        = today.isocalendar()
+    obra_sel   = request.args.get("obra", obras[0] if obras else "")
+    tipo_sel   = request.args.get("tipo", "INTERNO")
+    periodo_sel = request.args.get("periodo_tipo", "SEMANAL")
+
+    obs_opts = "\n".join(
+        f'<option value="{_e(o)}" {"selected" if o == obra_sel else ""}>{_e(o)}</option>'
+        for o in obras
+    )
+
+    week_opts = ""
+    cur_y, cur_w = iso[0], iso[1]
+    for i in range(11, -1, -1):
+        wd = today - timedelta(weeks=i)
+        y, w, _ = wd.isocalendar()
+        mon, sun = _week_range(y, w)
+        lbl = f"Sem {w} – {mon.strftime('%d %b')} al {sun.strftime('%d %b %Y')}"
+        sel = "selected" if y == cur_y and w == cur_w else ""
+        week_opts += f'<option value="{y}-{w:02d}" {sel}>{lbl}</option>\n'
+
+    month_opts = ""
+    for i in range(11, -1, -1):
+        # Go back i months
+        m = today.month - i
+        y = today.year
+        while m <= 0:
+            m += 12
+            y -= 1
+        lbl = date(y, m, 1).strftime("%B %Y").capitalize()
+        sel = "selected" if i == 0 else ""
+        month_opts += f'<option value="{y}-{m:02d}" {sel}>{lbl}</option>\n'
+
+    int_act = "active" if tipo_sel == "INTERNO" else ""
+    cli_act = "active" if tipo_sel == "CLIENTE" else ""
+    int_chk = "checked" if tipo_sel == "INTERNO" else ""
+    cli_chk = "checked" if tipo_sel == "CLIENTE" else ""
+    sem_act = "active" if periodo_sel == "SEMANAL" else ""
+    mes_act = "active" if periodo_sel == "MENSUAL" else ""
+    sem_chk = "checked" if periodo_sel == "SEMANAL" else ""
+    mes_chk = "checked" if periodo_sel == "MENSUAL" else ""
+
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Generar Informe – A3</title>
+  <style>
+    *{{box-sizing:border-box}}
+    body{{font-family:Arial,sans-serif;background:#f3f4f6;min-height:100vh;display:flex;align-items:center;justify-content:center;margin:0}}
+    .card{{background:#fff;border-radius:12px;padding:36px 40px;box-shadow:0 4px 24px rgba(0,0,0,.1);width:480px}}
+    h2{{margin:0 0 4px;color:#1f2937;font-size:1.3rem}}
+    .sub{{color:#6b7280;font-size:.85rem;margin:0 0 26px}}
+    label.field-label{{display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}}
+    select{{width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;margin-bottom:18px;color:#1f2937}}
+    .tipo-group{{display:flex;gap:10px;margin-bottom:22px}}
+    .tipo-btn{{flex:1;border:2px solid #e5e7eb;border-radius:8px;padding:12px 8px;text-align:center;cursor:pointer;transition:.15s;position:relative}}
+    .tipo-btn input{{position:absolute;opacity:0;width:0;height:0}}
+    .tipo-btn.active{{border-color:#e36c09;background:#fff7ed}}
+    .tipo-btn.active-blue{{border-color:#2563eb;background:#eff6ff}}
+    .tipo-btn strong{{display:block;font-size:.95rem;color:#1f2937}}
+    .tipo-btn small{{color:#6b7280;font-size:.75rem}}
+    .btn{{width:100%;padding:13px;background:#e36c09;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:700;cursor:pointer}}
+    .btn:hover{{background:#c95a06}}
+    .logo-row{{display:flex;align-items:center;gap:12px;margin-bottom:22px}}
+    .logo-row img{{height:34px;object-fit:contain}}
+    .logo-row span{{color:#374151;font-weight:700;font-size:1rem}}
+    .hidden{{display:none}}
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="logo-row">
+    <img src="/logo-a3" alt="A3">
+    <span>A3 Servicios Constructivos</span>
+  </div>
+  <h2>Informe de Avance</h2>
+  <p class="sub">Seleccioná la obra, el período y el tipo de informe.</p>
+  <form action="/modulo/reportes/ver" method="GET" target="_blank">
+    <label class="field-label">Obra / Proyecto</label>
+    <select name="obra">{obs_opts}</select>
+
+    <label class="field-label">Tipo de período</label>
+    <div class="tipo-group" id="pg">
+      <label class="tipo-btn {sem_act}" id="lb_sem">
+        <input type="radio" name="periodo_tipo" value="SEMANAL" {sem_chk} id="r_sem">
+        <strong>SEMANAL</strong>
+        <small>Por semana ISO</small>
+      </label>
+      <label class="tipo-btn {mes_act}" id="lb_mes">
+        <input type="radio" name="periodo_tipo" value="MENSUAL" {mes_chk} id="r_mes">
+        <strong>MENSUAL</strong>
+        <small>Por mes completo</small>
+      </label>
+    </div>
+
+    <div id="wrap_sem">
+      <label class="field-label">Semana evaluada</label>
+      <select name="semana">{week_opts}</select>
+    </div>
+    <div id="wrap_mes" class="hidden">
+      <label class="field-label">Mes evaluado</label>
+      <select name="mes">{month_opts}</select>
+    </div>
+
+    <label class="field-label">Tipo de informe</label>
+    <div class="tipo-group" id="tg">
+      <label class="tipo-btn {int_act}">
+        <input type="radio" name="tipo" value="INTERNO" {int_chk}>
+        <strong>INTERNO</strong>
+        <small>HS · Eficiencia · KG · Observaciones</small>
+      </label>
+      <label class="tipo-btn {cli_act}">
+        <input type="radio" name="tipo" value="CLIENTE" {cli_chk}>
+        <strong>CLIENTE</strong>
+        <small>Solo avance de obra</small>
+      </label>
+    </div>
+    <button type="submit" class="btn">Generar Informe ↗</button>
+  </form>
+</div>
+<script>
+function togglePeriodo() {{
+  const isSem = document.getElementById('r_sem').checked;
+  document.getElementById('wrap_sem').classList.toggle('hidden', !isSem);
+  document.getElementById('wrap_mes').classList.toggle('hidden', isSem);
+  document.getElementById('lb_sem').classList.toggle('active', isSem);
+  document.getElementById('lb_mes').classList.toggle('active', !isSem);
+}}
+document.querySelectorAll('#pg input').forEach(r => r.addEventListener('change', togglePeriodo));
+togglePeriodo();
+document.querySelectorAll('#tg .tipo-btn input').forEach(r => {{
+  r.addEventListener('change', () => {{
+    document.querySelectorAll('#tg .tipo-btn').forEach(b => b.classList.remove('active'));
+    r.closest('.tipo-btn').classList.add('active');
+  }});
+}});
+</script>
+</body>
+</html>"""
+
+
+@reportes_bp.route("/modulo/reportes/ver")
+def reportes_ver():
+    import calendar
+    db          = get_db()
+    obra        = request.args.get("obra", "").strip()
+    tipo        = request.args.get("tipo", "INTERNO").upper()
+    periodo_tipo = request.args.get("periodo_tipo", "SEMANAL").upper()
+    semana      = request.args.get("semana", "")
+    mes         = request.args.get("mes", "")
+
+    if not obra:
+        return redirect(url_for("reportes.reportes_index"))
+
+    today = date.today()
+    iso   = today.isocalendar()
+
+    if periodo_tipo == "MENSUAL":
+        try:
+            parts = mes.split("-")
+            m_year, m_month = int(parts[0]), int(parts[1])
+        except Exception:
+            m_year, m_month = today.year, today.month
+        week_start = date(m_year, m_month, 1)
+        last_day   = calendar.monthrange(m_year, m_month)[1]
+        week_end   = date(m_year, m_month, last_day)
+        year       = m_year
+        week       = week_start.isocalendar()[1]
+    else:
+        try:
+            parts  = semana.split("-")
+            year   = int(parts[0])
+            week   = int(parts[1])
+        except Exception:
+            year, week = iso[0], iso[1]
+        week_start, week_end = _week_range(year, week)
+
+    d = _collect(db, obra, year, week, week_start, week_end)
+
+    if d is None:
+        return f"<h3>Sin datos para la obra <b>{_e(obra)}</b>. Verificá que tenga OTs activas.</h3>", 404
+
+    html = _render_html(d, tipo, periodo_tipo)
+    return Response(html, mimetype="text/html")
