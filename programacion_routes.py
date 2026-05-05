@@ -912,24 +912,28 @@ def programacion_index():
         "#8b5cf6", "#f59e0b", "#06b6d4", "#ec4899", "#14b8a6",
     ]
     desv_legend = ""
-    if total_desv > 0:
-        for i, (code, label) in enumerate(_DESVIOS.items()):
-            c = desvio_stats.get(code, 0)
-            if c <= 0:
-                continue
-            pct = (c * 100.0 / total_desv)
-            col = _colors_desv[i % len(_colors_desv)]
+    for i, (code, label) in enumerate(_DESVIOS.items()):
+        c = desvio_stats.get(code, 0)
+        pct = (c * 100.0 / total_desv) if total_desv > 0 and c > 0 else 0
+        col = _colors_desv[i % len(_colors_desv)]
+        if c > 0:
             desv_legend += (
-                f"<div style='display:flex;align-items:center;gap:7px;margin:5px 0;'>"
-                f"<div style='width:14px;height:14px;border-radius:3px;background:{col};flex-shrink:0;'></div>"
-                f"<div style='font-size:12px;color:#1e293b;flex:1;'>{code}. {html_lib.escape(label)}</div>"
-                f"<div style='font-size:12px;font-weight:700;color:{col};white-space:nowrap;'>{c} ({pct:.0f}%)</div>"
+                f"<div style='display:flex;align-items:center;gap:6px;margin:3px 0;'>"
+                f"<div style='width:11px;height:11px;border-radius:2px;background:{col};flex-shrink:0;'></div>"
+                f"<div style='font-size:11px;color:#1e293b;flex:1;'>{code}. {html_lib.escape(label)}</div>"
+                f"<div style='font-size:11px;font-weight:700;color:{col};white-space:nowrap;'>{c} ({pct:.0f}%)</div>"
                 f"</div>"
             )
-    else:
-        desv_legend = "<div style='color:#64748b;font-style:italic;'>Sin desvíos registrados hasta la semana seleccionada.</div>"
+        else:
+            desv_legend += (
+                f"<div style='display:flex;align-items:center;gap:6px;margin:3px 0;opacity:0.35;'>"
+                f"<div style='width:11px;height:11px;border-radius:2px;background:#cbd5e1;flex-shrink:0;'></div>"
+                f"<div style='font-size:11px;color:#64748b;flex:1;'>{code}. {html_lib.escape(label)}</div>"
+                f"<div style='font-size:11px;color:#94a3b8;white-space:nowrap;'>0</div>"
+                f"</div>"
+            )
 
-    donut_svg = _svg_donut_chart(desvio_stats, total_desv)
+    donut_svg = _svg_donut_chart(desvio_stats, total_desv, size=220)
 
     week_map = {}
     for r in cumplimiento_rows:
@@ -1148,12 +1152,10 @@ def programacion_index():
                 </table>
             </div>
         </div>
-        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">
-            <h4>Distribución acumulada de causas de desvío</h4>
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-                <div style="flex-shrink:0;">{donut_svg}</div>
-                <div style="flex:1;min-width:160px;">{desv_legend}</div>
-            </div>
+        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px;display:flex;flex-direction:column;">
+            <h4 style="margin:0 0 8px 0;">Distribución acumulada de causas de desvío</h4>
+            <div style="display:flex;justify-content:center;margin-bottom:10px;">{donut_svg}</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px;">{desv_legend}</div>
         </div>
     </div>
 
