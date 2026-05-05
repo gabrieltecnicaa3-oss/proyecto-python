@@ -128,13 +128,20 @@ def _is_obra_session():
 
 
 def _rol_puede_acceder(role, path, method):
+    # Rutas exclusivas de administrador
+    ADMIN_ONLY_PREFIXES = (
+        "/modulo/historial",
+        "/modulo/reportes",
+    )
+    p = str(path or "").lower()
+    if any(p.startswith(pref) for pref in ADMIN_ONLY_PREFIXES):
+        return role == ROLE_ADMIN
+
     if role in (ROLE_ADMIN, ROLE_SUPERVISOR):
         return True
 
     if role != ROLE_OBRA:
         return False
-
-    p = str(path or "").lower()
 
     metodo = str(method or "").upper()
     if metodo not in ("GET", "HEAD"):
@@ -1798,6 +1805,8 @@ def dashboard():
         },
     ]
 
+    ADMIN_ONLY_HREFS = {"/modulo/historial", "/modulo/reportes"}
+    is_admin = _is_admin_session()
     cards_html = "".join(
         f'''
             <a href="{m["href"]}" class="module-card {m["css"]}">
@@ -1807,6 +1816,7 @@ def dashboard():
             </a>
         '''
         for m in modulos
+        if m["href"] not in ADMIN_ONLY_HREFS or is_admin
     )
 
     top_actions = '''
