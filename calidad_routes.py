@@ -69,6 +69,10 @@ def _obtener_operarios_disponibles(db):
 calidad_bp = Blueprint("calidad", __name__)
 
 
+def _es_usuario_obra():
+    return str(session.get("user_role") or "").strip().lower() == "obra"
+
+
 def construir_redirect_desde_qr(qr_data):
     """Normaliza el contenido del QR y arma una URL valida a /pieza/<pos>."""
     if not qr_data:
@@ -1803,7 +1807,7 @@ def calidad_escaneo_form_armado_soldadura():
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
     db = get_db()
-    es_obra = str(session.get("user_role") or "").strip().lower() == "obra"
+    es_obra = _es_usuario_obra()
     responsables_control = _obtener_responsables_control(db)
     responsable_por_firma = {
         str(data.get("firma", "")).strip().lower(): nombre
@@ -3454,6 +3458,7 @@ def calidad_escaneo_form_pintura():
 @calidad_bp.route("/modulo/calidad/escaneo/controles-pintura", methods=["GET"])
 def listar_controles_pintura():
     db = get_db()
+    es_obra = _es_usuario_obra()
 
     obra_filtro = (request.args.get("obra") or "").strip()
     busqueda_pieza_cp = (request.args.get("busqueda_pieza") or "").strip()
@@ -3518,7 +3523,7 @@ def listar_controles_pintura():
         ctrl_id, obra, fecha_creacion, fecha_mod = ctrl
         fmt_fecha = fecha_creacion.split(" ")[0] if fecha_creacion else "-"
         btn_editar = f'<a href="/modulo/calidad/escaneo/editar-control-pintura/{ctrl_id}" class="btn btn-edit">✏️ Editar</a>'
-        btn_pdf = f'<a href="/modulo/calidad/escaneo/generar-pdf-control/{ctrl_id}" class="btn btn-pdf">📄 PDF</a>'
+        btn_pdf = "" if es_obra else f'<a href="/modulo/calidad/escaneo/generar-pdf-control/{ctrl_id}" class="btn btn-pdf">📄 PDF</a>'
         filas_html += f"""
         <tr>
             <td>{ctrl_id}</td>
@@ -3610,6 +3615,9 @@ def listar_controles_pintura():
 @calidad_bp.route("/modulo/calidad/escaneo/generar-pdf-control/<int:control_id>", methods=["GET"])
 def generar_pdf_control(control_id):
     from datetime import date
+    if _es_usuario_obra():
+        return redirect("/modulo/calidad/escaneo/controles-pintura?mensaje=" + quote("Solo visualizacion para usuario obra"))
+
     db = get_db()
     ctrl_row = db.execute(
         "SELECT id, obra, mediciones, piezas FROM control_pintura WHERE id=? AND estado IN ('activo','en_progreso','completado')",
@@ -3877,6 +3885,10 @@ def editar_control_pintura(control_id):
     
     responsables_control = _obtener_responsables_control(db)
     firmas_responsables = {k: v.get("firma", "") for k, v in responsables_control.items()}
+    es_obra = _es_usuario_obra()
+    if request.method == "POST" and es_obra:
+        return redirect("/modulo/calidad/escaneo/controles-pintura?mensaje=" + quote("Solo visualizacion para usuario obra"))
+
     if request.method == "POST" and (request.form.get("accion") or "").strip().lower() == "pdf":
         def _to_float(val):
             txt = str(val or "").strip().replace(",", ".")
@@ -4056,7 +4068,9 @@ def editar_control_pintura(control_id):
     piezas_html = ""
     for idx, p in enumerate(filas_pintura, 1):
         piezas_html += f'<tr><td>{html_lib.escape(p.get("pieza", ""))}<input type="hidden" name="pieza[]" value="{html_lib.escape(p.get("pieza", ""))}"></td><td>{html_lib.escape(p.get("cantidad", ""))}<input type="hidden" name="cantidad[]" value="{html_lib.escape(p.get("cantidad", ""))}"></td><td><input type="hidden" name="descripcion[]" value="{html_lib.escape(p.get("descripcion", ""))}">{html_lib.escape(p.get("descripcion", ""))}</td><td><select name="sup_estado[]"><option>Sel</option><option {"selected" if p.get("sup_estado") == "CONFORME" else ""}>OK</option><option {"selected" if p.get("sup_estado") == "NO CONFORME" else ""}>NO</option></select></td><td><select name="sup_responsable[]" class="sr" data-i="{idx}">{opciones_resp}</select></td><td><input type="text" name="sup_firma[]" id="sf{idx}" value="{html_lib.escape(p.get("sup_resp", ""))}" readonly></td><td><input type="number" step="0.01" name="mano1[]" value="{p.get("mano1", 0)}" class="m1" data-i="{idx}"></td><td><input type="number" step="0.01" name="mano2[]" value="{p.get("mano2", 0)}" class="m2" data-i="{idx}"></td><td><input type="number" step="0.01" name="mano3[]" value="{p.get("mano3", 0)}" class="m3" data-i="{idx}"></td><td><input type="number" step="0.01" name="mano4[]" value="{p.get("mano4", 0)}" class="m4" data-i="{idx}"></td><td><input type="number" step="0.01" name="espesor_solicitado[]" value="{p.get("espesor", 0)}" class="esp" data-i="{idx}"></td><td><input type="text" id="ef{idx}" value="{p.get("estado_final", "")}" readonly></td><td><select name="pintura_responsable[]" class="pr" data-i="{idx}">{opciones_resp}</select></td><td><input type="text" name="pintura_firma[]" id="pf{idx}" value="{html_lib.escape(p.get("pint_resp", ""))}" readonly></td></tr>'
-    return f'<html><head><style>body{{font-family:Arial;padding:10px;}}table{{width:100%;border-collapse:collapse;}}th,td{{border:1px solid #ddd;padding:5px;font-size:10px;}}th{{background:#f97316;color:white;}}input,select{{width:100%;box-sizing:border-box;padding:4px;}}button{{background:#f97316;color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;}}</style></head><body><h2>✏️ Editar Control ID {control_id}</h2><form method="post"><input type="hidden" name="accion" value="pdf"><table><tr><th>M</th><th>Fecha</th><th>Hora</th><th>T°C</th><th>%H</th></tr>{med_html}</table><table><tr><th colspan="6">Pieza</th><th colspan="8">Pintura</th></tr><tr><th>Pieza</th><th>Cant</th><th>Desc</th><th>Est</th><th>Resp</th><th>Firma</th><th>M1</th><th>M2</th><th>M3</th><th>M4</th><th>Esp</th><th>EF</th><th>Resp</th><th>Firma</th></tr>{piezas_html}</table><br><button>Guardar PDF</button> <a href="/modulo/calidad/escaneo/controles-pintura" style="padding:6px 10px;background:#2563eb;color:white;text-decoration:none;border-radius:4px;">Volver</a></form><script>const f={json.dumps(firmas_responsables)};function uf(s,id){{document.getElementById(id).value=s.value||"";}}document.querySelectorAll(".sr").forEach(s=>s.addEventListener("change",()=>uf(s,"sf"+s.dataset.i)));document.querySelectorAll(".pr").forEach(s=>s.addEventListener("change",()=>uf(s,"pf"+s.dataset.i)));function ue(i){{const m4=parseFloat(document.querySelector(".m4[data-i=\'"+i+"\']").value)||0;const e=parseFloat(document.querySelector(".esp[data-i=\'"+i+"\']").value)||0;document.getElementById("ef"+i).value=m4>e?"OK":"NO";}}document.querySelectorAll(".m4,.esp").forEach(x=>x.addEventListener("input",()=>ue(x.dataset.i)));</script></body></html>'
+    btn_guardar_pdf = "" if es_obra else "<button>Guardar PDF</button> "
+    aviso_obra = '<p style="margin:10px 0;background:#fff7ed;color:#9a3412;padding:10px;border-radius:6px;border:1px solid #fdba74;"><b>Modo solo visualizacion:</b> podes revisar los datos, sin imprimir PDF.</p>' if es_obra else ""
+    return f'<html><head><style>body{{font-family:Arial;padding:10px;}}table{{width:100%;border-collapse:collapse;}}th,td{{border:1px solid #ddd;padding:5px;font-size:10px;}}th{{background:#f97316;color:white;}}input,select{{width:100%;box-sizing:border-box;padding:4px;}}button{{background:#f97316;color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;}}</style></head><body><h2>✏️ Editar Control ID {control_id}</h2>{aviso_obra}<form method="post"><input type="hidden" name="accion" value="pdf"><table><tr><th>M</th><th>Fecha</th><th>Hora</th><th>T°C</th><th>%H</th></tr>{med_html}</table><table><tr><th colspan="6">Pieza</th><th colspan="8">Pintura</th></tr><tr><th>Pieza</th><th>Cant</th><th>Desc</th><th>Est</th><th>Resp</th><th>Firma</th><th>M1</th><th>M2</th><th>M3</th><th>M4</th><th>Esp</th><th>EF</th><th>Resp</th><th>Firma</th></tr>{piezas_html}</table><br>{btn_guardar_pdf}<a href="/modulo/calidad/escaneo/controles-pintura" style="padding:6px 10px;background:#2563eb;color:white;text-decoration:none;border-radius:4px;">Volver</a></form><script>const f={json.dumps(firmas_responsables)};function uf(s,id){{document.getElementById(id).value=s.value||"";}}document.querySelectorAll(".sr").forEach(s=>s.addEventListener("change",()=>uf(s,"sf"+s.dataset.i)));document.querySelectorAll(".pr").forEach(s=>s.addEventListener("change",()=>uf(s,"pf"+s.dataset.i)));function ue(i){{const m4=parseFloat(document.querySelector(".m4[data-i=\'"+i+"\']").value)||0;const e=parseFloat(document.querySelector(".esp[data-i=\'"+i+"\']").value)||0;document.getElementById("ef"+i).value=m4>e?"OK":"NO";}}document.querySelectorAll(".m4,.esp").forEach(x=>x.addEventListener("input",()=>ue(x.dataset.i)));</script></body></html>'
 
 # ======================
 # NUEVA RUTA: CONTROL DE PINTURA CON FLUJO DE 5 PASOS
@@ -4064,6 +4078,7 @@ def editar_control_pintura(control_id):
 @calidad_bp.route("/modulo/calidad/escaneo/control-pintura", methods=["GET", "POST"])
 def control_pintura_nuevo():
     from datetime import date, datetime
+    es_obra = _es_usuario_obra()
 
     # MODO CARGA: Formulario simple para operarios
     if request.method == "GET":
@@ -4894,7 +4909,7 @@ def control_pintura_nuevo():
                         <a href="/modulo/calidad/escaneo" style="display: inline-block; padding: 12px 24px; background: #6b7280; color: white; border: none; border-radius: 5px; font-weight: bold; text-decoration: none; cursor: pointer;">⬅️ Volver a Submódulos</a>
                     </div>
                     <div style="display: flex; gap: 10px;">
-                        <button type="button" class="btn-cancel" id="btn-pdf" onclick="generarPDF()" style="background: #2563eb;">📄 Generar PDF</button>
+                        {'' if es_obra else '<button type="button" class="btn-cancel" id="btn-pdf" onclick="generarPDF()" style="background: #2563eb;">📄 Generar PDF</button>'}
                         <button type="submit" class="btn-submit">💾 Guardar Carga</button>
                     </div>
                 </div>
@@ -6341,7 +6356,7 @@ def control_pintura_nuevo():
                 <!-- ─── Botones de navegación ─── -->
                 <div class="card" style="padding:12px 16px;">
                     <div class="actions">
-                        {f'<a class="btn btn-blue" href="/modulo/calidad/escaneo/generar-pdf-control/{control_id}">📄 Generar PDF</a>' if control_id else '<button class="btn btn-blue" type="button" disabled>📄 Generar PDF</button>'}
+                        {(f'<a class="btn btn-blue" href="/modulo/calidad/escaneo/generar-pdf-control/{control_id}">📄 Generar PDF</a>' if control_id else '<button class="btn btn-blue" type="button" disabled>📄 Generar PDF</button>') if not es_obra else ''}
                         <a class="btn btn-blue" href="/modulo/calidad/escaneo/controles-pintura">📋 Ver controles</a>
                         <a class="btn btn-blue" href="/home">🏠 Estado de piezas por proceso</a>
                         <a class="btn btn-blue" href="/modulo/calidad/escaneo">⬅️ Volver</a>
@@ -7456,7 +7471,7 @@ def resumen_control_pintura(control_id):
             </table>
             
             <div class="buttons">
-                <button class="btn-primary" onclick="window.print()">🖨️ Imprimir</button>
+                {'' if _es_usuario_obra() else '<button class="btn-primary" onclick="window.print()">🖨️ Imprimir</button>'}
                 <a href="/modulo/calidad/escaneo/control-pintura?obra={urllib.parse.quote(obra)}" class="btn-secondary">← Volver a Formulario</a>
                 <a href="/modulo/calidad/escaneo/controles-pintura" class="btn-secondary">📋 Listar Controles</a>
             </div>

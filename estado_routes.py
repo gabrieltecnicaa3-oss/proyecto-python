@@ -1,6 +1,6 @@
 import os
 from io import BytesIO
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file, session
 from datetime import date, timedelta, datetime
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Image, Paragraph, Spacer
 from reportlab.lib import colors
@@ -31,6 +31,10 @@ def _guardar_pdf_databook(obra, seccion_key, filename, pdf_bytes, ot_id=None):
 
 
 estado_bp = Blueprint("estado", __name__)
+
+
+def _es_usuario_obra():
+    return str(session.get("user_role") or "").strip().lower() == "obra"
 
 
 def _ot_has_column(db, column_name):
@@ -143,6 +147,7 @@ def _calcular_kg_por_estacion_y_despachados(rows):
 
 @estado_bp.route("/modulo/estado")
 def estado_produccion():
+    btn_pdf_html = "" if _es_usuario_obra() else '<a id="btn-pdf" href="#" onclick="exportarVistaPDF(); return false;" class="btn btn-pdf">📄 Generar reporte PDF</a>'
     html = """<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -362,8 +367,8 @@ body {
             <img src="/logo-a3" alt="Logo empresa">
             <h2>📊 Estado de Producción</h2>
         </div>
-        <div class="top-actions" style="display:flex;gap:10px;">
-                        <a id="btn-pdf" href="#" onclick="exportarVistaPDF(); return false;" class="btn btn-pdf">📄 Generar reporte PDF</a>
+                                <div class="top-actions" style="display:flex;gap:10px;">
+                                                                                                __BTN_PDF_HTML__
       <a href="/" class="btn">⬅️ Volver</a>
     </div>
   </div>
@@ -951,6 +956,7 @@ actualizarDescripcionTipo(tipoObraActivo);
 </body>
 </html>
 """
+    html = html.replace("__BTN_PDF_HTML__", btn_pdf_html)
     return html
 
 
@@ -1259,6 +1265,9 @@ def api_dashboard_comparar():
 
 @estado_bp.route("/api/dashboard-estado/pdf")
 def dashboard_estado_pdf():
+    if _es_usuario_obra():
+        return jsonify({"error": "Sin permisos para generar PDF"}), 403
+
     periodo = request.args.get("periodo", "mes")
     today = date.today()
     if periodo == "semana":
