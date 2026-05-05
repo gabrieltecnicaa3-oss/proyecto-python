@@ -3,10 +3,14 @@ import os as _os
 import base64 as _base64
 from datetime import datetime, timedelta, date
 from calendar import monthrange
-from flask import Blueprint, request, redirect
+from flask import Blueprint, request, redirect, session
 from db_utils import get_db
 
 programacion_bp = Blueprint("programacion", __name__)
+
+
+def _es_usuario_obra():
+    return str(session.get("user_role") or "").strip().lower() == "obra"
 
 # ── Colores para identificar OTs en el Gantt ──────────────────────────────────
 _COLORES_OT = [
@@ -732,6 +736,7 @@ calcHoras();
 # ── Routes ─────────────────────────────────────────────────────────────────────
 @programacion_bp.route("/modulo/programacion")
 def programacion_index():
+    es_obra = _es_usuario_obra()
     db = get_db()
     today = date.today()
 
@@ -1099,7 +1104,7 @@ def programacion_index():
 <div class="panel" id="cumplimiento-section">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <h3>Cumplimiento de objetivos semanales</h3>
-        <button onclick="printCumplimiento()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>
+        {'' if es_obra else '<button onclick="printCumplimiento()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>'}
     </div>
     <form method="get" action="/modulo/programacion" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
         <label>Semana (lunes):</label>
@@ -1222,6 +1227,7 @@ def programacion_index():
 <script>
 var _LOGO_URI = '{_logo_b64}';
 var _SEMANA_NUM = {semana_num};
+var _PUEDE_IMPRIMIR = {'false' if es_obra else 'true'};
 function _printHeader(title) {{
     var logoHtml = _LOGO_URI ? '<img src="' + _LOGO_URI + '" style="height:54px;display:block;">' : '';
     var semanaTag = '<div style="display:inline-block;margin-top:4px;background:#fff7ed;border:1px solid #fdba74;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700;color:#9a3412;">Semana de control N\u00b0' + _SEMANA_NUM + '</div>';
@@ -1248,6 +1254,10 @@ function _printHeader(title) {{
     + '</div>';
 }}
 function _openPrintWin(title, sectionId) {{
+    if (!_PUEDE_IMPRIMIR) {{
+        alert('Sin permisos para imprimir.');
+        return null;
+    }}
     var section = document.getElementById(sectionId);
     if (!section) return null;
     var printWin = window.open('', '_blank', 'width=1400,height=900');
@@ -1315,7 +1325,7 @@ function printCumplimiento() {{
             <a href="/modulo/programacion?vista=mensual{obra_qs}" class="btn btn-sm" style="{btn_mensual_active}">📅 Mensual</a>
             <a href="/modulo/programacion?vista=semana{obra_qs}" class="btn btn-sm" style="{btn_semana_active}">📆 Semana</a>
         </div>
-        <button onclick="printGantt()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>
+            {'' if es_obra else '<button onclick="printGantt()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>'}
     </div>
     {gantt}
 </div>
