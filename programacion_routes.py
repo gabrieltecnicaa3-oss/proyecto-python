@@ -234,7 +234,7 @@ h4{color:#9a3412;margin:0 0 8px 0;font-size:0.95em;font-weight:700;}
 .g-weeks-strip{position:absolute;left:0;right:0;top:50%;height:50%;display:flex;}
 .g-week-tick{position:absolute;top:0;height:100%;display:flex;align-items:center;font-size:9px;color:rgba(255,255,255,0.88);padding-left:3px;border-left:1px solid rgba(255,255,255,0.2);}
 .g-body{background:#fff;border-radius:0 0 10px 10px;}
-.g-row{display:grid;grid-template-columns:260px 150px 1fr 80px;border-bottom:1px solid #ffedd5;min-height:64px;}
+.g-row{display:grid;grid-template-columns:260px 150px 1fr 80px;border-bottom:1px solid #ffedd5;min-height:38px;}
 .g-row:last-child{border-bottom:none;}
 .g-row:hover{background:#fffcf8;}
 .g-label{padding:9px 10px;display:flex;flex-direction:column;justify-content:center;gap:3px;}
@@ -244,11 +244,11 @@ h4{color:#9a3412;margin:0 0 8px 0;font-size:0.95em;font-weight:700;}
 .g-sub{font-size:11px;color:#9a3412;margin-left:14px;}
 .g-chips{display:flex;flex-wrap:wrap;gap:3px;margin-left:14px;margin-top:2px;}
 .g-chip{background:#ffedd5;color:#9a3412;border:1px solid #fdba74;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:600;}
-.g-track{position:relative;min-height:64px;}
+.g-track{position:relative;min-height:38px;}
 .g-gridline{position:absolute;top:0;bottom:0;width:1px;background:#ffedd5;z-index:0;pointer-events:none;}
 .g-today-line{position:absolute;top:0;bottom:0;width:2px;background:#ef4444;opacity:.75;z-index:2;pointer-events:none;}
 .g-today-line::after{content:"hoy";position:absolute;top:2px;left:4px;font-size:9px;color:#ef4444;white-space:nowrap;font-weight:700;}
-.g-bar{position:absolute;top:50%;transform:translateY(-50%);height:28px;border-radius:6px;display:flex;align-items:center;font-size:10px;color:#fff;font-weight:700;padding:0 8px;white-space:nowrap;overflow:hidden;cursor:default;box-shadow:0 2px 6px rgba(0,0,0,.22);z-index:1;transition:filter .15s;}
+.g-bar{position:absolute;top:50%;transform:translateY(-50%);height:20px;border-radius:4px;display:flex;align-items:center;font-size:10px;color:#fff;font-weight:700;padding:0 6px;white-space:nowrap;overflow:hidden;cursor:default;box-shadow:0 2px 6px rgba(0,0,0,.22);z-index:1;transition:filter .15s;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 .g-bar:hover{filter:brightness(1.14);}
 .g-out-range{font-size:11px;color:#9a3412;padding:4px 8px;font-style:italic;position:absolute;top:50%;transform:translateY(-50%);}
 .g-empty{padding:28px;text-align:center;color:#9a3412;font-style:italic;font-size:14px;}
@@ -292,6 +292,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:#f97316;backgr
     box-shadow:0 1px 4px rgba(154,52,18,0.1);
 }
 
+.tbl-compact td,.tbl-compact th{padding:5px 8px!important;font-size:12px!important;}
+@media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}}
 @media(max-width:800px){
     .g-head,.g-row{grid-template-columns:180px 120px 1fr 52px;}
     .form-grid{grid-template-columns:1fr;}
@@ -491,8 +493,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
         rows_html += f"""
         <div class="g-row">
             <div class="g-label">
-                <div><span class="g-dot" style="{dot_style}"></span><span class="g-ot">{obra}</span></div>
-                <div class="g-sub">OT{ot_id}-{titulo}</div>
+                <div style="display:flex;align-items:baseline;gap:4px;flex-wrap:wrap;line-height:1.3;"><span class="g-dot" style="{dot_style}"></span><span class="g-ot">{obra}</span><span class="g-sub" style="margin-left:0;">OT{ot_id}‑{titulo}</span></div>
                 <div class="g-chips">{rec_chips}{avance_chip}{sub_chip}</div>
             </div>
             <div class="g-need">{_fmt(fecha_nec)}</div>
@@ -1117,7 +1118,7 @@ def programacion_index():
         <input type="hidden" name="fi" value="{fi_str}">
         <input type="hidden" name="ff" value="{ff_str}">
         <div style="overflow-x:auto;">
-            <table class="tbl">
+            <table class="tbl tbl-compact">
                 <tr><th>OT</th><th>Obra</th><th>Título</th><th>% Cumplido</th><th>Desvío (si &lt; 100%)</th></tr>
                 {cumplimiento_rows_html if cumplimiento_rows_html else "<tr><td colspan='5' style='text-align:center;color:#64748b;'>No hay OTs programadas en la semana seleccionada.</td></tr>"}
             </table>
@@ -1252,7 +1253,7 @@ function _openPrintWin(title, sectionId) {{
     printWin.document.write('<html><head><meta charset="utf-8"><title>' + title + '</title>');
     var styles = document.querySelectorAll('style');
     styles.forEach(function(s) {{ printWin.document.write(s.outerHTML); }});
-    printWin.document.write('<style>@page{{size:A4 landscape;margin:10mm;}}body{{padding:0;background:#fff;}}button,form,.btn,.g-btn{{display:none!important;}}input,select{{pointer-events:none;border:1px solid #ddd;}}.g-track{{overflow:visible!important;}}.panel{{border:none!important;padding:0!important;}}h3{{display:none!important;}}</style>');
+    printWin.document.write('<style>@page{{size:A4 landscape;margin:10mm;}}body{{padding:0;background:#fff;}}button,form,.btn,.g-btn{{display:none!important;}}input,select{{pointer-events:none;border:1px solid #ddd;}}.g-track{{overflow:visible!important;}}.panel{{border:none!important;padding:0!important;}}h3{{display:none!important;}}*{{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}}</style>');
     printWin.document.write('</head><body style="padding:8px;font-family:Arial,sans-serif;">');
     printWin.document.write(_printHeader(title));
     printWin.document.write(section.innerHTML);
