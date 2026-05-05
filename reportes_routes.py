@@ -344,7 +344,9 @@ def _svg_gantt(prog_rows, ots, avance_by_ot=None):
             avance = avance_by_ot.get(ot_id, 0)
             if avance > 0:
                 bw_avance = max(bw * avance / 100, 2)
-                bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw_avance}" height="{ROW_H - 14}" fill="#4ade80" rx="3" opacity="0.95"/>'  # Verde oscuro para el avance
+                bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw_avance}" height="{ROW_H - 14}" fill="#22c55e" rx="3" opacity="0.9"/>'
+                # Texto del % de avance
+                bars += f'<text x="{x1 + bw_avance/2 - 8}" y="{y_base + 18}" font-size="9" fill="#fff" font-weight="700">{int(avance)}%</text>'
 
         if ot and ot[3]:
             try:
@@ -782,7 +784,9 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
   <div class="section-header">{h_gantt}</div>
   <div class="section-body" style="overflow-x:auto;padding:14px 12px">
     {gantt_svg}
-    <div style="font-size:10px;color:#9ca3af;margin-top:6px">Las barras representan la programación cargada en el módulo Programación. ◆ = Fecha de entrega comprometida. Barra verde = Avance de despacho.</div>
+    <div style="font-size:10px;color:#9ca3af;margin-top:8px;padding:0 12px">
+      <strong>Leyenda:</strong> Barras coloreadas = Programación de fabricación | ▧ Rayado gris = Subcontratos | ■ Verde = Avance despachado | ◆ Rojo = Fecha de entrega | — Roja punteada = Hoy
+    </div>
   </div>
 </div>"""
 
@@ -860,13 +864,13 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     firma_html = f"""
 <div class="firma-row">
   <div class="firma-box">
-    <img src="/firma-supervisor/DANIEL_HEREÑU.png" alt="Firma Daniel Hereñu" style="height:40px;object-fit:contain;margin-bottom:6px">
+    <img src="/firma-supervisor/002-Dani.png" alt="Firma Daniel Hereñu" style="height:50px;object-fit:contain;margin-bottom:8px;">
     <div class="firma-line"></div>
     <div class="firma-cargo">Jefe de Producción</div>
     <div class="firma-nombre">Daniel Hereñu</div>
   </div>
   <div class="firma-box">
-    <img src="/firma-supervisor/FIRMA_GABRIEL_IBARRA.png" alt="Firma Gabriel Ibarra" style="height:40px;object-fit:contain;margin-bottom:6px">
+    <img src="/firma-supervisor/003-Gabi.png" alt="Firma Gabriel Ibarra" style="height:50px;object-fit:contain;margin-bottom:8px;">
     <div class="firma-line"></div>
     <div class="firma-cargo">Ing. Responsable</div>
     <div class="firma-nombre">Gabriel Ibarra</div>
@@ -887,10 +891,10 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 <div class="report-wrap">
 
   <!-- Controles (no imprime) -->
-  <div class="no-print" style="display:flex;gap:10px;margin-bottom:12px;align-items:center">
-    <button onclick="window.print()" style="padding:8px 20px;background:#e36c09;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px">🖨 Imprimir / PDF</button>
-    <a href="/modulo/reportes" style="padding:8px 16px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;color:#374151;text-decoration:none">← Volver</a>
-    <span style="font-size:11px;color:#9ca3af">{tipo_label}</span>
+  <div class="no-print" style="display:flex;gap:10px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+    <button onclick="window.print()" style="padding:10px 24px;background:#e36c09;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px;transition:background 0.2s">🖨 Imprimir / PDF</button>
+    <a href="/modulo/reportes" style="padding:10px 20px;background:#f3f4f6;border:1px solid #d1d5db;border-radius:6px;font-size:13px;color:#374151;text-decoration:none;transition:background 0.2s">← Volver al selector</a>
+    <span style="font-size:11px;color:#9ca3af;margin-left:auto">{tipo_label}</span>
   </div>
 
   <!-- Encabezado -->
