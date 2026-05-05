@@ -113,80 +113,180 @@ def _fmt(d):
 # ── CSS compartido ─────────────────────────────────────────────────────────────
 _CSS = """<style>
 *{box-sizing:border-box;}
-body{font-family:Arial,sans-serif;background:#fff7ed;padding:14px;margin:0;color:#431407;}
-h2{color:#9a3412;border-bottom:3px solid #f97316;padding-bottom:10px;margin:0;}
-h3{color:#9a3412;margin:0 0 12px 0;}
-.hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap;}
-.btn{display:inline-block;background:#f97316;color:white;padding:9px 14px;text-decoration:none;border-radius:6px;font-weight:bold;border:none;cursor:pointer;font-size:14px;}
-.btn:hover{background:#ea580c;}
-.btn-sec{background:#fff;color:#9a3412;border:1px solid #fdba74;}
-.btn-sec:hover{background:#fff7ed;}
-.btn-danger{background:#dc2626;color:#fff;}
-.btn-danger:hover{background:#b91c1c;}
+body{
+    font-family:'Segoe UI',Arial,sans-serif;
+    background:
+        radial-gradient(circle at 10% 15%, #ffd8a8 0%, rgba(255,216,168,0) 36%),
+        radial-gradient(circle at 92% 10%, #ffb86b 0%, rgba(255,184,107,0) 32%),
+        linear-gradient(140deg, #fff4e6 0%, #ffe4c7 45%, #ffd0a8 100%);
+    min-height:100vh;
+    padding:16px;
+    margin:0;
+    color:#431407;
+}
+h2{
+    color:#7c2d12;
+    font-size:1.6em;
+    font-weight:800;
+    margin:0;
+    letter-spacing:-0.3px;
+}
+h3{
+    color:#9a3412;
+    margin:0 0 10px 0;
+    font-size:1.05em;
+    font-weight:700;
+    display:flex;
+    align-items:center;
+    gap:6px;
+}
+h3::before{
+    content:'';
+    display:inline-block;
+    width:4px;
+    height:18px;
+    background:linear-gradient(180deg,#f97316,#ea580c);
+    border-radius:3px;
+    flex-shrink:0;
+}
+h4{color:#9a3412;margin:0 0 8px 0;font-size:0.95em;font-weight:700;}
+
+/* ── Header bar ── */
+.hdr{
+    display:flex;justify-content:space-between;align-items:center;
+    margin-bottom:16px;gap:10px;flex-wrap:wrap;
+    background:linear-gradient(110deg,rgba(255,255,255,0.95),rgba(255,247,237,0.92));
+    border:1px solid #fdba74;
+    border-radius:14px;
+    padding:14px 18px;
+    box-shadow:0 8px 20px rgba(154,52,18,0.12);
+}
+.hdr-title-wrap{display:flex;align-items:center;gap:12px;}
+.hdr-chip{
+    display:inline-block;background:linear-gradient(135deg,#f97316,#ea580c);
+    color:#fff;font-weight:800;border-radius:999px;
+    padding:4px 12px;font-size:0.78em;letter-spacing:0.4px;
+    box-shadow:0 2px 6px rgba(234,88,12,0.35);
+}
+
+/* ── Buttons ── */
+.btn{
+    display:inline-block;
+    background:linear-gradient(135deg,#f97316,#ea580c);
+    color:white;padding:9px 15px;text-decoration:none;
+    border-radius:7px;font-weight:700;border:none;cursor:pointer;
+    font-size:13px;box-shadow:0 2px 6px rgba(234,88,12,0.3);
+    transition:filter .15s,transform .1s;
+}
+.btn:hover{filter:brightness(1.08);transform:translateY(-1px);}
+.btn-sec{
+    background:#fff;color:#9a3412;
+    border:1px solid #fdba74;
+    box-shadow:0 1px 3px rgba(154,52,18,0.08);
+}
+.btn-sec:hover{background:#fff7ed;filter:none;transform:none;}
+.btn-danger{background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;box-shadow:0 2px 5px rgba(185,28,28,0.3);}
+.btn-danger:hover{filter:brightness(1.06);}
 .btn-sm{padding:5px 10px;font-size:12px;}
-.panel{background:#fff;border:1px solid #fed7aa;border-radius:10px;padding:14px;margin-bottom:14px;}
+
+/* ── Panels ── */
+.panel{
+    background:linear-gradient(160deg,#ffffff,#fffdf9);
+    border:1px solid #fed7aa;
+    border-radius:12px;
+    padding:16px;
+    margin-bottom:16px;
+    box-shadow:0 4px 14px rgba(154,52,18,0.08);
+}
+
+/* ── KPIs ── */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px;}
+.kpi{
+    background:linear-gradient(150deg,#fff,#fff7ed);
+    border:1px solid #fed7aa;
+    border-radius:10px;
+    padding:14px 16px;
+    box-shadow:0 3px 10px rgba(154,52,18,0.09);
+    border-left:4px solid #f97316;
+    transition:transform .15s;
+}
+.kpi:hover{transform:translateY(-2px);}
+.kpi .t{font-size:11px;color:#9a3412;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px;}
+.kpi .v{font-size:26px;font-weight:800;color:#7c2d12;line-height:1;}
 
 /* ── Gantt ── */
-.gantt-wrap{width:100%;overflow-x:auto;border:1px solid #fed7aa;border-radius:8px;}
-.g-head{display:grid;grid-template-columns:260px 150px 1fr 80px;background:#f97316;color:#fff;border-radius:8px 8px 0 0;}
-.g-label-h,.g-act-h{padding:8px 10px;font-weight:700;font-size:12px;display:flex;align-items:center;}
-.g-timeline-h{position:relative;height:36px;overflow:hidden;}
+.gantt-wrap{width:100%;overflow-x:auto;border:1px solid #fed7aa;border-radius:10px;box-shadow:0 3px 10px rgba(154,52,18,0.07);}
+.g-head{display:grid;grid-template-columns:260px 150px 1fr 80px;background:linear-gradient(90deg,#f97316,#ea580c);color:#fff;border-radius:10px 10px 0 0;}
+.g-label-h,.g-act-h{padding:9px 10px;font-weight:700;font-size:12px;display:flex;align-items:center;}
+.g-timeline-h{position:relative;height:38px;overflow:hidden;}
 .g-months-strip{position:absolute;inset:0;}
 .g-month{position:absolute;top:0;height:50%;display:flex;align-items:center;padding:0 6px;font-size:10px;font-weight:700;border-left:1px solid rgba(255,255,255,0.35);white-space:nowrap;overflow:hidden;}
 .g-weeks-strip{position:absolute;left:0;right:0;top:50%;height:50%;display:flex;}
-.g-week-tick{position:absolute;top:0;height:100%;display:flex;align-items:center;font-size:9px;color:rgba(255,255,255,0.85);padding-left:3px;border-left:1px solid rgba(255,255,255,0.2);}
-.g-body{background:#fff;border-radius:0 0 8px 8px;}
-.g-row{display:grid;grid-template-columns:260px 150px 1fr 80px;border-bottom:1px solid #ffedd5;min-height:62px;}
+.g-week-tick{position:absolute;top:0;height:100%;display:flex;align-items:center;font-size:9px;color:rgba(255,255,255,0.88);padding-left:3px;border-left:1px solid rgba(255,255,255,0.2);}
+.g-body{background:#fff;border-radius:0 0 10px 10px;}
+.g-row{display:grid;grid-template-columns:260px 150px 1fr 80px;border-bottom:1px solid #ffedd5;min-height:64px;}
 .g-row:last-child{border-bottom:none;}
-.g-row:hover{background:#fffaf5;}
-.g-label{padding:8px 10px;display:flex;flex-direction:column;justify-content:center;gap:3px;}
-.g-need{padding:8px 10px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#7c2d12;background:#fffaf5;border-left:1px solid #ffedd5;border-right:1px solid #ffedd5;}
+.g-row:hover{background:#fffcf8;}
+.g-label{padding:9px 10px;display:flex;flex-direction:column;justify-content:center;gap:3px;}
+.g-need{padding:9px 10px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#7c2d12;background:#fffaf5;border-left:1px solid #ffedd5;border-right:1px solid #ffedd5;}
 .g-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle;flex-shrink:0;}
-.g-ot{font-weight:700;color:#431407;font-size:13px;}
+.g-ot{font-weight:800;color:#431407;font-size:13px;}
 .g-sub{font-size:11px;color:#9a3412;margin-left:14px;}
 .g-chips{display:flex;flex-wrap:wrap;gap:3px;margin-left:14px;margin-top:2px;}
-.g-chip{background:#ffedd5;color:#9a3412;border:1px solid #fdba74;border-radius:999px;padding:1px 7px;font-size:10px;}
-.g-track{position:relative;min-height:62px;}
+.g-chip{background:#ffedd5;color:#9a3412;border:1px solid #fdba74;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:600;}
+.g-track{position:relative;min-height:64px;}
 .g-gridline{position:absolute;top:0;bottom:0;width:1px;background:#ffedd5;z-index:0;pointer-events:none;}
-.g-today-line{position:absolute;top:0;bottom:0;width:2px;background:#ef4444;opacity:.7;z-index:2;pointer-events:none;}
-.g-today-line::after{content:"hoy";position:absolute;top:2px;left:4px;font-size:9px;color:#ef4444;white-space:nowrap;}
-.g-bar{position:absolute;top:50%;transform:translateY(-50%);height:28px;border-radius:6px;display:flex;align-items:center;font-size:10px;color:#fff;font-weight:700;padding:0 8px;white-space:nowrap;overflow:hidden;cursor:default;box-shadow:0 2px 5px rgba(0,0,0,.2);z-index:1;transition:filter .15s;}
+.g-today-line{position:absolute;top:0;bottom:0;width:2px;background:#ef4444;opacity:.75;z-index:2;pointer-events:none;}
+.g-today-line::after{content:"hoy";position:absolute;top:2px;left:4px;font-size:9px;color:#ef4444;white-space:nowrap;font-weight:700;}
+.g-bar{position:absolute;top:50%;transform:translateY(-50%);height:28px;border-radius:6px;display:flex;align-items:center;font-size:10px;color:#fff;font-weight:700;padding:0 8px;white-space:nowrap;overflow:hidden;cursor:default;box-shadow:0 2px 6px rgba(0,0,0,.22);z-index:1;transition:filter .15s;}
 .g-bar:hover{filter:brightness(1.14);}
 .g-out-range{font-size:11px;color:#9a3412;padding:4px 8px;font-style:italic;position:absolute;top:50%;transform:translateY(-50%);}
-.g-empty{padding:24px;text-align:center;color:#9a3412;font-style:italic;}
+.g-empty{padding:28px;text-align:center;color:#9a3412;font-style:italic;font-size:14px;}
 .g-act{display:flex;align-items:center;justify-content:center;gap:4px;padding:6px;}
-.g-btn{font-size:14px;padding:4px 7px;border-radius:5px;background:#fff;border:1px solid #ddd;text-decoration:none;cursor:pointer;color:#333;}
-.g-btn:hover{background:#ffedd5;border-color:#fdba74;}
-.g-btn-red{color:#dc2626;}
-.g-btn-red:hover{background:#fee2e2;border-color:#fca5a5;}
+.g-btn{font-size:14px;padding:4px 7px;border-radius:5px;background:#fff;border:1px solid #fdba74;text-decoration:none;cursor:pointer;color:#9a3412;}
+.g-btn:hover{background:#ffedd5;border-color:#f97316;}
+.g-btn-red{color:#dc2626;border-color:#fca5a5;}
+.g-btn-red:hover{background:#fee2e2;border-color:#f87171;}
 
 /* ── Table ── */
-.tbl{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;}
-.tbl th,.tbl td{padding:10px;border-bottom:1px solid #ffedd5;text-align:left;font-size:13px;}
-.tbl th{background:#f97316;color:#fff;font-weight:700;}
-.tbl tr:hover{background:#fff7ed;}
+.tbl{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(154,52,18,0.07);}
+.tbl th,.tbl td{padding:11px 10px;border-bottom:1px solid #ffedd5;text-align:left;font-size:13px;}
+.tbl th{background:linear-gradient(90deg,#f97316,#ea580c);color:#fff;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:0.3px;}
+.tbl tr:last-child td{border-bottom:none;}
+.tbl tr:hover td{background:#fff7ed;}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle;}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px;}
-.kpi{background:#fff;border:1px solid #fed7aa;border-radius:8px;padding:12px;}
-.kpi .t{font-size:12px;color:#9a3412;}
-.kpi .v{font-size:24px;font-weight:800;color:#7c2d12;}
 
 /* ── Form ── */
-.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
 .form-group{display:flex;flex-direction:column;gap:5px;}
 .form-group.full{grid-column:1/-1;}
 label{font-size:13px;font-weight:700;color:#9a3412;}
-input[type=text],input[type=date],input[type=number],select,textarea{padding:9px 12px;border:1px solid #fdba74;border-radius:6px;background:#fffaf5;font-size:14px;width:100%;}
-input:focus,select:focus,textarea:focus{outline:none;border-color:#f97316;background:#fff;}
+input[type=text],input[type=date],input[type=number],select,textarea{
+    padding:9px 12px;border:1px solid #fdba74;border-radius:7px;
+    background:#fffaf5;font-size:14px;width:100%;
+    transition:border-color .15s,background .15s;
+}
+input:focus,select:focus,textarea:focus{outline:none;border-color:#f97316;background:#fff;box-shadow:0 0 0 3px rgba(249,115,22,0.12);}
 .rec-table{width:100%;border-collapse:collapse;margin-top:8px;}
-.rec-table th,.rec-table td{padding:7px 10px;border-bottom:1px solid #ffedd5;font-size:13px;}
+.rec-table th,.rec-table td{padding:8px 10px;border-bottom:1px solid #ffedd5;font-size:13px;}
 .rec-table th{background:#fff7ed;color:#9a3412;font-weight:700;}
-.err{background:#fee2e2;border:1px solid #fecaca;color:#991b1b;padding:10px;border-radius:6px;margin-bottom:10px;}
-.ok{background:#dcfce7;border:1px solid #86efac;color:#166534;padding:10px;border-radius:6px;margin-bottom:10px;}
+.err{background:#fee2e2;border:1px solid #fecaca;color:#991b1b;padding:10px;border-radius:8px;margin-bottom:10px;}
+.ok{background:#dcfce7;border:1px solid #86efac;color:#166534;padding:10px;border-radius:8px;margin-bottom:10px;}
+
+/* ── Section divider chip ── */
+.section-chip{
+    display:inline-flex;align-items:center;gap:6px;
+    background:linear-gradient(135deg,#fff7ed,#ffedd5);
+    border:1px solid #fdba74;border-radius:999px;
+    padding:4px 12px;font-size:12px;font-weight:700;color:#9a3412;
+    box-shadow:0 1px 4px rgba(154,52,18,0.1);
+}
 
 @media(max-width:800px){
     .g-head,.g-row{grid-template-columns:180px 120px 1fr 52px;}
     .form-grid{grid-template-columns:1fr;}
+    .hdr{padding:12px;}
+    .kpi .v{font-size:22px;}
 }
 </style>"""
 
@@ -462,16 +562,16 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
     col_grid = "260px 150px 1fr 80px"
     footer_html = f"""
     <div style="border-top:2px solid #f97316;">
-        <div style="display:grid;grid-template-columns:{col_grid};background:#eff6ff;min-height:32px;border-bottom:1px solid #bfdbfe;">
-            <div style="padding:0 10px;font-size:11px;font-weight:700;color:#1e40af;display:flex;align-items:center;gap:5px;white-space:nowrap;">
+        <div style="display:grid;grid-template-columns:{col_grid};background:#fff7ed;min-height:32px;border-bottom:1px solid #fed7aa;">
+            <div style="padding:0 10px;font-size:11px;font-weight:700;color:#9a3412;display:flex;align-items:center;gap:5px;white-space:nowrap;">
                 📊 Rec. asignados / sem.
             </div>
             <div></div>
             <div style="position:relative;height:32px;">{assigned_cells}</div>
             <div></div>
         </div>
-        <div style="display:grid;grid-template-columns:{col_grid};background:#f0fdf4;min-height:32px;">
-            <div style="padding:0 10px;font-size:11px;font-weight:700;color:#15803d;display:flex;align-items:center;gap:5px;white-space:nowrap;">
+        <div style="display:grid;grid-template-columns:{col_grid};background:#fff7ed;min-height:32px;">
+            <div style="padding:0 10px;font-size:11px;font-weight:700;color:#9a3412;display:flex;align-items:center;gap:5px;white-space:nowrap;">
                 👷 Operarios disponibles
             </div>
             <div></div>
@@ -843,21 +943,21 @@ def programacion_index():
         line_sem = " ".join(svg_points_sem)
         line_ac = " ".join(svg_points_ac)
         chart_svg = f"""
-        <svg viewBox="0 0 560 220" style="width:100%;height:auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px;">
-            <line x1="30" y1="40" x2="30" y2="190" stroke="#cbd5e1" stroke-width="1"/>
-            <line x1="30" y1="190" x2="550" y2="190" stroke="#cbd5e1" stroke-width="1"/>
-            <text x="6" y="45" font-size="10" fill="#6b7280">100%</text>
-            <text x="10" y="120" font-size="10" fill="#6b7280">50%</text>
-            <text x="14" y="194" font-size="10" fill="#6b7280">0%</text>
+        <svg viewBox="0 0 560 220" style="width:100%;height:auto;background:#fff;border:1px solid #ffedd5;border-radius:8px;">
+            <line x1="30" y1="40" x2="30" y2="190" stroke="#fed7aa" stroke-width="1"/>
+            <line x1="30" y1="190" x2="550" y2="190" stroke="#fed7aa" stroke-width="1"/>
+            <text x="6" y="45" font-size="10" fill="#9a3412">100%</text>
+            <text x="10" y="120" font-size="10" fill="#9a3412">50%</text>
+            <text x="14" y="194" font-size="10" fill="#9a3412">0%</text>
             <polyline fill="none" stroke="#f97316" stroke-width="2.5" points="{line_sem}"/>
-            <polyline fill="none" stroke="#2563eb" stroke-width="2.5" points="{line_ac}"/>
+            <polyline fill="none" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="6 3" points="{line_ac}"/>
             {svg_paths}
-            <rect x="340" y="14" width="12" height="3" fill="#f97316"/><text x="356" y="18" font-size="10" fill="#7c2d12">Desvío semanal %</text>
-            <rect x="460" y="14" width="12" height="3" fill="#2563eb"/><text x="476" y="18" font-size="10" fill="#1e3a8a">Desvío acumulado %</text>
+            <rect x="310" y="12" width="12" height="3" fill="#f97316" rx="1"/><text x="326" y="17" font-size="10" fill="#9a3412" font-weight="700">Desv\u00edo semanal</text>
+            <rect x="430" y="12" width="12" height="3" fill="#dc2626" rx="1"/><text x="446" y="17" font-size="10" fill="#7c2d12" font-weight="700">Desv\u00edo acumulado</text>
         </svg>
         """
     else:
-        chart_svg = "<div style='color:#64748b;font-style:italic;'>Sin datos suficientes para graficar.</div>"
+        chart_svg = "<div style='color:#9a3412;font-style:italic;padding:10px;'>Sin datos suficientes para graficar.</div>"
 
     operarios_count = db.execute(
         """
@@ -952,9 +1052,9 @@ def programacion_index():
     cumpl_kpi_ac = f"{pct_acumulado:.1f}%" if pct_acumulado is not None else "—"
     cumplimiento_panel = f"""
 <div class="panel" id="cumplimiento-section">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <h3 style="margin:0;">Cumplimiento de objetivos semanales</h3>
-        <button onclick="printCumplimiento()" class="btn btn-sec btn-sm">🖨️ Imprimir Cumplimiento</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h3>Cumplimiento de objetivos semanales</h3>
+        <button onclick="printCumplimiento()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>
     </div>
     <form method="get" action="/modulo/programacion" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
         <label>Semana (lunes):</label>
@@ -987,11 +1087,11 @@ def programacion_index():
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;">
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">
-            <h4 style="margin:0 0 8px 0;color:#1e3a8a;">% de desvíos acumulados por semana</h4>
+            <h4>% de desvíos acumulados por semana</h4>
             {chart_svg}
         </div>
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">
-            <h4 style="margin:0 0 8px 0;color:#4338ca;">Distribución acumulada de causas de desvío</h4>
+            <h4>Distribución acumulada de causas de desvío</h4>
             <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
                 <div style="flex-shrink:0;">{donut_svg}</div>
                 <div style="flex:1;min-width:160px;">{desv_legend}</div>
@@ -1064,13 +1164,13 @@ var _LOGO_URI = '{_logo_b64}';
 var _SEMANA_NUM = {semana_num};
 function _printHeader(title) {{
     var logoHtml = _LOGO_URI ? '<img src="' + _LOGO_URI + '" style="height:54px;display:block;">' : '';
-    var semanaTag = '<div style="display:inline-block;margin-top:4px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700;color:#1e40af;">Semana de control N\u00b0' + _SEMANA_NUM + '</div>';
-    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:0 0 10px 0;border-bottom:2px solid #6366f1;margin-bottom:14px;">'
+    var semanaTag = '<div style="display:inline-block;margin-top:4px;background:#fff7ed;border:1px solid #fdba74;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700;color:#9a3412;">Semana de control N\u00b0' + _SEMANA_NUM + '</div>';
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:0 0 12px 0;border-bottom:3px solid #f97316;margin-bottom:16px;">'
       + '<div style="display:flex;align-items:center;gap:12px;">'
         + logoHtml
         + '<div>'
-          + '<div style="font-size:20px;font-weight:800;color:#1e3a8a;">' + title + '</div>'
-          + '<div style="font-size:13px;color:#475569;font-style:italic;margin-bottom:4px;">Programaci\u00f3n \u00b7 Fabricaci\u00f3n Estructuras Met\u00e1licas</div>'
+          + '<div style="font-size:20px;font-weight:800;color:#7c2d12;">' + title + '</div>'
+          + '<div style="font-size:13px;color:#9a3412;font-style:italic;margin-bottom:4px;">Programaci\u00f3n \u00b7 Fabricaci\u00f3n Estructuras Met\u00e1licas</div>'
           + semanaTag
         + '</div>'
       + '</div>'
@@ -1116,7 +1216,10 @@ function printCumplimiento() {{
 </head>
 <body>
 <div class="hdr">
-    <h2>📅 Programación de Fabricación</h2>
+    <div class="hdr-title-wrap">
+        <span class="hdr-chip">📆 Planificación</span>
+        <h2>Programación de Fabricación</h2>
+    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <a href="/modulo/programacion/nueva" class="btn">➕ Nueva Programación</a>
         <a href="/" class="btn btn-sec">⬅️ Volver</a>
@@ -1145,14 +1248,14 @@ function printCumplimiento() {{
 </div>
 
 <div class="panel" id="gantt-section">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <h3 style="margin:0;">Diagrama de Gantt</h3>
+            <h3>Diagrama de Gantt</h3>
             <a href="/modulo/programacion?vista=trimestral{obra_qs}" class="btn btn-sm" style="{btn_trimestral_active}">📊 Trimestral</a>
             <a href="/modulo/programacion?vista=mensual{obra_qs}" class="btn btn-sm" style="{btn_mensual_active}">📅 Mensual</a>
             <a href="/modulo/programacion?vista=semana{obra_qs}" class="btn btn-sm" style="{btn_semana_active}">📆 Semana</a>
         </div>
-        <button onclick="printGantt()" class="btn btn-sec btn-sm">🖨️ Imprimir Gantt</button>
+        <button onclick="printGantt()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>
     </div>
     {gantt}
 </div>
@@ -1161,6 +1264,7 @@ function printCumplimiento() {{
 
 <div class="panel">
     <h3>Detalle — {len(entradas)} programaciones · {total_hs:.0f} hs planificadas totales</h3>
+    <div style="margin:-4px 0 12px 22px;"><span class="section-chip">📊 Tabla resumen</span></div>
     {tabla_html}
 </div>
 
