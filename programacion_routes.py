@@ -1,4 +1,6 @@
 import html as html_lib
+import os as _os
+import base64 as _base64
 from datetime import datetime, timedelta, date
 from calendar import monthrange
 from flask import Blueprint, request, redirect
@@ -670,6 +672,15 @@ def programacion_index():
     semana_sel = _parse_date(request.args.get("semana")) or _lunes_semana(today)
     semana_sel = _lunes_semana(semana_sel)
     semana_fin = semana_sel + timedelta(days=6)
+    semana_num = semana_sel.isocalendar()[1]
+
+    # Logo embebido como base64 para que funcione en ventanas de impresión
+    _logo_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "LOGO.png")
+    try:
+        with open(_logo_path, "rb") as _lf:
+            _logo_b64 = "data:image/png;base64," + _base64.b64encode(_lf.read()).decode()
+    except Exception:
+        _logo_b64 = ""
 
     cumplimiento_rows = db.execute(
         """
@@ -1049,15 +1060,18 @@ def programacion_index():
 <head><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Programación de Fabricación</title>{_CSS}
 <script>
+var _LOGO_URI = '{_logo_b64}';
+var _SEMANA_NUM = {semana_num};
 function _printHeader(title) {{
-    var origin = window.location.origin;
-    var logoHtml = '<img src="' + origin + '/logo-a3" style="height:54px;display:block;">';
+    var logoHtml = _LOGO_URI ? '<img src="' + _LOGO_URI + '" style="height:54px;display:block;">' : '';
+    var semanaTag = '<div style="display:inline-block;margin-top:4px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700;color:#1e40af;">Semana de control N\u00b0' + _SEMANA_NUM + '</div>';
     return '<div style="display:flex;justify-content:space-between;align-items:center;padding:0 0 10px 0;border-bottom:2px solid #6366f1;margin-bottom:14px;">'
       + '<div style="display:flex;align-items:center;gap:12px;">'
         + logoHtml
         + '<div>'
           + '<div style="font-size:20px;font-weight:800;color:#1e3a8a;">' + title + '</div>'
-          + '<div style="font-size:13px;color:#475569;font-style:italic;">Programaci\u00f3n \u00b7 Fabricaci\u00f3n Estructuras Met\u00e1licas</div>'
+          + '<div style="font-size:13px;color:#475569;font-style:italic;margin-bottom:4px;">Programaci\u00f3n \u00b7 Fabricaci\u00f3n Estructuras Met\u00e1licas</div>'
+          + semanaTag
         + '</div>'
       + '</div>'
       + '<div style="display:flex;gap:8px;align-items:center;">'
@@ -1092,11 +1106,11 @@ function _openPrintWin(title, sectionId) {{
 }}
 function printGantt() {{
     var pw = _openPrintWin('Programaci\u00f3n de Fabricaci\u00f3n', 'gantt-section');
-    if (pw) setTimeout(function(){{ pw.print(); }}, 700);
+    if (pw) setTimeout(function(){{ pw.print(); }}, 800);
 }}
 function printCumplimiento() {{
     var pw = _openPrintWin('Cumplimiento de Objetivos Semanales', 'cumplimiento-section');
-    if (pw) setTimeout(function(){{ pw.print(); }}, 700);
+    if (pw) setTimeout(function(){{ pw.print(); }}, 800);
 }}
 </script>
 </head>
