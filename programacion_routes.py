@@ -94,8 +94,18 @@ def _svg_donut_chart(stats, total, size=210):
 def _parse_date(s):
     if not s:
         return None
+    if isinstance(s, date):
+        return s if not isinstance(s, datetime) else s.date()
+    txt = str(s).strip()
+    if not txt:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            return datetime.strptime(txt, fmt).date()
+        except Exception:
+            pass
     try:
-        return datetime.strptime(str(s).strip(), "%Y-%m-%d").date()
+        return datetime.fromisoformat(txt.replace("Z", "+00:00")).date()
     except Exception:
         return None
 
@@ -791,7 +801,10 @@ def programacion_index():
     ).fetchall()
     cumpl_idx = {}
     for r in cumplimiento_rows:
-        cumpl_idx[(int(r[0]), str(r[1]))] = (float(r[2] or 0), str(r[3] or ""))
+        sem_r = _parse_date(r[1])
+        if not sem_r:
+            continue
+        cumpl_idx[(int(r[0]), sem_r.strftime("%Y-%m-%d"))] = (float(r[2] or 0), str(r[3] or ""))
 
     # Cumplimiento: mostrar OTs con actividad en la semana seleccionada O con avance registrado.
     ots_activas_cumpl = db.execute("""
@@ -914,26 +927,41 @@ def programacion_index():
             continue
         key = sem.strftime("%Y-%m-%d")
         if key not in week_map:
-            week_map[key] = {"tot": 0, "desv": 0}
+            week_map[key] = {"tot": 0, "desv": 0, "pct_sum": 0.0}
         week_map[key]["tot"] += 1
+        week_map[key]["pct_sum"] += float(r[2] or 0)
         if float(r[2] or 0) < 100:
             week_map[key]["desv"] += 1
 
     weeks_sorted = sorted(week_map.keys())
+    weeks_rows_html = ""
     svg_paths = ""
     svg_points_sem = []
     svg_points_ac = []
     acum_tot = 0
-    acum_desv = 0
+    acum_pct_sum = 0.0
     if weeks_sorted:
         max_x = max(1, len(weeks_sorted) - 1)
         for i, wk in enumerate(weeks_sorted):
             dato = week_map[wk]
-            sem_pct = (dato["desv"] * 100.0 / dato["tot"]) if dato["tot"] else 0.0
+            # % cumplimiento promedio de esa semana
+            sem_pct = (dato["pct_sum"] / dato["tot"]) if dato["tot"] else 100.0
             acum_tot += dato["tot"]
-            acum_desv += dato["desv"]
-            ac_pct = (acum_desv * 100.0 / acum_tot) if acum_tot else 0.0
-            x = 30 + (i * 520.0 / max_x)
+            acum_pct_sum += dato["pct_sum"]
+            # % cumplimiento acumulado (promedio de todas las semanas hasta este punto)
+            ac_pct = (acum_pct_sum / acum_tot) if acum_tot else 100.0
+            desv_pct = (dato["desv"] * 100.0 / dato["tot"]) if dato["tot"] else 0.0
+            weeks_rows_html += (
+                f"<tr>"
+                f"<td>{_fmt(_parse_date(wk))}</td>"
+                f"<td style='text-align:center;'>{dato['tot']}</td>"
+                f"<td style='text-align:center;font-weight:700;color:#16a34a;'>{sem_pct:.1f}%</td>"
+                f"<td style='text-align:center;color:#9a3412;'>{dato['desv']} ({desv_pct:.0f}%)</td>"
+                f"<td style='text-align:center;font-weight:700;color:#7c2d12;'>{ac_pct:.1f}%</td>"
+                f"</tr>"
+            )
+            x = 30 + (i * 520.0 / max_x) if max_x > 0 else 30 + i * 520.0
+            # 100% -> y=40, 0% -> y=190  (range 150px = 100%)
             y_sem = 190 - (sem_pct * 1.5)
             y_ac = 190 - (ac_pct * 1.5)
             svg_points_sem.append(f"{x:.1f},{y_sem:.1f}")
@@ -945,19 +973,21 @@ def programacion_index():
         chart_svg = f"""
         <svg viewBox="0 0 560 220" style="width:100%;height:auto;background:#fff;border:1px solid #ffedd5;border-radius:8px;">
             <line x1="30" y1="40" x2="30" y2="190" stroke="#fed7aa" stroke-width="1"/>
+            <line x1="30" y1="115" x2="550" y2="115" stroke="#e2e8f0" stroke-width="0.8" stroke-dasharray="3 3"/>
             <line x1="30" y1="190" x2="550" y2="190" stroke="#fed7aa" stroke-width="1"/>
             <text x="6" y="45" font-size="10" fill="#9a3412">100%</text>
             <text x="10" y="120" font-size="10" fill="#9a3412">50%</text>
             <text x="14" y="194" font-size="10" fill="#9a3412">0%</text>
-            <polyline fill="none" stroke="#f97316" stroke-width="2.5" points="{line_sem}"/>
-            <polyline fill="none" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="6 3" points="{line_ac}"/>
+            <polyline fill="none" stroke="#16a34a" stroke-width="2.5" points="{line_sem}"/>
+            <polyline fill="none" stroke="#f97316" stroke-width="2.5" stroke-dasharray="6 3" points="{line_ac}"/>
             {svg_paths}
-            <rect x="310" y="12" width="12" height="3" fill="#f97316" rx="1"/><text x="326" y="17" font-size="10" fill="#9a3412" font-weight="700">Desv\u00edo semanal</text>
-            <rect x="430" y="12" width="12" height="3" fill="#dc2626" rx="1"/><text x="446" y="17" font-size="10" fill="#7c2d12" font-weight="700">Desv\u00edo acumulado</text>
+            <rect x="250" y="10" width="12" height="3" fill="#16a34a" rx="1"/><text x="266" y="17" font-size="10" fill="#166534" font-weight="700">Cumplimiento semanal</text>
+            <rect x="400" y="10" width="12" height="3" fill="#f97316" rx="1"/><text x="416" y="17" font-size="10" fill="#9a3412" font-weight="700">Cumplimiento acumulado</text>
         </svg>
         """
     else:
-        chart_svg = "<div style='color:#9a3412;font-style:italic;padding:10px;'>Sin datos suficientes para graficar.</div>"
+        chart_svg = "<div style='color:#9a3412;font-style:italic;padding:10px;'>Sin datos guardados todav\u00eda. Carg\u00e1 un cumplimiento y hacé click en \"Guardar\".</div>"
+        weeks_rows_html = "<tr><td colspan='5' style='text-align:center;color:#64748b;'>Sin semanas guardadas todav\u00eda.</td></tr>"
 
     operarios_count = db.execute(
         """
@@ -1087,8 +1117,25 @@ def programacion_index():
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;">
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">
-            <h4>% de desvíos acumulados por semana</h4>
+            <h4>% Cumplimiento promedio por semana</h4>
+            <div style="font-size:12px;color:#475569;margin-bottom:8px;line-height:1.4;">
+                <b style='color:#166534;'>&#9644; Verde</b>: promedio de % cumplido de esa semana.
+                <b style='color:#ea580c;'>&#9644; Naranja punteado</b>: promedio acumulado desde la primera semana guardada.
+                Se actualiza automáticamente al guardar cada semana.
+            </div>
             {chart_svg}
+            <div style="margin-top:10px;overflow-x:auto;">
+                <table class="tbl" style="font-size:12px;">
+                    <tr>
+                        <th>Semana</th>
+                        <th>OTs</th>
+                        <th>% Cumplido semana</th>
+                        <th>Con desv\u00edo</th>
+                        <th>% Cumplido acum.</th>
+                    </tr>
+                    {weeks_rows_html}
+                </table>
+            </div>
         </div>
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">
             <h4>Distribución acumulada de causas de desvío</h4>
