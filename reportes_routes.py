@@ -223,7 +223,12 @@ def _collect(db, obra, year, week, week_start, week_end):
     for ot_id in ot_ids:
         total = total_by_ot.get(ot_id, 0)
         n_des = appr[ot_id]["DESPACHO"]
-        avance_pct = _pct(n_des, total) if total else 0
+        # Avance ponderado: 25% de crédito por cada etapa aprobada
+        n_arm = appr[ot_id]["ARMADO"]
+        n_sol = appr[ot_id]["SOLDADURA"]
+        n_pin = appr[ot_id]["PINTURA"]
+        credito = n_arm + n_sol + n_pin + n_des
+        avance_pct = round(credito / (4 * total) * 100) if total else 0
         avance_by_ot[ot_id] = avance_pct
 
     return dict(
@@ -336,18 +341,25 @@ def _svg_gantt(prog_rows, ots, avance_by_ot=None):
             x1 = day_x(fi)
             x2 = day_x(ff)
             bw = max(x2 - x1, 6)
-            # Barra de programación
+            # Barra de programación (parte superior de la fila)
+            bar_y   = y_base + 4
+            bar_h   = 13
+            prog_y  = y_base + 19  # barra de avance debajo
+            prog_h  = 7
             if es_subcontrato:
-                bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw}" height="{ROW_H - 14}" fill="url(#subhatch)" rx="3" stroke="#94a3b8" stroke-width="1"/>'
+                bars += f'<rect x="{x1}" y="{bar_y}" width="{bw}" height="{bar_h}" fill="url(#subhatch)" rx="3" stroke="#94a3b8" stroke-width="1"/>'
             else:
-                bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw}" height="{ROW_H - 14}" fill="{clr}" rx="3" opacity="0.82"/>'
-            
-            # Barra de avance (progreso) sobre la barra de programación
+                bars += f'<rect x="{x1}" y="{bar_y}" width="{bw}" height="{bar_h}" fill="{clr}" rx="3" opacity="0.82"/>'
+
+            # Barra de avance debajo de la barra de programación
             avance = avance_by_ot.get(ot_id, 0)
+            # Track gris
+            bars += f'<rect x="{x1}" y="{prog_y}" width="{bw}" height="{prog_h}" fill="#e5e7eb" rx="2"/>'
             if avance > 0:
-                bw_avance = max(bw * avance / 100, 4)
-                bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw_avance}" height="{ROW_H - 14}" fill="#22c55e" rx="3" opacity="0.9"/>'
-                bars += f'<text x="{x1 + min(bw_avance/2, 30)}" y="{y_base + 19}" text-anchor="middle" font-size="9" fill="#fff" font-weight="700">{int(avance)}%</text>'
+                bw_avance = max(int(bw * avance / 100), 4)
+                bars += f'<rect x="{x1}" y="{prog_y}" width="{bw_avance}" height="{prog_h}" fill="#22c55e" rx="2"/>'
+                if bw_avance >= 18:
+                    bars += f'<text x="{x1 + bw_avance/2}" y="{prog_y + prog_h - 1}" text-anchor="middle" font-size="7" fill="#fff" font-weight="700">{int(avance)}%</text>'
 
         if ot and ot[3]:
             try:
@@ -737,6 +749,8 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         pct_sol = _pct(n_sol, total)
         pct_pin = _pct(n_pin, total)
         pct_des = _pct(n_des, total)
+        # Avance total ponderado (25% por etapa)
+        pct_avance = round((n_arm + n_sol + n_pin + n_des) / (4 * total) * 100) if total else 0
         pri_lbl, pri_col, pri_bg = _priority(fe)
         fe_fmt  = _fd(fe)
 
@@ -751,6 +765,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         else:
             est_cls, est_lbl = "none", "Sin iniciar"
 
+        avance_color = '#22c55e' if pct_avance >= 75 else ('#f97316' if pct_avance >= 40 else '#ef4444')
         crono_rows += f"""<tr>
       <td><span class="pri-badge" style="background:{pri_bg};color:{pri_col}">{pri_lbl}</span></td>
       <td class="tc-ot">{ot_id}</td>
@@ -759,6 +774,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
       <td>{mb(pct_sol, '#f97316')}</td>
       <td>{mb(pct_pin, '#22c55e')}</td>
       <td>{mb(pct_des, '#a855f7')}</td>
+      <td style="text-align:center;font-weight:700;color:{avance_color}">{pct_avance}%</td>
       <td class="tc-fe">{fe_fmt}</td>
       <td><span class="estado-badge {est_cls}">{est_lbl}</span></td>
     </tr>"""
@@ -771,7 +787,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     <thead>
       <tr><th>Prior.</th><th>OT</th><th>Título</th><th>Pzas</th>
           <th>Soldadura %</th><th>Pintura %</th><th>Despacho %</th>
-          <th>F. Entrega</th><th>Estado</th></tr>
+          <th>Avance</th><th>F. Entrega</th><th>Estado</th></tr>
     </thead>
     <tbody>{crono_rows}</tbody>
   </table>
@@ -786,7 +802,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
   <div class="section-body" style="overflow-x:auto;padding:14px 12px">
     {gantt_svg}
     <div style="font-size:10px;color:#9ca3af;margin-top:8px;padding:0 12px">
-      <strong>Leyenda:</strong> Barras coloreadas = Programación de fabricación | ▧ Rayado gris = Subcontratos | ■ Verde = Avance despachado | ◆ Rojo = Fecha de entrega | — Roja punteada = Hoy
+      <strong>Leyenda:</strong> Barras coloreadas = Programación de fabricación | ▧ Rayado gris = Subcontratos | ▬ Verde (debajo) = % Avance total OT | ◆ Rojo = Fecha de entrega | — Roja punteada = Hoy
     </div>
   </div>
 </div>"""
