@@ -318,12 +318,16 @@ def _svg_gantt(prog_rows, ots, avance_by_ot=None):
         grid += f'<text x="{tx+2}" y="{HEADER_H-6}" font-size="8" fill="#ef4444" font-weight="700">HOY</text>'
 
     bars = ""
+    # Definir patrón rayado para subcontratos en <defs> del SVG
+    defs = '<defs><pattern id="subhatch" x="0" y="0" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#e2e8f0"/><line x1="0" y1="0" x2="8" y2="8" stroke="#94a3b8" stroke-width="1.5"/></pattern></defs>'
+
     for i, ot_id in enumerate(ot_order):
         y_base = HEADER_H + i * ROW_H
         ot     = ot_info.get(ot_id)
         titulo = _e(ot[1])[:28] if ot else f"OT {ot_id}"
         clr    = COLORS[i % len(COLORS)]
-        es_subcontrato = "SUB" in (titulo.upper() if titulo else "")
+        # Subcontrato = hs_previstas == 0 (igual que en módulo Programación y OTs)
+        es_subcontrato = float(ot[5] or 0) == 0 if ot else False
 
         bars += (f'<text x="4" y="{y_base + 13}" font-size="10" fill="#e36c09" font-weight="700">OT {ot_id}</text>'
                  f'<text x="4" y="{y_base + 24}" font-size="8" fill="#6b7280">{titulo}</text>')
@@ -334,19 +338,16 @@ def _svg_gantt(prog_rows, ots, avance_by_ot=None):
             bw = max(x2 - x1, 6)
             # Barra de programación
             if es_subcontrato:
-                # Patrón gris rayado para subcontratos
-                bars += f'<defs><pattern id="subhatch{ot_id}" x="4" y="4" width="8" height="8" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="8" y2="8" stroke="#9ca3af" stroke-width="1.5"/></pattern></defs>'
-                bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw}" height="{ROW_H - 14}" fill="url(#subhatch{ot_id})" rx="3" opacity="0.9" stroke="#9ca3af" stroke-width="1"/>'
+                bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw}" height="{ROW_H - 14}" fill="url(#subhatch)" rx="3" stroke="#94a3b8" stroke-width="1"/>'
             else:
                 bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw}" height="{ROW_H - 14}" fill="{clr}" rx="3" opacity="0.82"/>'
             
-            # Barra de avance (progreso) dentro de la barra de programación
+            # Barra de avance (progreso) sobre la barra de programación
             avance = avance_by_ot.get(ot_id, 0)
             if avance > 0:
-                bw_avance = max(bw * avance / 100, 2)
+                bw_avance = max(bw * avance / 100, 4)
                 bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw_avance}" height="{ROW_H - 14}" fill="#22c55e" rx="3" opacity="0.9"/>'
-                # Texto del % de avance
-                bars += f'<text x="{x1 + bw_avance/2 - 8}" y="{y_base + 18}" font-size="9" fill="#fff" font-weight="700">{int(avance)}%</text>'
+                bars += f'<text x="{x1 + min(bw_avance/2, 30)}" y="{y_base + 19}" text-anchor="middle" font-size="9" fill="#fff" font-weight="700">{int(avance)}%</text>'
 
         if ot and ot[3]:
             try:
@@ -369,7 +370,7 @@ def _svg_gantt(prog_rows, ots, avance_by_ot=None):
 
     return (f'<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" '
             f'style="width:100%;display:block;overflow:visible">'
-            f'{grid}{bars}{legend}</svg>')
+            f'{defs}{grid}{bars}{legend}</svg>')
 
 
 # ── SVG gráfico de barras semanal ─────────────────────────────────────────────
@@ -892,8 +893,8 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 
   <!-- Controles (no imprime) -->
   <div class="no-print" style="display:flex;gap:10px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
-    <button onclick="window.print()" style="padding:10px 24px;background:#e36c09;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px;transition:background 0.2s">🖨 Imprimir / PDF</button>
-    <a href="/modulo/reportes" style="padding:10px 20px;background:#f3f4f6;border:1px solid #d1d5db;border-radius:6px;font-size:13px;color:#374151;text-decoration:none;transition:background 0.2s">← Volver al selector</a>
+    <button onclick="window.print()" style="padding:8px 20px;background:#e36c09;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px">🖨 Imprimir / PDF</button>
+    <a href="/modulo/reportes" style="display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:#e36c09;color:#fff;border-radius:8px;font-size:13px;font-weight:700;text-decoration:none">← Volver</a>
     <span style="font-size:11px;color:#9ca3af;margin-left:auto">{tipo_label}</span>
   </div>
 
