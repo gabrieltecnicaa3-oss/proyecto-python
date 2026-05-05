@@ -235,7 +235,34 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
 
             # ── Barra avance real (abajo) ──
             if es_sub:
-                avance_bar = ""  # subcontrato no tiene barra de avance propio
+                # Subcontrato: mostrar avance como barra ámbar si > 0
+                avance_color_sub = "#f59e0b"
+                if avance > 0:
+                    avance_width = width * avance / 100
+                    if avance_width > 4:
+                        inner_lbl = f"{avance}%"
+                        outer_lbl = ""
+                    else:
+                        inner_lbl = ""
+                        right_pos = left + avance_width
+                        outer_lbl = (
+                            f'<div style="position:absolute;left:{right_pos:.2f}%;top:58%;'
+                            f'font-size:9px;font-weight:700;color:{avance_color_sub};'
+                            f'white-space:nowrap;padding-left:3px;line-height:14px;">{avance}%</div>'
+                        )
+                    avance_bar = (
+                        f'<div class="g-bar" style="left:{left:.2f}%;width:{avance_width:.2f}%;top:58%;height:14px;'
+                        f'background:{avance_color_sub};border-radius:4px;opacity:0.9;" '
+                        f'title="Avance real: {avance}%">{inner_lbl}</div>'
+                        + outer_lbl
+                    )
+                else:
+                    outer_lbl = (
+                        f'<div style="position:absolute;left:{left:.2f}%;top:58%;'
+                        f'font-size:9px;font-weight:700;color:#94a3b8;'
+                        f'white-space:nowrap;padding-left:3px;line-height:14px;">0%</div>'
+                    )
+                    avance_bar = outer_lbl
             else:
                 avance_width = width * avance / 100
                 avance_color = "#16a34a"
@@ -279,11 +306,11 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
 
             bar_html = date_label + planned_bar + avance_bar
 
-        avance_chip_color = "#16a34a"
+        avance_chip_color = "#f59e0b" if es_sub else "#16a34a"
         avance_chip = (
             f'<span class="g-chip" style="background:{avance_chip_color}1a;border-color:{avance_chip_color}66;'
             f'color:{avance_chip_color};font-weight:800;">{avance}% avance</span>'
-        ) if not es_sub else ""
+        ) if avance > 0 else ""
         sub_chip = (
             '<span class="g-chip" style="background:#f1f5f9;border-color:#94a3b8;'
             'color:#475569;font-weight:700;">⚙ Subcontrato</span>'
@@ -597,9 +624,9 @@ def programacion_index():
     for r in cumplimiento_rows:
         cumpl_idx[(int(r[0]), str(r[1]))] = (float(r[2] or 0), str(r[3] or ""))
 
-    # Cumplimiento: mostrar solo OTs con actividad (programacion solapada) en la semana seleccionada.
+    # Cumplimiento: mostrar OTs con actividad en la semana seleccionada O con avance registrado.
     ots_activas_cumpl = db.execute("""
-        SELECT id, COALESCE(obra, ''), COALESCE(titulo, ''), COALESCE(fecha_entrega, '')
+        SELECT id, COALESCE(obra, ''), COALESCE(titulo, ''), COALESCE(fecha_entrega, ''), COALESCE(estado_avance, 0)
         FROM ordenes_trabajo
         WHERE fecha_cierre IS NULL AND (es_mantenimiento IS NULL OR es_mantenimiento = 0)
         ORDER BY id ASC
@@ -628,7 +655,7 @@ def programacion_index():
     entradas_semana = [
         {"ot_id": r[0], "obra": r[1], "titulo": r[2], "fecha_entrega": r[3]}
         for r in ots_activas_cumpl
-        if int(r[0] or 0) in ot_ids_con_actividad_semana
+        if int(r[0] or 0) in ot_ids_con_actividad_semana or int(r[4] or 0) > 0
     ]
     if obra_fil:
         entradas_semana = [e for e in entradas_semana if obra_fil.lower() in (e.get("obra") or "").lower()]
