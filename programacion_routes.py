@@ -31,6 +31,64 @@ def _color_ot(ot_id):
     return _COLORES_OT[int(ot_id or 0) % len(_COLORES_OT)]
 
 
+def _svg_donut_chart(stats, total, size=210):
+    """Genera SVG de donut chart para distribución de causas de desvío."""
+    import math
+    if not stats or total <= 0:
+        return (
+            f'<svg viewBox="0 0 {size} {size}" style="width:{size}px;height:{size}px;">'
+            f'<text x="{size//2}" y="{size//2}" text-anchor="middle" dominant-baseline="middle" '
+            f'font-size="13" fill="#94a3b8" font-style="italic">Sin datos</text></svg>'
+        )
+    cx = cy = size / 2
+    r_outer = size / 2 - 12
+    r_inner = r_outer * 0.48
+    colors = [
+        "#6366f1", "#f97316", "#3b82f6", "#10b981", "#ef4444",
+        "#8b5cf6", "#f59e0b", "#06b6d4", "#ec4899", "#14b8a6",
+    ]
+    slices = []
+    for i, (code, label) in enumerate(_DESVIOS.items()):
+        c = stats.get(code, 0)
+        if c > 0:
+            slices.append((code, label, c, colors[i % len(colors)]))
+    paths = []
+    start_angle = -90.0
+    for code, label, count, color in slices:
+        sweep = 360.0 * count / total
+        end_angle = start_angle + sweep
+        large_arc = 1 if sweep > 180 else 0
+        x1 = cx + r_outer * math.cos(math.radians(start_angle))
+        y1 = cy + r_outer * math.sin(math.radians(start_angle))
+        x2 = cx + r_outer * math.cos(math.radians(end_angle))
+        y2 = cy + r_outer * math.sin(math.radians(end_angle))
+        x3 = cx + r_inner * math.cos(math.radians(end_angle))
+        y3 = cy + r_inner * math.sin(math.radians(end_angle))
+        x4 = cx + r_inner * math.cos(math.radians(start_angle))
+        y4 = cy + r_inner * math.sin(math.radians(start_angle))
+        d = (
+            f"M {x1:.2f} {y1:.2f} "
+            f"A {r_outer:.2f} {r_outer:.2f} 0 {large_arc} 1 {x2:.2f} {y2:.2f} "
+            f"L {x3:.2f} {y3:.2f} "
+            f"A {r_inner:.2f} {r_inner:.2f} 0 {large_arc} 0 {x4:.2f} {y4:.2f} Z"
+        )
+        paths.append(f'<path d="{d}" fill="{color}" stroke="#fff" stroke-width="1.5"/>')
+        pct = count * 100.0 / total
+        if pct > 7:
+            mid = start_angle + sweep / 2
+            lx = cx + (r_outer + r_inner) / 2 * math.cos(math.radians(mid))
+            ly = cy + (r_outer + r_inner) / 2 * math.sin(math.radians(mid))
+            paths.append(
+                f'<text x="{lx:.1f}" y="{ly:.1f}" font-size="10" text-anchor="middle" '
+                f'dominant-baseline="middle" fill="#fff" font-weight="700">{pct:.0f}%</text>'
+            )
+        start_angle = end_angle
+    return (
+        f'<svg viewBox="0 0 {size} {size}" style="width:{size}px;height:{size}px;">'
+        + "".join(paths) + "</svg>"
+    )
+
+
 def _parse_date(s):
     if not s:
         return None
@@ -714,22 +772,29 @@ def programacion_index():
             desvio_stats[cod] = desvio_stats.get(cod, 0) + 1
             total_desv += 1
 
-    desv_rows = ""
+    _colors_desv = [
+        "#6366f1", "#f97316", "#3b82f6", "#10b981", "#ef4444",
+        "#8b5cf6", "#f59e0b", "#06b6d4", "#ec4899", "#14b8a6",
+    ]
+    desv_legend = ""
     if total_desv > 0:
-        for code, label in _DESVIOS.items():
+        for i, (code, label) in enumerate(_DESVIOS.items()):
             c = desvio_stats.get(code, 0)
             if c <= 0:
                 continue
             pct = (c * 100.0 / total_desv)
-            desv_rows += (
-                f"<div style='display:grid;grid-template-columns:1fr 70px;gap:8px;align-items:center;margin:6px 0;'>"
-                f"<div style='background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;overflow:hidden;height:20px;'>"
-                f"<div style='height:100%;width:{pct:.1f}%;background:#6366f1;'></div></div>"
-                f"<div style='font-size:12px;font-weight:700;color:#312e81;text-align:right;'>{pct:.1f}%</div>"
-                f"</div><div style='font-size:12px;color:#4338ca;margin-top:-4px;'>{code}. {html_lib.escape(label)}</div>"
+            col = _colors_desv[i % len(_colors_desv)]
+            desv_legend += (
+                f"<div style='display:flex;align-items:center;gap:7px;margin:5px 0;'>"
+                f"<div style='width:14px;height:14px;border-radius:3px;background:{col};flex-shrink:0;'></div>"
+                f"<div style='font-size:12px;color:#1e293b;flex:1;'>{code}. {html_lib.escape(label)}</div>"
+                f"<div style='font-size:12px;font-weight:700;color:{col};white-space:nowrap;'>{c} ({pct:.0f}%)</div>"
+                f"</div>"
             )
     else:
-        desv_rows = "<div style='color:#64748b;font-style:italic;'>Sin desvíos registrados hasta la semana seleccionada.</div>"
+        desv_legend = "<div style='color:#64748b;font-style:italic;'>Sin desvíos registrados hasta la semana seleccionada.</div>"
+
+    donut_svg = _svg_donut_chart(desvio_stats, total_desv)
 
     week_map = {}
     for r in cumplimiento_rows:
@@ -878,7 +943,7 @@ def programacion_index():
 <div class="panel" id="cumplimiento-section">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
         <h3 style="margin:0;">Cumplimiento de objetivos semanales</h3>
-        <button onclick="printSection('cumplimiento-section')" class="btn btn-sec btn-sm">🖨️ Imprimir Cumplimiento</button>
+        <button onclick="printCumplimiento()" class="btn btn-sec btn-sm">🖨️ Imprimir Cumplimiento</button>
     </div>
     <form method="get" action="/modulo/programacion" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
         <label>Semana (lunes):</label>
@@ -916,7 +981,10 @@ def programacion_index():
         </div>
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">
             <h4 style="margin:0 0 8px 0;color:#4338ca;">Distribución acumulada de causas de desvío</h4>
-            {desv_rows}
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+                <div style="flex-shrink:0;">{donut_svg}</div>
+                <div style="flex:1;min-width:160px;">{desv_legend}</div>
+            </div>
         </div>
     </div>
 
@@ -981,20 +1049,61 @@ def programacion_index():
 <head><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Programación de Fabricación</title>{_CSS}
 <script>
-function printSection(sectionId) {{
+function _printHeader(title) {{
+    var origin = window.location.origin;
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:0 0 10px 0;border-bottom:2px solid #6366f1;margin-bottom:14px;">'
+      + '<div style="display:flex;align-items:center;gap:12px;">'
+        + '<img src="' + origin + '/logo-a3" style="height:54px;" onerror="this.style.display=\'none\'">'
+        + '<div>'
+          + '<div style="font-size:20px;font-weight:800;color:#1e3a8a;">' + title + '</div>'
+          + '<div style="font-size:13px;color:#475569;font-style:italic;">Programación · Fabricación Estructuras Metálicas</div>'
+        + '</div>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;align-items:center;">'
+        + '<div style="width:48px;height:48px;border-radius:50%;border:3px solid #1e3a8a;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;text-align:center;line-height:1;">'
+          + '<span style="font-size:7px;color:#334155;">ISO</span><span style="font-size:12px;font-weight:800;color:#0f172a;">9001</span>'
+        + '</div>'
+        + '<div style="width:48px;height:48px;border-radius:50%;border:3px solid #be123c;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;text-align:center;line-height:1;">'
+          + '<span style="font-size:7px;color:#334155;">ISO</span><span style="font-size:12px;font-weight:800;color:#0f172a;">45001</span>'
+        + '</div>'
+        + '<div style="width:48px;height:48px;border-radius:50%;border:3px solid #111827;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;text-align:center;line-height:1;">'
+          + '<span style="font-size:7px;color:#334155;">ISO</span><span style="font-size:12px;font-weight:800;color:#0f172a;">37001</span>'
+        + '</div>'
+      + '</div>'
+    + '</div>';
+}}
+function _openPrintWin(title, sectionId) {{
     var section = document.getElementById(sectionId);
-    if (!section) return;
-    var printWin = window.open('', '_blank', 'width=1100,height=800');
-    printWin.document.write('<html><head><title>Imprimir</title>');
+    if (!section) return null;
+    var printWin = window.open('', '_blank', 'width=1400,height=900');
+    if (!printWin) return null;
+    printWin.document.write('<html><head><meta charset="utf-8"><title>' + title + '</title>');
     var styles = document.querySelectorAll('style');
     styles.forEach(function(s) {{ printWin.document.write(s.outerHTML); }});
-    printWin.document.write('<style>body{{padding:12px;background:#fff;}} button,form,.btn,.g-btn{{display:none!important;}} input,select{{pointer-events:none;border:1px solid #ddd;}}</style>');
-    printWin.document.write('</head><body>');
+    printWin.document.write('<style>'
+      + '@page{{size:A4 landscape;margin:10mm;}}'
+      + 'body{{padding:0;background:#fff;}}'
+      + 'button,form,.btn,.g-btn{{display:none!important;}}'
+      + 'input,select{{pointer-events:none;border:1px solid #ddd;}}'
+      + '.g-track{{overflow:visible!important;}}'
+      + '.panel{{border:none!important;padding:0!important;}}'
+      + 'h3{{display:none!important;}}'
+    + '</style>');
+    printWin.document.write('</head><body style="padding:8px;">');
+    printWin.document.write(_printHeader(title));
     printWin.document.write(section.innerHTML);
     printWin.document.write('</body></html>');
     printWin.document.close();
     printWin.focus();
-    setTimeout(function(){{ printWin.print(); }}, 400);
+    return printWin;
+}}
+function printGantt() {{
+    var pw = _openPrintWin('Programación de Fabricación', 'gantt-section');
+    if (pw) setTimeout(function(){{ pw.print(); }}, 600);
+}}
+function printCumplimiento() {{
+    var pw = _openPrintWin('Cumplimiento de Objetivos Semanales', 'cumplimiento-section');
+    if (pw) setTimeout(function(){{ pw.print(); }}, 600);
 }}
 </script>
 </head>
@@ -1036,7 +1145,7 @@ function printSection(sectionId) {{
             <a href="/modulo/programacion?vista=mensual{obra_qs}" class="btn btn-sm" style="{btn_mensual_active}">📅 Mensual</a>
             <a href="/modulo/programacion?vista=semana{obra_qs}" class="btn btn-sm" style="{btn_semana_active}">📆 Semana</a>
         </div>
-        <button onclick="printSection('gantt-section')" class="btn btn-sec btn-sm">🖨️ Imprimir Gantt</button>
+        <button onclick="printGantt()" class="btn btn-sec btn-sm">🖨️ Imprimir Gantt</button>
     </div>
     {gantt}
 </div>
