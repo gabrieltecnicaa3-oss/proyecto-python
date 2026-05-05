@@ -630,11 +630,17 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         ot_id, titulo, tipo_est, fe, _, _, _ = ot
         total = total_by_ot.get(ot_id, 0)
         cells = ""
+        n_arm_ot = appr[ot_id]["ARMADO"]
+        n_sol_ot = appr[ot_id]["SOLDADURA"]
+        n_pin_ot = appr[ot_id]["PINTURA"]
+        n_des_ot = appr[ot_id]["DESPACHO"]
         for stage in STAGES:
             n   = appr[ot_id][stage]
             pct = _pct(n, total)
             clr = _pct_clr(pct)
             cells += f'<td class="proc-frac">{n}/{total}</td><td style="color:{clr};font-weight:700">{pct}%</td>'
+        pct_av_ot = round((n_arm_ot + n_sol_ot + n_pin_ot + n_des_ot) / (4 * total) * 100) if total else 0
+        av_clr = _pct_clr(pct_av_ot)
         fe_fmt = _fd(fe)
         tipo_s = _e(tipo_est) or "–"
         table_rows += f"""<tr>
@@ -643,6 +649,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
       <td>{tipo_s}</td>
       <td>{total}</td>
       {cells}
+      <td style="color:{av_clr};font-weight:700;text-align:center">{pct_av_ot}%</td>
       <td class="tc-fe">{fe_fmt}</td>
     </tr>"""
 
@@ -652,6 +659,11 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         pt  = _pct(nt, total_g)
         clr = _pct_clr(pt)
         tot_cells += f'<td><b>{nt}/{total_g}</b></td><td style="color:{clr};font-weight:700"><b>{pt}%</b></td>'
+    # Avance total ponderado global
+    tot_credito = sum(appr[oid]["ARMADO"] + appr[oid]["SOLDADURA"] + appr[oid]["PINTURA"] + appr[oid]["DESPACHO"] for oid in d["ot_ids"])
+    pct_av_g = round(tot_credito / (4 * total_g) * 100) if total_g else 0
+    av_g_clr = _pct_clr(pct_av_g)
+    tot_cells += f'<td style="color:{av_g_clr};font-weight:700"><b>{pct_av_g}%</b></td>'
 
     h_estado = next_sec("ESTADO DE OTs POR PROCESO")
     estado_html = f"""
@@ -665,7 +677,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         <th>Soldadura</th><th>% S</th>
         <th>Pintura</th><th>% P</th>
         <th>Despacho</th><th>% D</th>
-        <th>F. Entrega</th>
+        <th>% Avance</th><th>F. Entrega</th>
       </tr>
     </thead>
     <tbody>{table_rows}</tbody>
