@@ -218,6 +218,14 @@ def _collect(db, obra, year, week, week_start, week_end):
         else:
             n_en_termino += 1
 
+    # Avance por OT para el Gantt
+    avance_by_ot = {}
+    for ot_id in ot_ids:
+        total = total_by_ot.get(ot_id, 0)
+        n_des = appr[ot_id]["DESPACHO"]
+        avance_pct = _pct(n_des, total) if total else 0
+        avance_by_ot[ot_id] = avance_pct
+
     return dict(
         obra=obra, cliente=cliente,
         ots=ots, ot_ids=ot_ids,
@@ -231,19 +239,23 @@ def _collect(db, obra, year, week, week_start, week_end):
         first_fecha=first_fecha, n_prev=n_prev, n_this=n_this,
         year=year, week=week, week_start=week_start, week_end=week_end,
         n_cumplido=n_cumplido, n_en_termino=n_en_termino, n_atrasado=n_atrasado,
-        prog_rows=prog_rows,
+        prog_rows=prog_rows, avance_by_ot=avance_by_ot,
     )
 
 
 # ── SVG Gantt de programación ────────────────────────────────────────────────
-def _svg_gantt(prog_rows, ots):
+def _svg_gantt(prog_rows, ots, avance_by_ot=None):
     """Genera SVG Gantt desde filas de programacion.
     prog_rows: list of (ot_id, fecha_inicio, fecha_fin)
     ots: list de OT tuples (id, titulo, tipo_est, fecha_entrega, ...)
+    avance_by_ot: dict con porcentaje de avance por OT
     """
     if not prog_rows:
         return '<p style="color:#9ca3af;font-size:.85rem;margin:12px 0">Sin datos de programación para esta obra. Cargá fechas desde el módulo Programación.</p>'
 
+    if avance_by_ot is None:
+        avance_by_ot = {}
+    
     ot_info = {ot[0]: ot for ot in ots}
     today   = date.today()
 
@@ -311,6 +323,7 @@ def _svg_gantt(prog_rows, ots):
         ot     = ot_info.get(ot_id)
         titulo = _e(ot[1])[:28] if ot else f"OT {ot_id}"
         clr    = COLORS[i % len(COLORS)]
+        es_subcontrato = "SUB" in (titulo.upper() if titulo else "")
 
         bars += (f'<text x="4" y="{y_base + 13}" font-size="10" fill="#e36c09" font-weight="700">OT {ot_id}</text>'
                  f'<text x="4" y="{y_base + 24}" font-size="8" fill="#6b7280">{titulo}</text>')
@@ -319,7 +332,19 @@ def _svg_gantt(prog_rows, ots):
             x1 = day_x(fi)
             x2 = day_x(ff)
             bw = max(x2 - x1, 6)
-            bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw}" height="{ROW_H - 14}" fill="{clr}" rx="3" opacity="0.82"/>'
+            # Barra de programación
+            if es_subcontrato:
+                # Patrón gris rayado para subcontratos
+                bars += f'<defs><pattern id="subhatch{ot_id}" x="4" y="4" width="8" height="8" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="8" y2="8" stroke="#9ca3af" stroke-width="1.5"/></pattern></defs>'
+                bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw}" height="{ROW_H - 14}" fill="url(#subhatch{ot_id})" rx="3" opacity="0.9" stroke="#9ca3af" stroke-width="1"/>'
+            else:
+                bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw}" height="{ROW_H - 14}" fill="{clr}" rx="3" opacity="0.82"/>'
+            
+            # Barra de avance (progreso) dentro de la barra de programación
+            avance = avance_by_ot.get(ot_id, 0)
+            if avance > 0:
+                bw_avance = max(bw * avance / 100, 2)
+                bars += f'<rect x="{x1}" y="{y_base + 6}" width="{bw_avance}" height="{ROW_H - 14}" fill="#4ade80" rx="3" opacity="0.95"/>'  # Verde oscuro para el avance
 
         if ot and ot[3]:
             try:
@@ -751,13 +776,13 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 
     # Sección Gantt
     h_gantt   = next_sec("PROGRAMACIÓN DE FABRICACIÓN – DIAGRAMA GANTT")
-    gantt_svg = _svg_gantt(d.get("prog_rows", []), ots)
+    gantt_svg = _svg_gantt(d.get("prog_rows", []), ots, d.get("avance_by_ot", {}))
     gantt_html = f"""
 <div class="section">
   <div class="section-header">{h_gantt}</div>
   <div class="section-body" style="overflow-x:auto;padding:14px 12px">
     {gantt_svg}
-    <div style="font-size:10px;color:#9ca3af;margin-top:6px">Las barras representan la programación cargada en el módulo Programación. ◆ = Fecha de entrega comprometida.</div>
+    <div style="font-size:10px;color:#9ca3af;margin-top:6px">Las barras representan la programación cargada en el módulo Programación. ◆ = Fecha de entrega comprometida. Barra verde = Avance de despacho.</div>
   </div>
 </div>"""
 
@@ -831,15 +856,17 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
   </div>
 </div>"""
 
-    # Footer firmas
-    firma_html = """
+    # Footer firmas con imágenes digitales
+    firma_html = f"""
 <div class="firma-row">
   <div class="firma-box">
+    <img src="/firma-supervisor/DANIEL_HEREÑU.png" alt="Firma Daniel Hereñu" style="height:40px;object-fit:contain;margin-bottom:6px">
     <div class="firma-line"></div>
     <div class="firma-cargo">Jefe de Producción</div>
     <div class="firma-nombre">Daniel Hereñu</div>
   </div>
   <div class="firma-box">
+    <img src="/firma-supervisor/FIRMA_GABRIEL_IBARRA.png" alt="Firma Gabriel Ibarra" style="height:40px;object-fit:contain;margin-bottom:6px">
     <div class="firma-line"></div>
     <div class="firma-cargo">Ing. Responsable</div>
     <div class="firma-nombre">Gabriel Ibarra</div>
