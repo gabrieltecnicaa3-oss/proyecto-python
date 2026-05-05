@@ -394,9 +394,9 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
             if es_sub:
                 # Subcontrato: barra con rayas diagonales (patrón CSS), color gris azulado
                 planned_bar = (
-                    f'<div class="g-bar" style="left:{left:.2f}%;width:{width:.2f}%;top:30%;height:16px;'
-                    f'background:repeating-linear-gradient(45deg,#64748b 0,#64748b 4px,#94a3b8 4px,#94a3b8 10px);'
-                    f'opacity:0.85;" title="{html_lib.escape(tip)}"></div>'
+                    f'<div class="g-bar" style="left:{left:.2f}%;width:{width:.2f}%;top:35%;height:8px;'
+                    f'background:repeating-linear-gradient(45deg,#94a3b8 0,#94a3b8 3px,#cbd5e1 3px,#cbd5e1 7px);'
+                    f'opacity:0.7;box-shadow:none;" title="{html_lib.escape(tip)}"></div>'
                 )
             else:
                 planned_bar = (
@@ -872,16 +872,16 @@ def programacion_index():
             opts += f'<option value="{code}" {sel}>{code} - {html_lib.escape(label)}</option>'
         show_desv = "" if pct_val < 100 else "display:none;"
         cumplimiento_rows_html += f"""
-        <tr>
-            <td><b>OT {ot_id}</b></td>
-            <td>{obra}</td>
-            <td>{titulo}</td>
-            <td style="text-align:center;">
+        <tr style="font-size:11px;">
+            <td style="padding:4px 6px;"><b>OT {ot_id}</b></td>
+            <td style="padding:4px 6px;">{obra}</td>
+            <td style="padding:4px 6px;">{titulo}</td>
+            <td style="text-align:center;padding:4px 6px;">
                 <input type="number" min="0" max="100" step="1" value="{pct_val}" name="pct_{ot_id}"
-                       style="width:90px;" oninput="toggleDesvio({ot_id}); calcCumplimientoKPIs();"> %
+                       style="width:64px;font-size:11px;padding:3px 5px;" oninput="toggleDesvio({ot_id}); calcCumplimientoKPIs();"> %
             </td>
-            <td id="desv-wrap-{ot_id}" style="{show_desv}">
-                <select name="desvio_{ot_id}" id="desv-{ot_id}" style="min-width:290px;">{opts}</select>
+            <td id="desv-wrap-{ot_id}" style="{show_desv}padding:4px 6px;">
+                <select name="desvio_{ot_id}" id="desv-{ot_id}" style="min-width:240px;font-size:11px;padding:3px 5px;">{opts}</select>
             </td>
         </tr>
         """
@@ -1253,7 +1253,7 @@ function _openPrintWin(title, sectionId) {{
     printWin.document.write('<html><head><meta charset="utf-8"><title>' + title + '</title>');
     var styles = document.querySelectorAll('style');
     styles.forEach(function(s) {{ printWin.document.write(s.outerHTML); }});
-    printWin.document.write('<style>@page{{size:A4 landscape;margin:10mm;}}body{{padding:0;background:#fff;}}button,form,.btn,.g-btn{{display:none!important;}}input,select{{pointer-events:none;border:1px solid #ddd;}}.g-track{{overflow:visible!important;}}.panel{{border:none!important;padding:0!important;}}h3{{display:none!important;}}*{{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}}</style>');
+    printWin.document.write('<style>@page{{size:A3 landscape;margin:8mm;}}body{{padding:0;background:#fff;}}button,form,.btn,.g-btn{{display:none!important;}}input,select{{pointer-events:none;border:1px solid #ddd;}}.g-track{{overflow:visible!important;}}.panel{{border:none!important;padding:0!important;}}h3{{display:none!important;}}*{{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}}</style>');
     printWin.document.write('</head><body style="padding:8px;font-family:Arial,sans-serif;">');
     printWin.document.write(_printHeader(title));
     printWin.document.write(section.innerHTML);
