@@ -1015,9 +1015,12 @@ def reportes_index():
     <img src="/logo-a3" alt="A3">
     <span>A3 Servicios Constructivos</span>
   </div>
+  <div style="margin-bottom:16px">
+    <a href="/" style="font-size:.8rem;color:#6b7280;text-decoration:none;display:inline-flex;align-items:center;gap:4px">← Volver al panel</a>
+  </div>
   <h2>Informe de Avance</h2>
   <p class="sub">Seleccioná la obra, el período y el tipo de informe.</p>
-  <form action="/modulo/reportes/ver" method="GET" target="_blank">
+  <form action="/modulo/reportes/ver" method="GET">
     <label class="field-label">Obra / Proyecto</label>
     <select name="obra">{obs_opts}</select>
 
