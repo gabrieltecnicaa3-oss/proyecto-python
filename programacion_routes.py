@@ -488,9 +488,6 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
             hito_pct = (fecha_nec - fi_vista).days / total_dias * 100
             hito_tip = html_lib.escape(f"HITO – Fecha de entrega: {_fmt(fecha_nec)}")
             hito_html = (
-                f'<div style="position:absolute;left:{hito_pct:.2f}%;top:0;bottom:0;width:2px;'
-                f'border-left:2px dashed #dc2626;opacity:0.9;z-index:3;pointer-events:none;" '
-                f'title="{hito_tip}"></div>'
                 f'<div style="position:absolute;left:{hito_pct:.2f}%;top:1px;'
                 f'transform:translateX(-50%);font-size:13px;color:#dc2626;z-index:4;'
                 f'pointer-events:none;line-height:1;" title="{hito_tip}">◆</div>'
