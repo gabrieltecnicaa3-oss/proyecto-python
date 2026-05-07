@@ -482,6 +482,20 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
 
             bar_html = date_label + planned_bar + avance_bar
 
+        # ── HITO: marcador de fecha de entrega ──
+        hito_html = ""
+        if fecha_nec and fi_vista <= fecha_nec <= ff_vista:
+            hito_pct = (fecha_nec - fi_vista).days / total_dias * 100
+            hito_tip = html_lib.escape(f"HITO – Fecha de entrega: {_fmt(fecha_nec)}")
+            hito_html = (
+                f'<div style="position:absolute;left:{hito_pct:.2f}%;top:0;bottom:0;width:2px;'
+                f'border-left:2px dashed #dc2626;opacity:0.9;z-index:3;pointer-events:none;" '
+                f'title="{hito_tip}"></div>'
+                f'<div style="position:absolute;left:{hito_pct:.2f}%;top:1px;'
+                f'transform:translateX(-50%);font-size:13px;color:#dc2626;z-index:4;'
+                f'pointer-events:none;line-height:1;" title="{hito_tip}">◆</div>'
+            )
+
         avance_chip_color = "#f59e0b" if es_sub else "#16a34a"
         avance_chip = (
             f'<span class="g-chip" style="background:{avance_chip_color}1a;border-color:{avance_chip_color}66;'
@@ -505,6 +519,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
                 {gridlines_html}
                 {today_html}
                 {bar_html}
+                {hito_html}
             </div>
             <div class="g-act">
                 <form method="post" action="/modulo/programacion/reordenar" style="display:inline;">
@@ -620,6 +635,12 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
             {rows_html}
         </div>
         {footer_html}
+        <div style="padding:6px 14px 8px;font-size:11px;color:#6b7280;display:flex;gap:18px;align-items:center;flex-wrap:wrap;border-top:1px solid #ffedd5;background:#fffaf5;border-radius:0 0 10px 10px;">
+            <span style="font-weight:700;color:#9a3412;">Leyenda:</span>
+            <span><span style="display:inline-block;width:12px;height:3px;background:#ef4444;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>Hoy</span>
+            <span><span style="color:#dc2626;font-size:13px;vertical-align:middle;margin-right:3px;">◆</span>HITO – Fecha de entrega</span>
+            <span><span style="display:inline-block;width:12px;height:8px;background:#16a34a;border-radius:2px;vertical-align:middle;opacity:0.9;margin-right:3px;"></span>Avance real</span>
+        </div>
     </div>
     """
 
