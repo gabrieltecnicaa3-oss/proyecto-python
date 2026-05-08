@@ -218,18 +218,11 @@ def _collect(db, obra, year, week, week_start, week_end):
         else:
             n_en_termino += 1
 
-    # Avance por OT para el Gantt
+    # Avance por OT (alineado con Estado de Producción: estado_avance persistido)
     avance_by_ot = {}
-    for ot_id in ot_ids:
-        total = total_by_ot.get(ot_id, 0)
-        n_des = appr[ot_id]["DESPACHO"]
-        # Avance ponderado: 25% de crédito por cada etapa aprobada
-        n_arm = appr[ot_id]["ARMADO"]
-        n_sol = appr[ot_id]["SOLDADURA"]
-        n_pin = appr[ot_id]["PINTURA"]
-        credito = n_arm + n_sol + n_pin + n_des
-        avance_pct = round(credito / (4 * total) * 100) if total else 0
-        avance_by_ot[ot_id] = avance_pct
+    for ot in ots:
+      ot_id = int(ot[0])
+      avance_by_ot[ot_id] = max(0, min(100, int(ot[6] or 0)))
 
     return dict(
         obra=obra, cliente=cliente,
@@ -504,13 +497,15 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     .bar-track { flex: 1; background: #f3f4f6; border-radius: 4px; height: 18px; overflow: hidden; position: relative; }
     .bar-inner { display: flex; height: 100%; }
     .bar-seg { height: 100%; transition: width .3s; }
+    .bar-fill { height: 100%; border-radius: 4px; display: block; }
+    .bar-pct { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 700; color: #374151; }
     .bar-fe { width: 80px; text-align: right; font-size: 10px; color: #6b7280; white-space: nowrap; margin-left: 8px; }
 
     /* Cronograma */
     .pri-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
     .mini-bar-wrap { display: inline-flex; align-items: center; gap: 5px; vertical-align: middle; }
     .mini-bar-bg { background: #e5e7eb; border-radius: 3px; height: 12px; width: 70px; display: inline-block; overflow: hidden; vertical-align: middle; }
-    .mini-bar-fill { height: 100%; border-radius: 3px; }
+    .mini-bar-fill { height: 100%; border-radius: 3px; display: block; }
     .estado-badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; background: #dbeafe; color: #1d4ed8; font-weight: 600; }
     .estado-badge.done { background: #dcfce7; color: #166534; }
     .estado-badge.none { background: #f3f4f6; color: #6b7280; }
@@ -694,25 +689,19 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 </div>"""
 
     # Sección Avance gráfico
-    leg_items = "".join(
-        f'<span class="leg-seg"><span class="leg-dot" style="background:{ST_CLR[s]};width:12px;height:12px;border-radius:3px"></span>{ST_LBL[s]}</span>'
-        for s in STAGES
+    leg_items = (
+      '<span class="leg-seg"><span class="leg-dot" style="background:#2563eb;width:12px;height:12px;border-radius:3px"></span>Avance OT (Estado de Producción)</span>'
     )
     bar_rows = ""
     for ot in ots:
         ot_id, titulo, tipo_est, fe, _, _, _ = ot
-        total = total_by_ot.get(ot_id, 0)
-        segs  = ""
-        if total:
-            for stage in STAGES:
-                n   = appr[ot_id][stage]
-                pct = _pct(n, total)
-                if pct > 0:
-                    segs += f'<div class="bar-seg" style="width:{pct}%;background:{ST_CLR[stage]};" title="{ST_LBL[stage]}: {n}/{total} ({pct}%)"></div>'
+        avance_ot = max(0, min(100, int(d.get("avance_by_ot", {}).get(ot_id, 0))))
+        fill_color = '#22c55e' if avance_ot >= 75 else ('#f97316' if avance_ot >= 40 else '#ef4444')
+        segs = f'<span class="bar-fill" style="width:{avance_ot}%;background:{fill_color};" title="Avance OT {ot_id}: {avance_ot}%"></span>'
         fe_fmt = _fd(fe)
         bar_rows += f"""<div class="bar-row">
       <div class="bar-ot-label"><span class="bar-ot-id">OT {ot_id}</span><span class="bar-ot-titulo">{_e(titulo)}</span></div>
-      <div class="bar-track"><div class="bar-inner">{segs}</div></div>
+      <div class="bar-track"><div class="bar-inner">{segs}</div><span class="bar-pct">{avance_ot}%</span></div>
       <div class="bar-fe">{fe_fmt}</div>
     </div>"""
 
@@ -761,8 +750,8 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         pct_sol = _pct(n_sol, total)
         pct_pin = _pct(n_pin, total)
         pct_des = _pct(n_des, total)
-        # Avance total ponderado (25% por etapa)
-        pct_avance = round((n_arm + n_sol + n_pin + n_des) / (4 * total) * 100) if total else 0
+        # Avance total OT alineado con Estado de Producción
+        pct_avance = max(0, min(100, int(d.get("avance_by_ot", {}).get(ot_id, 0))))
         pri_lbl, pri_col, pri_bg = _priority(fe)
         fe_fmt  = _fd(fe)
 
