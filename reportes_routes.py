@@ -591,6 +591,28 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     .estado-badge.done { background: #dcfce7; color: #166534; }
     .estado-badge.none { background: #f3f4f6; color: #6b7280; }
 
+    /* Tablero de desvíos */
+    .desvio-wrap { padding: 12px 16px; }
+    .desvio-kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 10px; }
+    .desvio-kpi { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; text-align: center; }
+    .desvio-kpi .v { font-size: 18px; font-weight: 800; line-height: 1.1; }
+    .desvio-kpi .l { font-size: 10px; color: #6b7280; margin-top: 4px; text-transform: uppercase; letter-spacing: .3px; }
+    .desvio-kpi.crit { background: #fef2f2; border-color: #fecaca; }
+    .desvio-kpi.risk { background: #fff7ed; border-color: #fed7aa; }
+    .desvio-kpi.ok { background: #f0fdf4; border-color: #bbf7d0; }
+    .desvio-kpi.np { background: #f8fafc; border-color: #e2e8f0; }
+    .desvio-kpi.avg { background: #eff6ff; border-color: #bfdbfe; }
+    .desvio-grid { display: grid; grid-template-columns: 1.5fr 1fr; gap: 12px; }
+    .desvio-list-box { border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+    .desvio-list-head { background: #f8fafc; border-bottom: 1px solid #e5e7eb; font-size: 11px; font-weight: 700; color: #334155; padding: 8px 10px; }
+    .desvio-list { list-style: none; margin: 0; padding: 0; }
+    .desvio-list li { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #f1f5f9; font-size: 11px; }
+    .desvio-list li:last-child { border-bottom: none; }
+    .desvio-ot { color: #1f2937; font-weight: 700; }
+    .desvio-meta { color: #6b7280; font-size: 10px; margin-top: 2px; }
+    .desvio-delta { font-weight: 800; white-space: nowrap; }
+    .desvio-hint { border: 1px dashed #cbd5e1; border-radius: 8px; padding: 10px; background: #f8fafc; font-size: 11px; color: #475569; line-height: 1.45; }
+
     /* Producción semanal */
     .prod-section { padding: 14px 16px; }
     .prod-summary { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-top: 12px; font-size: 12px; }
@@ -998,6 +1020,14 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
                 pass
     ots_sorted = sorted(ots, key=lambda r: (r[3] or "9999-99-99", r[0]))
     crono_rows = ""
+    desvio_stats = {
+      "crit": 0,
+      "riesgo": 0,
+      "normal": 0,
+      "sin_prog": 0,
+    }
+    desvio_rank = []
+    desvio_vals = []
     for ot in ots_sorted:
         ot_id, titulo, tipo_est, fe, _, _, _ = ot
         obra_ot = _e(ot_obra_by_id.get(int(ot_id), ""))
@@ -1031,6 +1061,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         # Desvío plan vs real – 3 niveles de criticidad
         desvio_pr     = None
         expected_pr   = None
+        crit_key      = "sin_prog"
         crit_lbl      = ""
         crit_bg       = ""
         crit_clr      = ""
@@ -1050,14 +1081,17 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
             # Niveles: CRÍTICO = desvío < -20% Y fecha próxima (≤30d); RIESGO = -20% a -10%; NORMAL = > -10%
             if desvio_pr < -20 and dias_fe <= 30:
                 crit_lbl = "⛔ CRÍTICO"
+                crit_key = "crit"
                 crit_bg  = "#fef2f2"
                 crit_clr = "#dc2626"
             elif desvio_pr <= -10:
                 crit_lbl = "⚠ RIESGO"
+                crit_key = "riesgo"
                 crit_bg  = "#fff7ed"
                 crit_clr = "#ea580c"
             else:
                 crit_lbl = "✔ NORMAL"
+                crit_key = "normal"
                 crit_bg  = "#f0fdf4"
                 crit_clr = "#16a34a"
             desvio_html = (
@@ -1067,6 +1101,9 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
                 f'<div style="margin-top:2px"><span class="pri-badge" style="background:{crit_bg};color:{crit_clr};font-size:9px">{crit_lbl}</span></div>'
                 f'</div>'
             )
+            desvio_vals.append(desvio_pr)
+            desvio_rank.append((desvio_pr, ot_id, titulo_mostrar, expected_pr, pct_avance, crit_lbl, crit_clr))
+            desvio_stats[crit_key] += 1
         # Row background: criticidad de desvío (si hay dato) tiene precedencia, sino prioridad de fecha
         if crit_bg and crit_lbl not in ("✔ NORMAL",):
             row_bg_style = f' style="background:{crit_bg}"'
@@ -1087,6 +1124,54 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
       <td style="text-align:center;white-space:nowrap">{desvio_html}</td>
       <td><span class="estado-badge {est_cls}">{est_lbl}</span></td>
     </tr>"""
+
+    desvio_rank.sort(key=lambda x: x[0])
+    desvio_peores = desvio_rank[:5]
+    avg_desvio = round(sum(desvio_vals) / len(desvio_vals), 1) if desvio_vals else 0.0
+    avg_sign = "+" if avg_desvio >= 0 else ""
+    avg_clr = "#16a34a" if avg_desvio >= 0 else "#dc2626"
+
+    if desvio_peores:
+        peores_items = ""
+        for desvio_it, ot_id_it, titulo_it, esp_it, real_it, crit_lbl_it, crit_clr_it in desvio_peores:
+            d_sign_it = "+" if desvio_it >= 0 else ""
+            peores_items += (
+                f'<li>'
+                f'<div><div class="desvio-ot">OT {ot_id_it} · {titulo_it}</div>'
+                f'<div class="desvio-meta">Esp. {esp_it}% · Real {real_it}%</div></div>'
+                f'<div class="desvio-delta" style="color:{crit_clr_it}">{d_sign_it}{desvio_it}%</div>'
+                f'</li>'
+            )
+    else:
+        peores_items = '<li><div class="desvio-meta">No hay OTs con programación para calcular desvío.</div></li>'
+
+    h_desvio = next_sec("TABLERO EJECUTIVO DE DESVÍOS PLAN VS REAL")
+    desvio_html = f"""
+<div class="section print-new-page print-keep-together">
+  <div class="section-header">{h_desvio}</div>
+  <div class="desvio-wrap">
+    <div class="desvio-kpis">
+      <div class="desvio-kpi crit"><div class="v" style="color:#dc2626">{desvio_stats['crit']}</div><div class="l">OTs críticas</div></div>
+      <div class="desvio-kpi risk"><div class="v" style="color:#ea580c">{desvio_stats['riesgo']}</div><div class="l">OTs en riesgo</div></div>
+      <div class="desvio-kpi ok"><div class="v" style="color:#16a34a">{desvio_stats['normal']}</div><div class="l">OTs normales</div></div>
+      <div class="desvio-kpi np"><div class="v" style="color:#475569">{desvio_stats['sin_prog']}</div><div class="l">Sin programación</div></div>
+      <div class="desvio-kpi avg"><div class="v" style="color:{avg_clr}">{avg_sign}{avg_desvio}%</div><div class="l">Desvío promedio</div></div>
+    </div>
+    <div class="desvio-grid">
+      <div class="desvio-list-box">
+        <div class="desvio-list-head">Top 5 OTs con mayor desvío negativo</div>
+        <ul class="desvio-list">{peores_items}</ul>
+      </div>
+      <div class="desvio-hint">
+        <b>Reglas de criticidad</b><br>
+        ⛔ Crítico: desvío &lt; -20% y entrega en ≤ 30 días.<br>
+        ⚠ Riesgo: desvío entre -10% y -20%.<br>
+        ✔ Normal: desvío mayor a -10%.<br>
+        El detalle completo de cada OT se muestra en la sección de cronograma.
+      </div>
+    </div>
+  </div>
+</div>"""
 
     h_crono = next_sec("CRONOGRAMA DE ENTREGAS Y PRIORIDADES")
     crono_html = f"""
@@ -1268,6 +1353,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
   {estado_html}
   {grafico_html}
   {prod_html}
+  {desvio_html}
   {crono_html}
   {gantt_html}
   {obs_html}
