@@ -8,6 +8,7 @@ reportes_bp = Blueprint("reportes", __name__)
 STAGES  = ["ARMADO", "SOLDADURA", "PINTURA", "DESPACHO"]
 ST_LBL  = {"ARMADO": "Armado", "SOLDADURA": "Soldadura", "PINTURA": "Pintura", "DESPACHO": "Despacho"}
 ST_CLR  = {"ARMADO": "#3b82f6", "SOLDADURA": "#f97316", "PINTURA": "#22c55e", "DESPACHO": "#a855f7"}
+ST_BG   = {"ARMADO": "#bfdbfe", "SOLDADURA": "#fed7aa", "PINTURA": "#bbf7d0", "DESPACHO": "#ddd6fe"}
 ST_ABR  = {"ARMADO": "% A", "SOLDADURA": "% S", "PINTURA": "% P", "DESPACHO": "% D"}
 
 _OK     = ("OK", "APROBADO", "OBS", "OBSERVACION", "OBSERVACIÓN", "OM", "OP MEJORA", "OPORTUNIDAD DE MEJORA")
@@ -558,11 +559,13 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     .bar-ot-id { font-size: 11px; font-weight: 700; color: #e36c09; margin-right: 5px; }
     .bar-ot-titulo { font-size: 11px; color: #374151; }
     .bar-track { flex: 1; background: #f3f4f6; border-radius: 4px; height: 18px; overflow: hidden; position: relative; }
-    .bar-inner { display: flex; height: 100%; }
+    .bar-layer { position: absolute; inset: 0; display: flex; height: 100%; }
+    .bar-layer-real { overflow: hidden; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(17,24,39,.08); }
     .bar-seg { height: 100%; transition: width .3s; }
-    .bar-fill { height: 100%; border-radius: 4px; display: block; }
     .bar-fe { width: 80px; text-align: right; font-size: 10px; color: #6b7280; white-space: nowrap; margin-left: 8px; }
     .bar-real { width: 78px; text-align: right; font-size: 11px; color: #334155; white-space: nowrap; margin-left: 8px; font-weight: 800; }
+    .print-new-page { }
+    .print-keep-together { }
 
     /* Cronograma */
     .pri-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
@@ -606,29 +609,14 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
       body { color: #111827; }
       .report-wrap { max-width: 100%; padding: 0 0 12mm 0; }
       .no-print { display: none !important; }
-      .print-running-header {
-        display: flex;
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 12mm;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0 0 1.5mm 0;
-        background: #fff;
-        border-bottom: 1px solid #cbd5e1;
-        z-index: 1;
-      }
+      .print-running-header { display: none !important; }
 
-      /* Evita que cada bloque se vaya entero a una página distinta. */
       .section, .ficha { break-inside: auto; page-break-inside: auto; overflow: visible !important; }
+      .print-keep-together { break-inside: avoid; page-break-inside: avoid; }
+      .print-new-page { break-before: page; page-break-before: always; }
       .rpt-header, .firma-row { break-inside: avoid; page-break-inside: avoid; }
 
       .rpt-header {
-        position: relative;
-        z-index: 2;
-        margin-top: -18mm;
         border-radius: 0;
         box-shadow: none;
         padding: 10px 0 8px;
@@ -685,8 +673,8 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
       }
       .main-table {
         width: 100%;
-        page-break-inside: auto;
-        break-inside: auto;
+        page-break-inside: avoid;
+        break-inside: avoid;
       }
       .main-table thead {
         display: table-header-group;
@@ -742,7 +730,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 
       @page {
         size: A4 landscape;
-        margin: 18mm 12mm 14mm 12mm;
+        margin: 12mm 12mm 14mm 12mm;
       }
       * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     }
@@ -869,7 +857,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 
     h_estado = next_sec("ESTADO DE OTs POR PROCESO")
     estado_html = f"""
-<div class="section">
+<div class="section print-new-page print-keep-together">
   <div class="section-header">{h_estado}</div>
   <table class="main-table">
     <thead>
@@ -905,8 +893,9 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         ot_id, titulo, tipo_est, fe, _, _, _ = ot
         total = total_by_ot.get(ot_id, 0)
         avance_ot = max(0, min(100, int(d.get("avance_by_ot", {}).get(ot_id, 0))))
-        segs = ""
-        if total > 0 and avance_ot > 0:
+        bg_segs = ""
+        fg_segs = ""
+        if total > 0:
             pct_stage = {
                 s: _pct(appr[ot_id][s], total)
                 for s in STAGES
@@ -917,27 +906,31 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
                     p = pct_stage[s]
                     if p <= 0:
                         continue
-                    w = avance_ot * (p / pct_sum)
-                    segs += (
+                    w = 100 * (p / pct_sum)
+                    bg_segs += (
+                        f'<div class="bar-seg" style="width:{w:.2f}%;background:{ST_BG[s]};" '
+                        f'title="{ST_LBL[s]} (composición total): {w:.1f}%"></div>'
+                    )
+                    fg_segs += (
                         f'<div class="bar-seg" style="width:{w:.2f}%;background:{ST_CLR[s]};" '
-                        f'title="{ST_LBL[s]} (proporción visual): {w:.1f}% de barra, avance real OT: {avance_ot}%"></div>'
+                        f'title="{ST_LBL[s]}: avance real OT {avance_ot}%"></div>'
                     )
         fe_fmt = _fd(fe)
         bar_rows += f"""<div class="bar-row">
       <div class="bar-ot-label"><span class="bar-ot-id">OT {ot_id}</span><span class="bar-ot-titulo">{_e(titulo)}</span></div>
-      <div class="bar-track"><div class="bar-inner">{segs}</div></div>
+      <div class="bar-track"><div class="bar-layer">{bg_segs}</div><div class="bar-layer bar-layer-real" style="width:{avance_ot}%">{fg_segs}</div></div>
       <div class="bar-real">{avance_ot}% real</div>
       <div class="bar-fe">{fe_fmt}</div>
     </div>"""
 
     h_grafico = next_sec("AVANCE POR OT – VISTA GRÁFICA")
     grafico_html = f"""
-<div class="section">
+<div class="section print-new-page print-keep-together">
   <div class="section-header">{h_grafico}</div>
   <div class="bar-legend">{leg_items}</div>
   <div class="axis-labels"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
   {bar_rows}
-  <div class="legend-row">La barra coloreada se completa hasta el <b>% real</b> (campo <b>estado_avance</b> – <em>Avance físico ponderado por peso (kg)</em>, calculado en módulo Producción). Los colores muestran la composición visual por etapa dentro de ese avance.</div>
+  <div class="legend-row">La barra de fondo muestra la composición total por etapa en color claro. La barra superpuesta muestra el <b>% real</b> (campo <b>estado_avance</b>) en color más oscuro.</div>
 </div>"""
 
     # Sección Producción semanal (solo INTERNO)
@@ -1067,7 +1060,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 
     h_crono = next_sec("CRONOGRAMA DE ENTREGAS Y PRIORIDADES")
     crono_html = f"""
-<div class="section">
+<div class="section print-new-page print-keep-together">
   <div class="section-header">{h_crono}</div>
   <table class="main-table">
     <thead>
