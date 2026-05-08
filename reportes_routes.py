@@ -458,9 +458,12 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     periodo     = f"{week_start.strftime('%d %b')} – {week_end.strftime('%d %b %Y')}"
     semana_lbl  = f"Semana {d['week']}"
     today_str   = date.today().strftime("%d de %B de %Y")
-    avance_pct  = d["avance_global_pct"]
-    total_g     = d["total_global"]
-    n_ots       = len(ots)
+    avance_pct      = d["avance_global_pct"]
+    total_g         = d["total_global"]
+    n_ots           = len(ots)
+    kg_total_obra   = d.get("kg_total", 0.0)
+    kg_avance_total = sum(d.get("kg_avance_by_ot", {}).values())
+    today_d         = date.today()
 
     datos_desde = "–"
     if d["first_fecha"]:
@@ -600,7 +603,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
   <div class="ficha-row">
     <div class="ficha-cell"><span class="fc-label">Obra / Proyecto</span><span class="fc-val orange">{obra}</span></div>
     <div class="ficha-cell"><span class="fc-label">Cliente</span><span class="fc-val">{cliente}</span></div>
-    <div class="ficha-cell"><span class="fc-label">Avance global</span><span class="fc-val orange big">{avance_pct}%</span></div>
+    <div class="ficha-cell"><span class="fc-label">Avance global</span><span class="fc-val orange big">{avance_pct}%</span><span style="font-size:10px;color:#9ca3af;display:block;margin-top:2px">Físico pond. por HS previstas</span></div>
   </div>
   <div class="ficha-row">
     <div class="ficha-cell"><span class="fc-label">Período</span><span class="fc-val">{periodo}</span></div>
@@ -659,7 +662,13 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     <div class="kpi-box"><div class="kpi-val">{d['kg_prod']:,.1f} kg</div><div class="kpi-lbl">KG Producidos</div></div>
     <div class="kpi-box"><div class="kpi-val">{d['kg_desp']:,.1f} kg</div><div class="kpi-lbl">KG Despachados</div></div>
   </div>
-  <p class="kpi-note">Datos desde {datos_desde}. Las HS Consumidas se actualizan al registrar partes diarios en el sistema.</p>
+  <div class="kpi-row" style="grid-template-columns:repeat(4,1fr);background:#f0fdf4;border-top:1px solid #d1fae5;padding-top:10px;padding-bottom:10px">
+    <div class="kpi-box" style="background:#f0fdf4;border-color:#86efac"><div class="kpi-val" style="color:#166534">{kg_total_obra/1000:.2f} tn</div><div class="kpi-lbl">Tonnage total obra</div></div>
+    <div class="kpi-box" style="background:#f0fdf4;border-color:#86efac"><div class="kpi-val" style="color:#166534">{kg_avance_total/1000:.2f} tn</div><div class="kpi-lbl">Avanzado estimado (acum.)</div></div>
+    <div class="kpi-box" style="background:#f0fdf4;border-color:#86efac"><div class="kpi-val" style="color:#166534">{d['kg_prod']/1000:.2f} tn</div><div class="kpi-lbl">Producidas (período)</div></div>
+    <div class="kpi-box" style="background:#f0fdf4;border-color:#86efac"><div class="kpi-val" style="color:#166534">{d['kg_desp']/1000:.2f} tn</div><div class="kpi-lbl">Despachadas (período)</div></div>
+  </div>
+  <p class="kpi-note">Datos desde {datos_desde}. Las HS Consumidas se actualizan al registrar partes diarios en el sistema. Tonnage calculado desde registros de proceso ARMADO.</p>
 </div>"""
 
     # Sección Estado OTs por proceso
@@ -775,7 +784,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
   <div class="bar-legend">{leg_items}</div>
   <div class="axis-labels"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
   {bar_rows}
-  <div class="legend-row">La barra coloreada se completa hasta el <b>% real</b> (Producción, campo <b>estado_avance</b>). Los colores muestran la composición visual por etapa dentro de ese avance.</div>
+  <div class="legend-row">La barra coloreada se completa hasta el <b>% real</b> (campo <b>estado_avance</b> – <em>Avance físico ponderado por peso (kg)</em>, calculado en módulo Producción). Los colores muestran la composición visual por etapa dentro de ese avance.</div>
 </div>"""
 
     # Sección Producción semanal (solo INTERNO)
@@ -802,6 +811,17 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 </div>"""
 
     # Sección Cronograma
+    # Construir dict de programación por OT para cálculo de desvíos plan vs real
+    prog_by_ot = {}
+    for pr in d.get("prog_rows", []):
+        ot_id_pr = pr[0]
+        if ot_id_pr not in prog_by_ot:
+            try:
+                fi_pr = datetime.strptime(str(pr[1])[:10], "%Y-%m-%d").date()
+                ff_pr = datetime.strptime(str(pr[2])[:10], "%Y-%m-%d").date()
+                prog_by_ot[ot_id_pr] = (fi_pr, ff_pr)
+            except Exception:
+                pass
     ots_sorted = sorted(ots, key=lambda r: (r[3] or "9999-99-99", r[0]))
     crono_rows = ""
     for ot in ots_sorted:
@@ -831,7 +851,20 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
             est_cls, est_lbl = "none", "Sin iniciar"
 
         avance_color = '#22c55e' if pct_avance >= 75 else ('#f97316' if pct_avance >= 40 else '#ef4444')
-        crono_rows += f"""<tr>
+        # Desvío plan vs real
+        if ot_id in prog_by_ot:
+            fi_pr, ff_pr = prog_by_ot[ot_id]
+            total_days_pr = max((ff_pr - fi_pr).days, 1)
+            elapsed_pr = max(0, (today_d - fi_pr).days)
+            expected_pr = min(100, round(elapsed_pr / total_days_pr * 100))
+            desvio_pr = pct_avance - expected_pr
+            d_sign = "+" if desvio_pr >= 0 else ""
+            d_clr = "#16a34a" if desvio_pr >= 0 else "#dc2626"
+            desvio_html = f'<span style="color:{d_clr};font-weight:700">{d_sign}{desvio_pr}%</span><br><span style="font-size:10px;color:#6b7280">esp:{expected_pr}%</span>'
+        else:
+            desvio_html = '<span style="color:#9ca3af">–</span>'
+        row_bg_style = f' style="background:{pri_bg}"' if pri_lbl != "NORMAL" else ""
+        crono_rows += f"""<tr{row_bg_style}>
       <td><span class="pri-badge" style="background:{pri_bg};color:{pri_col}">{pri_lbl}</span></td>
       <td class="tc-ot">{ot_id}</td>
       <td class="tc-titulo">{_e(titulo)}</td>
@@ -840,6 +873,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
       <td>{mb(pct_pin, '#22c55e')}</td>
       <td>{mb(pct_des, '#a855f7')}</td>
       <td style="text-align:center;font-weight:700;color:{avance_color}">{pct_avance}%</td>
+      <td style="text-align:center;white-space:nowrap">{desvio_html}</td>
       <td class="tc-fe">{fe_fmt}</td>
       <td><span class="estado-badge {est_cls}">{est_lbl}</span></td>
     </tr>"""
@@ -852,7 +886,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     <thead>
       <tr><th>Prior.</th><th>OT</th><th>Título</th><th>Pzas</th>
           <th>Soldadura %</th><th>Pintura %</th><th>Despacho %</th>
-          <th>Avance</th><th>F. Entrega</th><th>Estado</th></tr>
+          <th>Avance</th><th>Desvío Plan</th><th>F. Entrega</th><th>Estado</th></tr>
     </thead>
     <tbody>{crono_rows}</tbody>
   </table>
