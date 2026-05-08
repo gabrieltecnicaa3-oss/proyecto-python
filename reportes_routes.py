@@ -839,6 +839,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         n_pin   = appr[ot_id]["PINTURA"]
         n_des   = appr[ot_id]["DESPACHO"]
         n_arm   = appr[ot_id]["ARMADO"]
+        pct_arm = _pct(n_arm, total)
         pct_sol = _pct(n_sol, total)
         pct_pin = _pct(n_pin, total)
         pct_des = _pct(n_des, total)
@@ -892,10 +893,9 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
                 crit_bg  = "#f0fdf4"
                 crit_clr = "#16a34a"
             desvio_html = (
-                f'<div style="font-size:10px;line-height:1.6;min-width:110px">'
-                f'<div><span style="color:#6b7280">Real:&nbsp;</span><b style="color:{avance_color}">{pct_avance}%</b></div>'
+                f'<div style="font-size:10px;line-height:1.6;min-width:100px">'
                 f'<div><span style="color:#6b7280">Esp:&nbsp;&nbsp;</span><b style="color:#374151">{expected_pr}%</b></div>'
-                f'<div><span style="color:#6b7280">Desv:&nbsp;</span><b style="color:{crit_clr}">{d_sign}{desvio_pr}%</b></div>'
+                f'<div><span style="color:#6b7280">Δ:&nbsp;&nbsp;&nbsp;&nbsp;</span><b style="color:{crit_clr}">{d_sign}{desvio_pr}%</b></div>'
                 f'<div style="margin-top:2px"><span class="pri-badge" style="background:{crit_bg};color:{crit_clr};font-size:9px">{crit_lbl}</span></div>'
                 f'</div>'
             )
@@ -911,6 +911,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
       <td class="tc-ot">{ot_id}</td>
       <td class="tc-titulo">{_e(titulo)}</td>
       <td>{total}</td>
+      <td>{mb(pct_arm, '#3b82f6')}</td>
       <td>{mb(pct_sol, '#f97316')}</td>
       <td>{mb(pct_pin, '#22c55e')}</td>
       <td>{mb(pct_des, '#a855f7')}</td>
@@ -926,8 +927,8 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
   <table class="main-table">
     <thead>
       <tr><th>Prior.</th><th>OT</th><th>Título</th><th>Pzas</th>
-          <th>Soldadura %</th><th>Pintura %</th><th>Despacho %</th>
-          <th>Avance</th><th>Desvío Plan (Real / Esp / Δ)</th><th>Estado</th></tr>
+          <th>Armado %</th><th>Soldadura %</th><th>Pintura %</th><th>Despacho %</th>
+          <th>Avance Real</th><th>Desvío Plan (Esp / Δ)</th><th>Estado</th></tr>
     </thead>
     <tbody>{crono_rows}</tbody>
   </table>
