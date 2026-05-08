@@ -544,9 +544,8 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     .bar-inner { display: flex; height: 100%; }
     .bar-seg { height: 100%; transition: width .3s; }
     .bar-fill { height: 100%; border-radius: 4px; display: block; }
-    .bar-pct { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 700; color: #374151; }
     .bar-fe { width: 80px; text-align: right; font-size: 10px; color: #6b7280; white-space: nowrap; margin-left: 8px; }
-    .bar-kg { width: 130px; text-align: right; font-size: 10px; color: #334155; white-space: nowrap; margin-left: 8px; font-weight: 700; }
+    .bar-real { width: 78px; text-align: right; font-size: 11px; color: #334155; white-space: nowrap; margin-left: 8px; font-weight: 800; }
 
     /* Cronograma */
     .pri-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
@@ -735,34 +734,48 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 </div>"""
 
     # Sección Avance gráfico
-    leg_items = (
-      '<span class="leg-seg"><span class="leg-dot" style="background:#93c5fd;width:12px;height:12px;border-radius:3px"></span>Avance OT (Producción, cálculo por KG)</span>'
+    leg_items = "".join(
+        f'<span class="leg-seg"><span class="leg-dot" style="background:{ST_CLR[s]};width:12px;height:12px;border-radius:3px"></span>{ST_LBL[s]}</span>'
+        for s in STAGES
     )
     bar_rows = ""
     for ot in ots:
         ot_id, titulo, tipo_est, fe, _, _, _ = ot
+        total = total_by_ot.get(ot_id, 0)
         avance_ot = max(0, min(100, int(d.get("avance_by_ot", {}).get(ot_id, 0))))
-        fill_color = '#93c5fd'
-        segs = f'<span class="bar-fill" style="width:{avance_ot}%;background:{fill_color};" title="Avance OT {ot_id}: {avance_ot}%"></span>'
+        segs = ""
+        if total > 0 and avance_ot > 0:
+            pct_stage = {
+                s: _pct(appr[ot_id][s], total)
+                for s in STAGES
+            }
+            pct_sum = sum(pct_stage.values())
+            if pct_sum > 0:
+                for s in STAGES:
+                    p = pct_stage[s]
+                    if p <= 0:
+                        continue
+                    w = avance_ot * (p / pct_sum)
+                    segs += (
+                        f'<div class="bar-seg" style="width:{w:.2f}%;background:{ST_CLR[s]};" '
+                        f'title="{ST_LBL[s]} (proporción visual): {w:.1f}% de barra, avance real OT: {avance_ot}%"></div>'
+                    )
         fe_fmt = _fd(fe)
-        kg_av_ot = float(d.get("kg_avance_by_ot", {}).get(ot_id, 0.0) or 0.0)
-        kg_tot_ot = float(d.get("kg_total_by_ot", {}).get(ot_id, 0.0) or 0.0)
-        kg_lbl = f"{kg_av_ot:,.1f}/{kg_tot_ot:,.1f} kg" if kg_tot_ot > 0 else "—"
         bar_rows += f"""<div class="bar-row">
       <div class="bar-ot-label"><span class="bar-ot-id">OT {ot_id}</span><span class="bar-ot-titulo">{_e(titulo)}</span></div>
-      <div class="bar-track"><div class="bar-inner">{segs}</div><span class="bar-pct">{avance_ot}%</span></div>
+      <div class="bar-track"><div class="bar-inner">{segs}</div></div>
+      <div class="bar-real">{avance_ot}% real</div>
       <div class="bar-fe">{fe_fmt}</div>
-      <div class="bar-kg">{kg_lbl}</div>
     </div>"""
 
-    h_grafico = next_sec("AVANCE POR OT – VISTA GRÁFICA (KG)")
+    h_grafico = next_sec("AVANCE POR OT – VISTA GRÁFICA")
     grafico_html = f"""
 <div class="section">
   <div class="section-header">{h_grafico}</div>
   <div class="bar-legend">{leg_items}</div>
   <div class="axis-labels"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
   {bar_rows}
-  <div class="legend-row">Criterio: el % de cada barra se toma de Producción (campo <b>estado_avance</b>, calculado por KG). Columna derecha: <b>kg avanzados / kg totales</b> por OT.</div>
+  <div class="legend-row">La barra coloreada se completa hasta el <b>% real</b> (Producción, campo <b>estado_avance</b>). Los colores muestran la composición visual por etapa dentro de ese avance.</div>
 </div>"""
 
     # Sección Producción semanal (solo INTERNO)
