@@ -592,14 +592,120 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     .firma-cargo { font-size: 11px; color: #6b7280; }
     .firma-nombre { font-size: 11.5px; font-weight: 600; color: #1f2937; margin-top: 2px; }
 
+    .print-page-footer { display: none; }
+
     /* Print */
     @media print {
-        body { background: #fff; font-size: 11px; }
-        .report-wrap { max-width: 100%; padding: 0; }
-        .no-print { display: none !important; }
-        .section, .ficha, .rpt-header { break-inside: avoid; }
-        @page { size: A4 landscape; margin: 10mm; }
-        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      html, body { background: #fff; font-size: 10.5px; }
+      body { color: #111827; }
+      .report-wrap { max-width: 100%; padding: 0 0 12mm 0; }
+      .no-print { display: none !important; }
+
+      /* Evita que cada bloque se vaya entero a una página distinta. */
+      .section, .ficha { break-inside: auto; page-break-inside: auto; }
+      .rpt-header, .firma-row { break-inside: avoid; page-break-inside: avoid; }
+
+      .rpt-header {
+        border-radius: 0;
+        box-shadow: none;
+        padding: 10px 0 8px;
+        background: transparent;
+        color: #111827;
+        border-bottom: 2px solid #cbd5e1;
+        border-top: 3px solid #e36c09;
+      }
+      .rpt-title, .rpt-date, .rpt-subtitle { color: #111827; text-shadow: none; }
+      .rpt-badge {
+        background: #fff7ed;
+        color: #9a3412;
+        border: 1px solid #fdba74;
+      }
+
+      .ficha {
+        border: none;
+        margin-top: 4mm;
+      }
+      .ficha-row {
+        border-bottom: 1px solid #dbe4ee;
+      }
+      .ficha-cell {
+        padding: 7px 10px;
+      }
+
+      .section {
+        border: none;
+        border-top: 1px solid #dbe4ee;
+        margin-top: 4mm;
+        padding-top: 0;
+      }
+      .section-header {
+        background: transparent;
+        border-left: none;
+        border-bottom: 1px solid #cbd5e1;
+        color: #9a3412;
+        padding: 6px 0 5px;
+      }
+      .section-body,
+      .prod-section,
+      .bar-legend,
+      .legend-row,
+      .axis-labels,
+      .bar-row {
+        padding-left: 0;
+        padding-right: 0;
+      }
+
+      .kpi-box, .prod-kpi {
+        box-shadow: none;
+        border-radius: 4px;
+      }
+      .main-table th {
+        background: #e5e7eb;
+        color: #111827;
+        border-bottom: 1px solid #cbd5e1;
+      }
+      .main-table td {
+        border-bottom: 1px solid #e5e7eb;
+      }
+      .main-table tbody tr:hover {
+        background: transparent;
+      }
+      .obs-grid {
+        gap: 10px;
+      }
+      .obs-col {
+        border-right: none;
+        padding: 8px 0;
+      }
+      .firma-row {
+        margin-top: 8mm;
+        padding: 8mm 0 0;
+        border-top: 1px solid #dbe4ee;
+      }
+
+      .print-page-footer {
+        display: flex;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 9px;
+        color: #64748b;
+        border-top: 1px solid #cbd5e1;
+        padding: 2mm 0 0;
+        background: #fff;
+      }
+      .print-page-number::after {
+        content: "Página " counter(page);
+      }
+
+      @page {
+        size: A4 landscape;
+        margin: 12mm 12mm 14mm 12mm;
+      }
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     }
     """
 
@@ -1091,6 +1197,11 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
   {obs_html}
   {firma_html}
 
+</div>
+
+<div class="print-page-footer">
+  <span>{obra} · {periodo_lbl}</span>
+  <span class="print-page-number"></span>
 </div>
 </body>
 </html>"""
