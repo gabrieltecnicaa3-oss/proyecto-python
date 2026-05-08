@@ -859,19 +859,53 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
             est_cls, est_lbl = "none", "Sin iniciar"
 
         avance_color = '#22c55e' if pct_avance >= 75 else ('#f97316' if pct_avance >= 40 else '#ef4444')
-        # Desvío plan vs real
+        # Desvío plan vs real – 3 niveles de criticidad
+        desvio_pr     = None
+        expected_pr   = None
+        crit_lbl      = ""
+        crit_bg       = ""
+        crit_clr      = ""
+        desvio_html   = '<span style="color:#9ca3af">–</span>'
         if ot_id in prog_by_ot:
-            fi_pr, ff_pr = prog_by_ot[ot_id]
+            fi_pr, ff_pr  = prog_by_ot[ot_id]
             total_days_pr = max((ff_pr - fi_pr).days, 1)
-            elapsed_pr = max(0, (today_d - fi_pr).days)
-            expected_pr = min(100, round(elapsed_pr / total_days_pr * 100))
-            desvio_pr = pct_avance - expected_pr
-            d_sign = "+" if desvio_pr >= 0 else ""
-            d_clr = "#16a34a" if desvio_pr >= 0 else "#dc2626"
-            desvio_html = f'<span style="color:{d_clr};font-weight:700">{d_sign}{desvio_pr}%</span><br><span style="font-size:10px;color:#6b7280">esp:{expected_pr}%</span>'
+            elapsed_pr    = max(0, (today_d - fi_pr).days)
+            expected_pr   = min(100, round(elapsed_pr / total_days_pr * 100))
+            desvio_pr     = pct_avance - expected_pr
+            d_sign        = "+" if desvio_pr >= 0 else ""
+            # Días para fecha de entrega para combinar con desvío
+            try:
+                dias_fe = (datetime.strptime(str(fe)[:10], "%Y-%m-%d").date() - today_d).days
+            except Exception:
+                dias_fe = 999
+            # Niveles: CRÍTICO = desvío < -20% Y fecha próxima (≤30d); RIESGO = -20% a -10%; NORMAL = > -10%
+            if desvio_pr < -20 and dias_fe <= 30:
+                crit_lbl = "⛔ CRÍTICO"
+                crit_bg  = "#fef2f2"
+                crit_clr = "#dc2626"
+            elif desvio_pr <= -10:
+                crit_lbl = "⚠ RIESGO"
+                crit_bg  = "#fff7ed"
+                crit_clr = "#ea580c"
+            else:
+                crit_lbl = "✔ NORMAL"
+                crit_bg  = "#f0fdf4"
+                crit_clr = "#16a34a"
+            desvio_html = (
+                f'<div style="font-size:10px;line-height:1.6;min-width:110px">'
+                f'<div><span style="color:#6b7280">Real:&nbsp;</span><b style="color:{avance_color}">{pct_avance}%</b></div>'
+                f'<div><span style="color:#6b7280">Esp:&nbsp;&nbsp;</span><b style="color:#374151">{expected_pr}%</b></div>'
+                f'<div><span style="color:#6b7280">Desv:&nbsp;</span><b style="color:{crit_clr}">{d_sign}{desvio_pr}%</b></div>'
+                f'<div style="margin-top:2px"><span class="pri-badge" style="background:{crit_bg};color:{crit_clr};font-size:9px">{crit_lbl}</span></div>'
+                f'</div>'
+            )
+        # Row background: criticidad de desvío (si hay dato) tiene precedencia, sino prioridad de fecha
+        if crit_bg and crit_lbl not in ("✔ NORMAL",):
+            row_bg_style = f' style="background:{crit_bg}"'
+        elif pri_lbl != "NORMAL":
+            row_bg_style = f' style="background:{pri_bg}"'
         else:
-            desvio_html = '<span style="color:#9ca3af">–</span>'
-        row_bg_style = f' style="background:{pri_bg}"' if pri_lbl != "NORMAL" else ""
+            row_bg_style = ""
         crono_rows += f"""<tr{row_bg_style}>
       <td><span class="pri-badge" style="background:{pri_bg};color:{pri_col}">{pri_lbl}</span></td>
       <td class="tc-ot">{ot_id}</td>
@@ -898,6 +932,16 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     </thead>
     <tbody>{crono_rows}</tbody>
   </table>
+  <div class="legend-row" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:8px 16px">
+    <span style="font-weight:700;color:#374151;font-size:11px">Criticidad de desvío:</span>
+    <span><span class="pri-badge" style="background:#fef2f2;color:#dc2626">⛔ CRÍTICO</span>
+      <span style="font-size:10px;color:#6b7280">&nbsp;Desv &lt; −20% y entrega ≤ 30 días</span></span>
+    <span><span class="pri-badge" style="background:#fff7ed;color:#ea580c">⚠ RIESGO</span>
+      <span style="font-size:10px;color:#6b7280">&nbsp;Desv −10% a −20%</span></span>
+    <span><span class="pri-badge" style="background:#f0fdf4;color:#16a34a">✔ NORMAL</span>
+      <span style="font-size:10px;color:#6b7280">&nbsp;Desv &gt; −10%</span></span>
+    <span style="font-size:10px;color:#9ca3af">&nbsp;|&nbsp; "–" = sin programación cargada</span>
+  </div>
 </div>"""
 
     # Sección Gantt
