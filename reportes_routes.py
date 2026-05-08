@@ -659,13 +659,32 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         box-shadow: none;
         border-radius: 4px;
       }
+      .main-table {
+        width: 100%;
+        page-break-inside: auto;
+        break-inside: auto;
+      }
+      .main-table thead {
+        display: table-header-group;
+      }
+      .main-table tfoot {
+        display: table-footer-group;
+      }
+      .main-table tr {
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
       .main-table th {
         background: #e5e7eb;
         color: #111827;
         border-bottom: 1px solid #cbd5e1;
+        page-break-inside: avoid;
+        break-inside: avoid;
       }
       .main-table td {
         border-bottom: 1px solid #e5e7eb;
+        page-break-inside: avoid;
+        break-inside: avoid;
       }
       .main-table tbody tr:hover {
         background: transparent;
