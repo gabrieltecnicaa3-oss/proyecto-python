@@ -503,6 +503,12 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     .rpt-date { font-size: 12px; opacity: .85; }
     .rpt-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700;
         background: rgba(255,255,255,.22); border: 1px solid rgba(255,255,255,.4); margin-bottom: 4px; }
+    .print-running-header { display: none; }
+    .print-running-header-left { display: flex; align-items: center; gap: 10px; }
+    .print-running-logo { height: 22px; object-fit: contain; }
+    .print-running-title { font-size: 10.5px; font-weight: 700; color: #111827; }
+    .print-running-meta { font-size: 9px; color: #6b7280; margin-top: 1px; }
+    .print-running-right { text-align: right; }
 
     /* Ficha técnica */
     .ficha { background: #fff; border: 1px solid #e5e7eb; border-top: none; }
@@ -600,12 +606,29 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
       body { color: #111827; }
       .report-wrap { max-width: 100%; padding: 0 0 12mm 0; }
       .no-print { display: none !important; }
+      .print-running-header {
+        display: flex;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 12mm;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 0 1.5mm 0;
+        background: #fff;
+        border-bottom: 1px solid #cbd5e1;
+        z-index: 1;
+      }
 
       /* Evita que cada bloque se vaya entero a una página distinta. */
-      .section, .ficha { break-inside: auto; page-break-inside: auto; }
+      .section, .ficha { break-inside: auto; page-break-inside: auto; overflow: visible !important; }
       .rpt-header, .firma-row { break-inside: avoid; page-break-inside: avoid; }
 
       .rpt-header {
+        position: relative;
+        z-index: 2;
+        margin-top: -18mm;
         border-radius: 0;
         box-shadow: none;
         padding: 10px 0 8px;
@@ -651,6 +674,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
       .legend-row,
       .axis-labels,
       .bar-row {
+        overflow: visible !important;
         padding-left: 0;
         padding-right: 0;
       }
@@ -678,13 +702,9 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         background: #e5e7eb;
         color: #111827;
         border-bottom: 1px solid #cbd5e1;
-        page-break-inside: avoid;
-        break-inside: avoid;
       }
       .main-table td {
         border-bottom: 1px solid #e5e7eb;
-        page-break-inside: avoid;
-        break-inside: avoid;
       }
       .main-table tbody tr:hover {
         background: transparent;
@@ -722,7 +742,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 
       @page {
         size: A4 landscape;
-        margin: 12mm 12mm 14mm 12mm;
+        margin: 18mm 12mm 14mm 12mm;
       }
       * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     }
@@ -1188,6 +1208,20 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     <button onclick="window.print()" style="padding:8px 20px;background:#e36c09;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px">🖨 Imprimir / PDF</button>
     <a href="/modulo/reportes" style="display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:#e36c09;color:#fff;border-radius:8px;font-size:13px;font-weight:700;text-decoration:none">← Volver</a>
     <span style="font-size:11px;color:#9ca3af;margin-left:auto">{tipo_label}</span>
+  </div>
+
+  <div class="print-running-header">
+    <div class="print-running-header-left">
+      <img src="/logo-a3" alt="A3" class="print-running-logo">
+      <div>
+        <div class="print-running-title">{obra} · {report_title}</div>
+        <div class="print-running-meta">{periodo_lbl} · {periodo}</div>
+      </div>
+    </div>
+    <div class="print-running-right">
+      <div class="print-running-title">{tipo_label}</div>
+      <div class="print-running-meta">{week_end.strftime('%d %b %Y')}</div>
+    </div>
   </div>
 
   <!-- Encabezado -->
