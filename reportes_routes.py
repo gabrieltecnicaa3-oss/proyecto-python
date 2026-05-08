@@ -254,8 +254,16 @@ def _collect(db, obra, year, week, week_start, week_end):
       for oid in ot_ids
     }
 
-    # Avance global alineado con Producción (promedio ponderado por HS previstas)
-    if hs_prev > 0:
+    # Avance global ponderado por KG (peso físico de cada OT)
+    kg_total_suma = sum(kg_total_by_ot.values())
+    if kg_total_suma > 0:
+      ponderado = sum(
+        avance_by_ot.get(oid, 0) * kg_total_by_ot.get(oid, 0.0)
+        for oid in ot_ids
+      )
+      avance_global_pct = round(ponderado / kg_total_suma)
+    elif hs_prev > 0:
+      # Fallback: ponderar por HS si no hay datos de KG
       ponderado = 0.0
       for ot in ots:
         oid = int(ot[0])
@@ -603,7 +611,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
   <div class="ficha-row">
     <div class="ficha-cell"><span class="fc-label">Obra / Proyecto</span><span class="fc-val orange">{obra}</span></div>
     <div class="ficha-cell"><span class="fc-label">Cliente</span><span class="fc-val">{cliente}</span></div>
-    <div class="ficha-cell"><span class="fc-label">Avance global</span><span class="fc-val orange big">{avance_pct}%</span><span style="font-size:10px;color:#9ca3af;display:block;margin-top:2px">Físico pond. por HS previstas</span></div>
+    <div class="ficha-cell"><span class="fc-label">Avance global</span><span class="fc-val orange big">{avance_pct}%</span><span style="font-size:10px;color:#9ca3af;display:block;margin-top:2px">Físico pond. por peso (kg)</span></div>
   </div>
   <div class="ficha-row">
     <div class="ficha-cell"><span class="fc-label">Período</span><span class="fc-val">{periodo}</span></div>
