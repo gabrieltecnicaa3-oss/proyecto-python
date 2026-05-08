@@ -899,7 +899,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
             pct_sum = sum(pct_stage.values())
             if pct_sum > 0:
                 pos_left = 0.0
-                av = float(avance_ot)
+                av_ratio = float(avance_ot) / 100.0
                 for s in STAGES:
                     p = pct_stage[s]
                     if p <= 0:
@@ -911,15 +911,14 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
                         f'height:100%;background:{ST_BG[s]};" '
                         f'title="{ST_LBL[s]}: {w:.1f}%"></div>'
                     )
-                    # foreground segment: clipped to avance_ot boundary
-                    fg_l = min(pos_left, av)
-                    fg_r = min(pos_left + w, av)
-                    fg_w = fg_r - fg_l
+                    # foreground segment: progressive fill inside each stage
+                    fg_l = pos_left
+                    fg_w = w * av_ratio
                     if fg_w > 0:
                         segs_html += (
                             f'<div style="position:absolute;left:{fg_l:.3f}%;width:{fg_w:.3f}%;'
                             f'height:100%;background:{ST_CLR[s]};" '
-                            f'title="{ST_LBL[s]} avance: {fg_w:.1f}%"></div>'
+                        f'title="{ST_LBL[s]} avance real: {avance_ot}%"></div>'
                         )
                     pos_left += w
         fe_fmt = _fd(fe)
