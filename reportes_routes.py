@@ -916,7 +916,6 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
       <td>{mb(pct_des, '#a855f7')}</td>
       <td style="text-align:center;font-weight:700;color:{avance_color}">{pct_avance}%</td>
       <td style="text-align:center;white-space:nowrap">{desvio_html}</td>
-      <td class="tc-fe">{fe_fmt}</td>
       <td><span class="estado-badge {est_cls}">{est_lbl}</span></td>
     </tr>"""
 
@@ -928,7 +927,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     <thead>
       <tr><th>Prior.</th><th>OT</th><th>Título</th><th>Pzas</th>
           <th>Soldadura %</th><th>Pintura %</th><th>Despacho %</th>
-          <th>Avance</th><th>Desvío Plan</th><th>F. Entrega</th><th>Estado</th></tr>
+          <th>Avance</th><th>Desvío Plan (Real / Esp / Δ)</th><th>Estado</th></tr>
     </thead>
     <tbody>{crono_rows}</tbody>
   </table>
