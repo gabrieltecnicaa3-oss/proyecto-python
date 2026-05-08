@@ -96,7 +96,7 @@ def _collect(db, obra, year, week, week_start, week_end):
             if r[0] in appr:
                 appr[r[0]][stage] = r[1]
 
-    # Avance global calculado desde piezas (crédito 25% por etapa)
+    # Avance global histórico (piezas por etapa)
     n_arm_g = sum(appr[oid]["ARMADO"]    for oid in ot_ids)
     n_sol_g = sum(appr[oid]["SOLDADURA"] for oid in ot_ids)
     n_pin_g = sum(appr[oid]["PINTURA"]   for oid in ot_ids)
@@ -224,6 +224,51 @@ def _collect(db, obra, year, week, week_start, week_end):
       ot_id = int(ot[0])
       avance_by_ot[ot_id] = max(0, min(100, int(ot[6] or 0)))
 
+    # KG totales estimados por OT (base para referencia de la vista por KG)
+    kg_total_by_ot = {}
+    kg_rows = db.execute(
+      f"""
+      WITH base AS (
+        SELECT ot_id,
+             TRIM(COALESCE(posicion, '')) AS pos,
+             MAX(COALESCE(cantidad, 1)) AS cant,
+             MAX(COALESCE(peso, 0)) AS peso
+        FROM procesos
+        WHERE ot_id IN ({ph})
+          AND eliminado = 0
+          AND TRIM(COALESCE(posicion, '')) <> ''
+        GROUP BY ot_id, TRIM(COALESCE(posicion, ''))
+      )
+      SELECT ot_id,
+           COALESCE(SUM(CASE WHEN cant > 0 AND peso > 0 THEN cant * peso ELSE 0 END), 0) AS kg_total
+      FROM base
+      GROUP BY ot_id
+      """,
+      ot_ids,
+    ).fetchall()
+    for r in kg_rows:
+      kg_total_by_ot[int(r[0])] = float(r[1] or 0.0)
+
+    kg_avance_by_ot = {
+      oid: round((kg_total_by_ot.get(oid, 0.0) * avance_by_ot.get(oid, 0)) / 100.0, 1)
+      for oid in ot_ids
+    }
+
+    # Avance global alineado con Producción (promedio ponderado por HS previstas)
+    if hs_prev > 0:
+      ponderado = 0.0
+      for ot in ots:
+        oid = int(ot[0])
+        hs_ot = float(ot[5] or 0.0)
+        if hs_ot > 0:
+          ponderado += avance_by_ot.get(oid, 0) * hs_ot
+      avance_global_pct = round(ponderado / hs_prev)
+    else:
+      avance_global_pct = round(sum(avance_by_ot.values()) / len(avance_by_ot)) if avance_by_ot else 0
+
+    hs_segun    = avance_global_pct / 100.0 * hs_prev
+    eficiencia  = round(hs_cons / hs_segun * 100, 1) if hs_segun else 0.0
+
     return dict(
         obra=obra, cliente=cliente,
         ots=ots, ot_ids=ot_ids,
@@ -233,6 +278,7 @@ def _collect(db, obra, year, week, week_start, week_end):
         n_arm_g=n_arm_g, n_sol_g=n_sol_g, n_pin_g=n_pin_g, n_des_g=n_des_g,
         hs_prev=hs_prev, hs_cons=hs_cons, hs_segun=hs_segun, eficiencia=eficiencia,
         kg_prod=kg_prod, kg_desp=kg_desp, kg_total=kg_total,
+        kg_total_by_ot=kg_total_by_ot, kg_avance_by_ot=kg_avance_by_ot,
         week_labels=week_labels, week_vals=week_vals,
         first_fecha=first_fecha, n_prev=n_prev, n_this=n_this,
         year=year, week=week, week_start=week_start, week_end=week_end,
@@ -500,6 +546,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     .bar-fill { height: 100%; border-radius: 4px; display: block; }
     .bar-pct { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 700; color: #374151; }
     .bar-fe { width: 80px; text-align: right; font-size: 10px; color: #6b7280; white-space: nowrap; margin-left: 8px; }
+    .bar-kg { width: 130px; text-align: right; font-size: 10px; color: #334155; white-space: nowrap; margin-left: 8px; font-weight: 700; }
 
     /* Cronograma */
     .pri-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
@@ -634,7 +681,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
             pct = _pct(n, total)
             clr = _pct_clr(pct)
             cells += f'<td class="proc-frac">{n}/{total}</td><td style="color:{clr};font-weight:700">{pct}%</td>'
-        pct_av_ot = round((n_arm_ot + n_sol_ot + n_pin_ot + n_des_ot) / (4 * total) * 100) if total else 0
+        pct_av_ot = max(0, min(100, int(d.get("avance_by_ot", {}).get(ot_id, 0))))
         av_clr = _pct_clr(pct_av_ot)
         fe_fmt = _fd(fe)
         tipo_s = _e(tipo_est) or "–"
@@ -654,9 +701,8 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         pt  = _pct(nt, total_g)
         clr = _pct_clr(pt)
         tot_cells += f'<td><b>{nt}/{total_g}</b></td><td style="color:{clr};font-weight:700"><b>{pt}%</b></td>'
-    # Avance total ponderado global
-    tot_credito = sum(appr[oid]["ARMADO"] + appr[oid]["SOLDADURA"] + appr[oid]["PINTURA"] + appr[oid]["DESPACHO"] for oid in d["ot_ids"])
-    pct_av_g = round(tot_credito / (4 * total_g) * 100) if total_g else 0
+    # Avance global alineado con Producción
+    pct_av_g = max(0, min(100, int(avance_pct)))
     av_g_clr = _pct_clr(pct_av_g)
     tot_cells += f'<td style="color:{av_g_clr};font-weight:700"><b>{pct_av_g}%</b></td>'
 
@@ -690,28 +736,33 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 
     # Sección Avance gráfico
     leg_items = (
-      '<span class="leg-seg"><span class="leg-dot" style="background:#2563eb;width:12px;height:12px;border-radius:3px"></span>Avance OT (Estado de Producción)</span>'
+      '<span class="leg-seg"><span class="leg-dot" style="background:#93c5fd;width:12px;height:12px;border-radius:3px"></span>Avance OT (Producción, cálculo por KG)</span>'
     )
     bar_rows = ""
     for ot in ots:
         ot_id, titulo, tipo_est, fe, _, _, _ = ot
         avance_ot = max(0, min(100, int(d.get("avance_by_ot", {}).get(ot_id, 0))))
-        fill_color = '#22c55e' if avance_ot >= 75 else ('#f97316' if avance_ot >= 40 else '#ef4444')
+        fill_color = '#93c5fd'
         segs = f'<span class="bar-fill" style="width:{avance_ot}%;background:{fill_color};" title="Avance OT {ot_id}: {avance_ot}%"></span>'
         fe_fmt = _fd(fe)
+        kg_av_ot = float(d.get("kg_avance_by_ot", {}).get(ot_id, 0.0) or 0.0)
+        kg_tot_ot = float(d.get("kg_total_by_ot", {}).get(ot_id, 0.0) or 0.0)
+        kg_lbl = f"{kg_av_ot:,.1f}/{kg_tot_ot:,.1f} kg" if kg_tot_ot > 0 else "—"
         bar_rows += f"""<div class="bar-row">
       <div class="bar-ot-label"><span class="bar-ot-id">OT {ot_id}</span><span class="bar-ot-titulo">{_e(titulo)}</span></div>
       <div class="bar-track"><div class="bar-inner">{segs}</div><span class="bar-pct">{avance_ot}%</span></div>
       <div class="bar-fe">{fe_fmt}</div>
+      <div class="bar-kg">{kg_lbl}</div>
     </div>"""
 
-    h_grafico = next_sec("AVANCE POR OT – VISTA GRÁFICA")
+    h_grafico = next_sec("AVANCE POR OT – VISTA GRÁFICA (KG)")
     grafico_html = f"""
 <div class="section">
   <div class="section-header">{h_grafico}</div>
   <div class="bar-legend">{leg_items}</div>
   <div class="axis-labels"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
   {bar_rows}
+  <div class="legend-row">Criterio: el % de cada barra se toma de Producción (campo <b>estado_avance</b>, calculado por KG). Columna derecha: <b>kg avanzados / kg totales</b> por OT.</div>
 </div>"""
 
     # Sección Producción semanal (solo INTERNO)
