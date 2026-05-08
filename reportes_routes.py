@@ -60,20 +60,35 @@ def _collect(db, obra, year, week, week_start, week_end):
     we  = week_end.strftime("%Y-%m-%d")
     six = (week_start - timedelta(weeks=5)).strftime("%Y-%m-%d")
 
-    # OTs de la obra
-    ots = db.execute(
+    # OTs de una obra puntual o de todas las obras
+    if obra:
+      ots = db.execute(
         "SELECT id, titulo, tipo_estructura, fecha_entrega, cliente, hs_previstas, estado_avance "
         "FROM ordenes_trabajo WHERE obra=? AND estado != 'INACTIVO' "
         "ORDER BY fecha_entrega ASC, id ASC",
         (obra,)
-    ).fetchall()
+      ).fetchall()
+    else:
+      ots = db.execute(
+        "SELECT id, titulo, tipo_estructura, fecha_entrega, cliente, hs_previstas, estado_avance "
+        "FROM ordenes_trabajo "
+        "WHERE TRIM(COALESCE(obra,'')) != '' AND estado != 'INACTIVO' "
+        "ORDER BY fecha_entrega ASC, id ASC"
+      ).fetchall()
 
     if not ots:
         return None
 
     ot_ids  = [r[0] for r in ots]
     ph      = ",".join("?" * len(ot_ids))
-    cliente = next((r[4] for r in ots if r[4]), obra)
+    obra_label = obra if obra else "TODAS LAS OBRAS"
+    cliente = next((r[4] for r in ots if r[4]), obra_label)
+
+    ot_obra_rows = db.execute(
+      f"SELECT id, COALESCE(obra, '') FROM ordenes_trabajo WHERE id IN ({ph})",
+      ot_ids
+    ).fetchall()
+    ot_obra_by_id = {int(r[0]): str(r[1] or "") for r in ot_obra_rows}
 
     # Total piezas por OT
     rows = db.execute(
@@ -279,8 +294,9 @@ def _collect(db, obra, year, week, week_start, week_end):
     eficiencia  = round(hs_cons / hs_segun * 100, 1) if hs_segun else 0.0
 
     return dict(
-        obra=obra, cliente=cliente,
+        obra=obra_label, cliente=cliente,
         ots=ots, ot_ids=ot_ids,
+        all_obras=(obra is None), ot_obra_by_id=ot_obra_by_id,
         total_by_ot=total_by_ot, total_global=total_global,
         appr=appr,
         avance_global_pct=avance_global_pct,
@@ -462,6 +478,8 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     cliente     = _e(d["cliente"])
     ots         = d["ots"]
     is_interno  = tipo == "INTERNO"
+    all_obras   = bool(d.get("all_obras", False))
+    ot_obra_by_id = d.get("ot_obra_by_id", {})
     week_start  = d["week_start"]
     week_end    = d["week_end"]
     periodo     = f"{week_start.strftime('%d %b')} – {week_end.strftime('%d %b %Y')}"
@@ -816,6 +834,8 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     table_rows = ""
     for ot in ots:
         ot_id, titulo, tipo_est, fe, _, _, _ = ot
+        obra_ot = _e(ot_obra_by_id.get(int(ot_id), ""))
+        titulo_mostrar = f"[{obra_ot}] {_e(titulo)}" if all_obras and obra_ot else _e(titulo)
         total = total_by_ot.get(ot_id, 0)
         cells = ""
         n_arm_ot = appr[ot_id]["ARMADO"]
@@ -833,7 +853,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         tipo_s = _e(tipo_est) or "–"
         table_rows += f"""<tr>
       <td class="tc-ot">{ot_id}</td>
-      <td class="tc-titulo">{_e(titulo)}</td>
+      <td class="tc-titulo">{titulo_mostrar}</td>
       <td>{tipo_s}</td>
       <td>{total}</td>
       {cells}
@@ -888,6 +908,8 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     bar_rows = ""
     for ot in ots:
         ot_id, titulo, tipo_est, fe, _, _, _ = ot
+        obra_ot = _e(ot_obra_by_id.get(int(ot_id), ""))
+        titulo_mostrar = f"[{obra_ot}] {_e(titulo)}" if all_obras and obra_ot else _e(titulo)
         total = total_by_ot.get(ot_id, 0)
         avance_ot = max(0, min(100, int(d.get("avance_by_ot", {}).get(ot_id, 0))))
         segs_html = ""
@@ -923,7 +945,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
                     pos_left += w
         fe_fmt = _fd(fe)
         bar_rows += f"""<div class="bar-row">
-      <div class="bar-ot-label"><span class="bar-ot-id">OT {ot_id}</span><span class="bar-ot-titulo">{_e(titulo)}</span></div>
+      <div class="bar-ot-label"><span class="bar-ot-id">OT {ot_id}</span><span class="bar-ot-titulo">{titulo_mostrar}</span></div>
       <div class="bar-track">{segs_html}</div>
       <div class="bar-real">{avance_ot}% real</div>
       <div class="bar-fe">{fe_fmt}</div>
@@ -978,6 +1000,8 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     crono_rows = ""
     for ot in ots_sorted:
         ot_id, titulo, tipo_est, fe, _, _, _ = ot
+        obra_ot = _e(ot_obra_by_id.get(int(ot_id), ""))
+        titulo_mostrar = f"[{obra_ot}] {_e(titulo)}" if all_obras and obra_ot else _e(titulo)
         total   = total_by_ot.get(ot_id, 0)
         n_sol   = appr[ot_id]["SOLDADURA"]
         n_pin   = appr[ot_id]["PINTURA"]
@@ -1053,7 +1077,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         crono_rows += f"""<tr{row_bg_style}>
       <td><span class="pri-badge" style="background:{pri_bg};color:{pri_col}">{pri_lbl}</span></td>
       <td class="tc-ot">{ot_id}</td>
-      <td class="tc-titulo">{_e(titulo)}</td>
+      <td class="tc-titulo">{titulo_mostrar}</td>
       <td>{total}</td>
       <td>{mb(pct_arm, '#3b82f6')}</td>
       <td>{mb(pct_sol, '#f97316')}</td>
@@ -1304,8 +1328,10 @@ def reportes_index():
 
     int_act = "active" if tipo_sel == "INTERNO" else ""
     cli_act = "active" if tipo_sel == "CLIENTE" else ""
+    all_act = "active" if tipo_sel == "INTERNO_SEMANAL_TODAS" else ""
     int_chk = "checked" if tipo_sel == "INTERNO" else ""
     cli_chk = "checked" if tipo_sel == "CLIENTE" else ""
+    all_chk = "checked" if tipo_sel == "INTERNO_SEMANAL_TODAS" else ""
     sem_act = "active" if periodo_sel == "SEMANAL" else ""
     mes_act = "active" if periodo_sel == "MENSUAL" else ""
     sem_chk = "checked" if periodo_sel == "SEMANAL" else ""
@@ -1352,8 +1378,10 @@ def reportes_index():
   <h2>Informe de Avance</h2>
   <p class="sub">Seleccioná la obra, el período y el tipo de informe.</p>
   <form action="/modulo/reportes/ver" method="GET">
-    <label class="field-label">Obra / Proyecto</label>
-    <select name="obra">{obs_opts}</select>
+    <div id="wrap_obra">
+      <label class="field-label">Obra / Proyecto</label>
+      <select name="obra">{obs_opts}</select>
+    </div>
 
     <label class="field-label">Tipo de período</label>
     <div class="tipo-group" id="pg">
@@ -1390,6 +1418,11 @@ def reportes_index():
         <strong>CLIENTE</strong>
         <small>Solo avance de obra</small>
       </label>
+      <label class="tipo-btn {all_act}" id="lb_all_obras">
+        <input type="radio" name="tipo" value="INTERNO_SEMANAL_TODAS" {all_chk} id="r_all_obras">
+        <strong>INTERNO SEMANAL (TODAS)</strong>
+        <small>Consolida todas las obras y todos los indicadores</small>
+      </label>
     </div>
     <button type="submit" class="btn">Generar Informe ↗</button>
   </form>
@@ -1408,8 +1441,20 @@ document.querySelectorAll('#tg .tipo-btn input').forEach(r => {{
   r.addEventListener('change', () => {{
     document.querySelectorAll('#tg .tipo-btn').forEach(b => b.classList.remove('active'));
     r.closest('.tipo-btn').classList.add('active');
+    toggleScopeByTipo();
   }});
 }});
+
+function toggleScopeByTipo() {{
+  const all = document.getElementById('r_all_obras').checked;
+  document.getElementById('wrap_obra').classList.toggle('hidden', all);
+  document.getElementById('lb_mes').classList.toggle('hidden', all);
+  if (all) {{
+    document.getElementById('r_sem').checked = true;
+  }}
+  togglePeriodo();
+}}
+toggleScopeByTipo();
 </script>
 </body>
 </html>"""
@@ -1425,11 +1470,15 @@ def reportes_ver():
     semana      = request.args.get("semana", "")
     mes         = request.args.get("mes", "")
 
-    if not obra:
-        return redirect(url_for("reportes.reportes_index"))
+    modo_todas = tipo == "INTERNO_SEMANAL_TODAS"
+    if not modo_todas and not obra:
+      return redirect(url_for("reportes.reportes_index"))
 
     today = date.today()
     iso   = today.isocalendar()
+
+    if modo_todas:
+      periodo_tipo = "SEMANAL"
 
     if periodo_tipo == "MENSUAL":
         try:
@@ -1451,10 +1500,13 @@ def reportes_ver():
             year, week = iso[0], iso[1]
         week_start, week_end = _week_range(year, week)
 
-    d = _collect(db, obra, year, week, week_start, week_end)
+    d = _collect(db, None if modo_todas else obra, year, week, week_start, week_end)
 
     if d is None:
+      if modo_todas:
+        return "<h3>Sin datos para reporte semanal consolidado de todas las obras.</h3>", 404
         return f"<h3>Sin datos para la obra <b>{_e(obra)}</b>. Verificá que tenga OTs activas.</h3>", 404
 
-    html = _render_html(d, tipo, periodo_tipo)
+    tipo_render = "INTERNO" if modo_todas else tipo
+    html = _render_html(d, tipo_render, periodo_tipo)
     return Response(html, mimetype="text/html")
