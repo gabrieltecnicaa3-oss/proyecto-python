@@ -560,7 +560,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     .bar-ot-titulo { font-size: 11px; color: #374151; }
     .bar-track { flex: 1; background: #f3f4f6; border-radius: 4px; height: 18px; overflow: hidden; position: relative; }
     .bar-layer { position: absolute; inset: 0; display: flex; height: 100%; }
-    .bar-layer-real { overflow: hidden; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(17,24,39,.08); }
+    .bar-layer-real { border-radius: 4px; }
     .bar-seg { height: 100%; transition: width .3s; }
     .bar-fe { width: 80px; text-align: right; font-size: 10px; color: #6b7280; white-space: nowrap; margin-left: 8px; }
     .bar-real { width: 78px; text-align: right; font-size: 11px; color: #334155; white-space: nowrap; margin-left: 8px; font-weight: 800; }
@@ -918,7 +918,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         fe_fmt = _fd(fe)
         bar_rows += f"""<div class="bar-row">
       <div class="bar-ot-label"><span class="bar-ot-id">OT {ot_id}</span><span class="bar-ot-titulo">{_e(titulo)}</span></div>
-      <div class="bar-track"><div class="bar-layer">{bg_segs}</div><div class="bar-layer bar-layer-real" style="width:{avance_ot}%">{fg_segs}</div></div>
+      <div class="bar-track"><div class="bar-layer">{bg_segs}</div><div class="bar-layer bar-layer-real" style="clip-path:inset(0 {100-avance_ot:.2f}% 0 0)">{fg_segs}</div></div>
       <div class="bar-real">{avance_ot}% real</div>
       <div class="bar-fe">{fe_fmt}</div>
     </div>"""
