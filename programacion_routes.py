@@ -1188,19 +1188,24 @@ def programacion_index():
         <div class="kpi"><div class="t">Semana evaluada</div><div class="v" style="font-size:18px;">{_fmt(semana_sel)} a {_fmt(semana_fin)}</div></div>
     </div>
 
-    {"<div style='margin:6px 0 10px 0;padding:8px 10px;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:8px;font-size:12px;font-weight:600;'>Vista solo lectura para usuario OBRA: no puede editar ni guardar cumplimiento semanal.</div>" if es_obra else ""}
-    <form method="post" action="/modulo/programacion/cumplimiento" {"" if es_obra else "onsubmit=\"return validarDesvios();\""}>
-        <input type="hidden" id="semana_inicio" name="semana_inicio" value="{semana_str}">
-        <input type="hidden" name="fi" value="{fi_str}">
-        <input type="hidden" name="ff" value="{ff_str}">
-        <div style="overflow-x:auto;">
-            <table class="tbl tbl-compact">
-                <tr><th>OT</th><th>Obra</th><th>Título</th><th>% Cumplido</th><th>Desvío (si &lt; 100%)</th></tr>
-                {cumplimiento_rows_html if cumplimiento_rows_html else "<tr><td colspan='5' style='text-align:center;color:#64748b;'>No hay OTs programadas en la semana seleccionada.</td></tr>"}
-            </table>
-        </div>
-        {'' if es_obra else '<div style="margin-top:10px;"><button type="submit" class="btn">Guardar cumplimiento semanal</button></div>'}
-    </form>
+    {
+        "<div style='margin:6px 0 10px 0;padding:8px 10px;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:8px;font-size:12px;font-weight:600;'>Vista solo lectura para usuario OBRA: el listado de OTs y la carga de % no están disponibles para este rol.</div>"
+        if es_obra else
+        (
+            '<form method="post" action="/modulo/programacion/cumplimiento" onsubmit="return validarDesvios();">'
+            + f'<input type="hidden" id="semana_inicio" name="semana_inicio" value="{semana_str}">'
+            + f'<input type="hidden" name="fi" value="{fi_str}">'
+            + f'<input type="hidden" name="ff" value="{ff_str}">'
+            + '<div style="overflow-x:auto;">'
+            + '<table class="tbl tbl-compact">'
+            + '<tr><th>OT</th><th>Obra</th><th>Título</th><th>% Cumplido</th><th>Desvío (si &lt; 100%)</th></tr>'
+            + (cumplimiento_rows_html if cumplimiento_rows_html else "<tr><td colspan='5' style='text-align:center;color:#64748b;'>No hay OTs programadas en la semana seleccionada.</td></tr>")
+            + '</table>'
+            + '</div>'
+            + '<div style="margin-top:10px;"><button type="submit" class="btn">Guardar cumplimiento semanal</button></div>'
+            + '</form>'
+        )
+    }
 
     <div class="cumpl-grid">
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">
@@ -1300,7 +1305,7 @@ def programacion_index():
             toggleDesvio(otId);
         }}
         var k = document.getElementById('kpi-semanal');
-        if (k) k.textContent = n > 0 ? ((sum / n).toFixed(1) + '%') : '—';
+        if (k && n > 0) k.textContent = ((sum / n).toFixed(1) + '%');
     }}
     document.addEventListener('DOMContentLoaded', function() {{ calcCumplimientoKPIs(); aplicarEdicionDesdeQuery(); }});
     </script>
