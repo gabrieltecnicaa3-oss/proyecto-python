@@ -341,7 +341,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:#f97316;backgr
 
 
 # ── Gantt renderer ─────────────────────────────────────────────────────────────
-def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
+def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=False):
     total_dias = (ff_vista - fi_vista).days + 1
     if total_dias <= 0 or total_dias > 1200:
         return "<div style='padding:10px;color:#9a3412;'>Rango de fechas inválido o muy extenso.</div>"
@@ -551,7 +551,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
                 {bar_html}
                 {hito_html}
             </div>
-            <div class="g-act">
+            {'' if es_obra else f'''<div class="g-act">
                 <form method="post" action="/modulo/programacion/reordenar" style="display:inline;">
                     <input type="hidden" name="id" value="{prog_id}">
                     <input type="hidden" name="dir" value="up">
@@ -564,11 +564,11 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
                 </form>
                 <a href="/modulo/programacion/editar/{prog_id}" class="g-btn" title="Editar">✏️</a>
                 <form method="post" action="/modulo/programacion/eliminar" style="display:inline;"
-                      onsubmit="return confirm('¿Eliminar esta programación?');">
+                      onsubmit="return confirm(\'¿Eliminar esta programación?\');">
                     <input type="hidden" name="id" value="{prog_id}">
                     <button type="submit" class="g-btn g-btn-red" title="Eliminar">🗑</button>
                 </form>
-            </div>
+            </div>'''}
         </div>
         """
 
@@ -629,7 +629,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
             f'border-right:1px solid rgba(0,0,0,.06);" title="{operarios_disponibles} operarios disponibles">{a_lbl}</div>'
         )
 
-    col_grid = "var(--g-col-label) var(--g-col-need) 1fr var(--g-col-actions)"
+    col_grid = "var(--g-col-label) var(--g-col-need) 1fr" if es_obra else "var(--g-col-label) var(--g-col-need) 1fr var(--g-col-actions)"
     footer_html = f"""
     <div style="border-top:2px solid #f97316;">
         <div style="display:grid;grid-template-columns:{col_grid};background:#fff7ed;min-height:32px;border-bottom:1px solid #fed7aa;">
@@ -638,7 +638,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
             </div>
             <div></div>
             <div style="position:relative;height:32px;">{assigned_cells}</div>
-            <div></div>
+            {'<div></div>' if not es_obra else ''}
         </div>
         <div style="display:grid;grid-template-columns:{col_grid};background:#fff7ed;min-height:32px;">
             <div style="padding:0 10px;font-size:11px;font-weight:700;color:#9a3412;display:flex;align-items:center;gap:5px;white-space:nowrap;">
@@ -646,7 +646,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
             </div>
             <div></div>
             <div style="position:relative;height:32px;">{avail_cells}</div>
-            <div></div>
+            {'<div></div>' if not es_obra else ''}
         </div>
     </div>"""
 
@@ -660,7 +660,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
                     <div class="g-months-strip">{meses_html}</div>
                     <div class="g-weeks-strip">{weeks_html}</div>
                 </div>
-                <div class="g-act-h">Acc.</div>
+                {'' if es_obra else '<div class="g-act-h">Acc.</div>'}
             </div>
             <div class="g-body">
                 {rows_html}
@@ -1090,7 +1090,7 @@ def programacion_index():
         AND LOWER(TRIM(COALESCE(puesto_tipo, puesto, ''))) NOT LIKE '%encargado%'
         """
     ).fetchone()[0] or 0
-    gantt = _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=operarios_count)
+    gantt = _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=operarios_count, es_obra=es_obra)
 
     # KPIs
     total_hs = sum(float(e.get("hs_programadas") or 0) for e in entradas if not e.get("es_subcontrato"))
