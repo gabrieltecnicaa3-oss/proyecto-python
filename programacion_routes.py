@@ -3,6 +3,7 @@ import os as _os
 import base64 as _base64
 from datetime import datetime, timedelta, date
 from calendar import monthrange
+from urllib.parse import quote
 from flask import Blueprint, request, redirect, session
 from db_utils import get_db
 
@@ -851,6 +852,14 @@ def programacion_index():
     semana_sel = _lunes_semana(semana_sel)
     semana_fin = semana_sel + timedelta(days=6)
     semana_num = semana_sel.isocalendar()[1]
+    edit_ot_txt = (request.args.get("edit_ot") or "").strip()
+    edit_ot = int(edit_ot_txt) if edit_ot_txt.isdigit() else 0
+    edit_pct_txt = (request.args.get("edit_pct") or "").strip()
+    try:
+        edit_pct = max(0, min(100, int(float(edit_pct_txt)))) if edit_pct_txt else None
+    except Exception:
+        edit_pct = None
+    edit_desvio = (request.args.get("edit_desvio") or "").strip()
 
     # Logo embebido como base64 para que funcione en ventanas de impresión
     _logo_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "LOGO.png")
@@ -1158,11 +1167,14 @@ def programacion_index():
 <div class="panel" id="cumplimiento-section">
     <div class="cumpl-head">
         <h3>Cumplimiento de objetivos semanales</h3>
-        {'' if es_obra else '<button onclick="printCumplimiento()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>'}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <a href="/modulo/programacion/cumplimientos-historial" class="btn btn-sec btn-sm">📋 Ver historial completo</a>
+            {'' if es_obra else '<button onclick="printCumplimiento()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>'}
+        </div>
     </div>
     <form method="get" action="/modulo/programacion" class="cumpl-filter-form" style="margin-bottom:10px;">
         <label>Semana (lunes):</label>
-        <input type="date" name="semana" value="{semana_str}" style="width:170px;">
+        <input type="date" id="semana" name="semana" value="{semana_str}" style="width:170px;">
         <label>Obra:</label>
         <select name="obra" style="min-width:160px;">{obras_opts}</select>
         <input type="hidden" name="fi" value="{fi_str}">
@@ -1178,7 +1190,7 @@ def programacion_index():
 
     {"<div style='margin:6px 0 10px 0;padding:8px 10px;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:8px;font-size:12px;font-weight:600;'>Vista solo lectura para usuario OBRA: no puede editar ni guardar cumplimiento semanal.</div>" if es_obra else ""}
     <form method="post" action="/modulo/programacion/cumplimiento" {"" if es_obra else "onsubmit=\"return validarDesvios();\""}>
-        <input type="hidden" name="semana_inicio" value="{semana_str}">
+        <input type="hidden" id="semana_inicio" name="semana_inicio" value="{semana_str}">
         <input type="hidden" name="fi" value="{fi_str}">
         <input type="hidden" name="ff" value="{ff_str}">
         <div style="overflow-x:auto;">
@@ -1189,25 +1201,6 @@ def programacion_index():
         </div>
         {'' if es_obra else '<div style="margin-top:10px;"><button type="submit" class="btn">Guardar cumplimiento semanal</button></div>'}
     </form>
-
-    <!-- HISTORIAL DE CUMPLIMIENTOS GUARDADOS -->
-    <div style="margin-top:20px;padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
-        <h4 style="margin:0 0 12px 0;">📋 Historial de cumplimientos guardados</h4>
-        <div style="overflow-x:auto;">
-            <table class="tbl tbl-compact" id="historial-table" style="font-size:12px;">
-                <tr>
-                    <th>Semana</th>
-                    <th>OT</th>
-                    <th>Obra</th>
-                    <th>Título</th>
-                    <th>% Cumplido</th>
-                    <th>Desvío</th>
-                    <th>Acciones</th>
-                </tr>
-            </table>
-            <div id="historial-vacio" style="text-align:center;color:#64748b;padding:20px;">Cargando historial...</div>
-        </div>
-    </div>
 
     <div class="cumpl-grid">
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">
@@ -1252,48 +1245,24 @@ def programacion_index():
             if (w) w.style.display = '';
         }}
     }}
-    function cargarHistorialCumplimientos() {{
-        fetch('/api/programacion/cumplimientos-historial')
-            .then(r => r.json())
-            .then(data => {{
-                var tabla = document.getElementById('historial-table');
-                var vacio = document.getElementById('historial-vacio');
-                if (!data.cumplimientos || data.cumplimientos.length === 0) {{
-                    vacio.style.display = 'block';
-                    return;
-                }}
-                vacio.style.display = 'none';
-                var rows = '';
-                data.cumplimientos.forEach(c => {{
-                    var desvio_label = c.desvio_codigo ? (data.desvios[c.desvio_codigo] || c.desvio_codigo) : '-';
-                    rows += `<tr>
-                        <td>${{c.semana}}</td>
-                        <td><b>${{c.ot_id}}</b></td>
-                        <td>${{c.obra || '-'}}</td>
-                        <td>${{c.titulo || '---'}}</td>
-                        <td style="text-align:center;font-weight:700;">${{c.pct_cumplido}}%</td>
-                        <td style="font-size:11px;">${{desvio_label}}</td>
-                        <td style="text-align:center;white-space:nowrap;">
-                            <button type="button" class="btn btn-sm" style="padding:3px 8px;font-size:11px;background:#3b82f6;color:white;border:0;border-radius:4px;cursor:pointer;" onclick="editarCumplimiento(${{c.ot_id}}, '${{c.semana}}', ${{c.pct_cumplido}}, '${{c.desvio_codigo}}');">✏️ Editar</button>
-                        </td>
-                    </tr>`;
-                }});
-                var tbody = tabla.querySelector('tr').parentElement;
-                var filas = tbody.querySelectorAll('tr');
-                for (var i = filas.length - 1; i >= 1; i--) filas[i].remove();
-                tabla.insertAdjacentHTML('beforeend', rows);
-            }})
-            .catch(e => console.error('Error cargando historial:', e));
-    }}
-    function editarCumplimiento(otId, semana, pct, desvio) {{
-        document.getElementById('semana_inicio').value = semana;
-        var form = document.querySelector('form[action="/modulo/programacion/cumplimiento"]');
-        form.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-        document.getElementById('pct_' + otId).value = pct;
-        document.getElementById('pct_' + otId).focus();
-        if (document.getElementById('desv-' + otId)) document.getElementById('desv-' + otId).value = desvio || '';
+    function aplicarEdicionDesdeQuery() {{
+        var otId = {edit_ot};
+        if (!otId) return;
+        var semanaQuery = '{semana_str}';
+        var pctQuery = {"null" if edit_pct is None else str(edit_pct)};
+        var desvioQuery = '{html_lib.escape(edit_desvio)}';
+        var semanaFiltro = document.getElementById('semana');
+        var semanaHidden = document.getElementById('semana_inicio');
+        if (semanaFiltro) semanaFiltro.value = semanaQuery;
+        if (semanaHidden) semanaHidden.value = semanaQuery;
+        var inpPct = document.getElementById('pct_' + otId);
+        if (!inpPct) return;
+        if (pctQuery !== null) inpPct.value = pctQuery;
+        var selDesvio = document.getElementById('desv-' + otId);
+        if (selDesvio) selDesvio.value = desvioQuery || '';
         toggleDesvio(otId);
-        alert('Semana y OT cargados para editar. Actualiza los valores y guarda.');
+        inpPct.focus();
+        inpPct.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
     }}
     function validarDesvios() {{
         var ok = true;
@@ -1333,7 +1302,7 @@ def programacion_index():
         var k = document.getElementById('kpi-semanal');
         if (k) k.textContent = n > 0 ? ((sum / n).toFixed(1) + '%') : '—';
     }}
-    document.addEventListener('DOMContentLoaded', function() {{ calcCumplimientoKPIs(); cargarHistorialCumplimientos(); }});
+    document.addEventListener('DOMContentLoaded', function() {{ calcCumplimientoKPIs(); aplicarEdicionDesdeQuery(); }});
     </script>
 </div>
 """
@@ -1712,6 +1681,160 @@ def programacion_reordenar():
         counter += 1
     db.commit()
     return redirect("/modulo/programacion")
+
+
+@programacion_bp.route("/modulo/programacion/cumplimientos-historial")
+def programacion_cumplimientos_historial():
+        db = get_db()
+        obra_fil = (request.args.get("obra") or "").strip()
+        semana_fil = (request.args.get("semana") or "").strip()
+
+        condiciones = []
+        params = []
+        if obra_fil:
+                condiciones.append("LOWER(TRIM(COALESCE(o.obra, ''))) LIKE ?")
+                params.append(f"%{obra_fil.lower()}%")
+        if semana_fil:
+                condiciones.append("c.semana_inicio = ?")
+                params.append(semana_fil)
+        where_sql = f"WHERE {' AND '.join(condiciones)}" if condiciones else ""
+
+        rows = db.execute(
+                f"""
+                SELECT c.ot_id,
+                             c.semana_inicio,
+                             COALESCE(c.pct_cumplido, 0),
+                             COALESCE(c.desvio_codigo, ''),
+                             COALESCE(o.obra, ''),
+                             COALESCE(o.titulo, '')
+                FROM programacion_cumplimiento c
+                LEFT JOIN ordenes_trabajo o ON o.id = c.ot_id
+                {where_sql}
+                ORDER BY c.semana_inicio DESC, c.ot_id ASC
+                """,
+                params,
+        ).fetchall()
+
+        semanas = db.execute(
+                """
+                SELECT DISTINCT semana_inicio
+                FROM programacion_cumplimiento
+                WHERE semana_inicio IS NOT NULL AND TRIM(semana_inicio) <> ''
+                ORDER BY semana_inicio DESC
+                """
+        ).fetchall()
+
+        obras = db.execute(
+                """
+                SELECT DISTINCT TRIM(COALESCE(o.obra, ''))
+                FROM programacion_cumplimiento c
+                LEFT JOIN ordenes_trabajo o ON o.id = c.ot_id
+                WHERE TRIM(COALESCE(o.obra, '')) <> ''
+                ORDER BY TRIM(COALESCE(o.obra, '')) ASC
+                """
+        ).fetchall()
+
+        opts_semana = '<option value="">Todas las semanas</option>'
+        for (sem,) in semanas:
+                sem_txt = str(sem or "").strip()
+                sel = "selected" if sem_txt == semana_fil else ""
+                opts_semana += f'<option value="{html_lib.escape(sem_txt)}" {sel}>{html_lib.escape(sem_txt)}</option>'
+
+        opts_obra = '<option value="">Todas las obras</option>'
+        for (obra,) in obras:
+                obra_txt = str(obra or "").strip()
+                sel = "selected" if obra_txt == obra_fil else ""
+                opts_obra += f'<option value="{html_lib.escape(obra_txt)}" {sel}>{html_lib.escape(obra_txt)}</option>'
+
+        filas_html = ""
+        for ot_id, semana, pct, desvio, obra, titulo in rows:
+                pct_i = max(0, min(100, int(round(float(pct or 0)))))
+                desvio_txt = _DESVIOS.get(str(desvio or ""), str(desvio or "-")) if str(desvio or "").strip() else "-"
+                edit_url = (
+                        f"/modulo/programacion?semana={quote(str(semana or ''))}"
+                        f"&edit_ot={int(ot_id or 0)}&edit_pct={pct_i}&edit_desvio={quote(str(desvio or ''))}"
+                        f"#cumplimiento-section"
+                )
+                filas_html += f"""
+                <tr>
+                        <td>{html_lib.escape(str(semana or ''))}</td>
+                        <td><b>{int(ot_id or 0)}</b></td>
+                        <td>{html_lib.escape(str(obra or '-'))}</td>
+                        <td>{html_lib.escape(str(titulo or '---'))}</td>
+                        <td style="text-align:center;font-weight:700;">{pct_i}%</td>
+                        <td>{html_lib.escape(desvio_txt)}</td>
+                        <td style="text-align:center;">
+                                <a href="{edit_url}" class="btn-mini">✏️ Editar</a>
+                        </td>
+                </tr>
+                """
+
+        if not filas_html:
+                filas_html = "<tr><td colspan='7' style='text-align:center;color:#64748b;'>Sin registros para los filtros seleccionados.</td></tr>"
+
+        return f"""
+        <html>
+        <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+        * {{ box-sizing: border-box; }}
+        body {{ font-family: Arial; margin: 0; padding: 16px; background: #f3f4f6; color: #0f172a; }}
+        .wrap {{ max-width: 1220px; margin: 0 auto; }}
+        .top {{ display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }}
+        .btn {{ display:inline-block; background:#f97316; color:#fff; text-decoration:none; padding:10px 14px; border-radius:8px; border:none; cursor:pointer; }}
+        .btn:hover {{ background:#ea580c; }}
+        .panel {{ background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px; box-shadow:0 8px 20px rgba(15,23,42,0.06); margin-bottom:12px; }}
+        .grid {{ display:grid; grid-template-columns: 1fr 1fr auto auto; gap:10px; align-items:end; }}
+        label {{ display:block; font-weight:700; margin-bottom:6px; font-size:13px; color:#334155; }}
+        select {{ width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px; }}
+        table {{ width:100%; border-collapse:collapse; }}
+        th, td {{ border-bottom:1px solid #e5e7eb; padding:10px; text-align:left; font-size:13px; }}
+        th {{ background:#f8fafc; }}
+        .btn-mini {{ display:inline-block; background:#2563eb; color:#fff; text-decoration:none; padding:6px 10px; border-radius:6px; font-size:12px; }}
+        .btn-mini:hover {{ background:#1d4ed8; }}
+        @media (max-width: 900px) {{ .grid {{ grid-template-columns: 1fr; }} }}
+        </style>
+        </head>
+        <body>
+            <div class="wrap">
+                <div class="top">
+                    <h2 style="margin:0;">📋 Historial de cumplimientos guardados</h2>
+                    <a href="/modulo/programacion" class="btn">⬅️ Volver a Programación</a>
+                </div>
+
+                <div class="panel">
+                    <form method="get" class="grid">
+                        <div>
+                            <label>Obra</label>
+                            <select name="obra">{opts_obra}</select>
+                        </div>
+                        <div>
+                            <label>Semana</label>
+                            <select name="semana">{opts_semana}</select>
+                        </div>
+                        <button type="submit" class="btn">Filtrar</button>
+                        <a href="/modulo/programacion/cumplimientos-historial" class="btn" style="background:#64748b;">Limpiar</a>
+                    </form>
+                </div>
+
+                <div class="panel" style="overflow-x:auto;">
+                    <table>
+                        <tr>
+                            <th>Semana</th>
+                            <th>OT</th>
+                            <th>Obra</th>
+                            <th>Título</th>
+                            <th>% Cumplido</th>
+                            <th>Desvío</th>
+                            <th>Acción</th>
+                        </tr>
+                        {filas_html}
+                    </table>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
 
 @programacion_bp.route("/api/programacion/cumplimientos-historial")
 def api_cumplimientos_historial():

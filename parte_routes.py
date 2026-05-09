@@ -206,6 +206,8 @@ def parte_semanal():
 
         semana_inicio = request.form.get("semana_inicio")
         empleados_json = request.form.get("empleados_json", "[]")
+        modo_edicion_semana = (request.form.get("modo_edicion_semana") or "").strip() == "1"
+        semana_original = (request.form.get("semana_original") or "").strip()
 
         if not semana_inicio:
             return "Falta fecha de inicio", 400
@@ -222,6 +224,9 @@ def parte_semanal():
                     "firma_digital": str(firma_digital or "").strip(),
                     "firma_imagen_path": str(firma_imagen_path or "").strip(),
                 }
+
+        if modo_edicion_semana and semana_original:
+            db.execute("DELETE FROM partes_trabajo WHERE fecha = ?", (semana_original,))
 
         for emp in empleados:
             nombre_emp = str(emp.get('nombre') or '').strip()
@@ -241,7 +246,9 @@ def parte_semanal():
             ))
 
         db.commit()
-        return redirect("/modulo/parte")
+        if modo_edicion_semana and semana_original:
+            return redirect("/modulo/parte?mensaje=" + quote("✅ Reporte semanal actualizado"))
+        return redirect("/modulo/parte?mensaje=" + quote("✅ Parte semanal guardado"))
 
     # GET
     ots = db.execute(
@@ -284,6 +291,50 @@ def parte_semanal():
     if mensaje:
         clase = "flash-error" if ("⚠️" in mensaje or "❌" in mensaje) else "flash-ok"
         mensaje_html = f'<div class="flash {clase}">{html_lib.escape(mensaje)}</div>'
+
+    editar_semana = (request.args.get("editar_semana") or "").strip()
+    preloaded_rows = []
+    if editar_semana:
+        rows_edit = db.execute(
+            """
+            SELECT COALESCE(operario, ''), COALESCE(ot_id, ''), COALESCE(horas, 0), COALESCE(actividad, '')
+            FROM partes_trabajo
+            WHERE fecha = ?
+            ORDER BY LOWER(TRIM(COALESCE(operario, ''))) ASC, id ASC
+            """,
+            (editar_semana,),
+        ).fetchall()
+        for operario, ot_id, horas, actividad in rows_edit:
+            actividad_txt = str(actividad or "")
+            proceso = ""
+            marker = " | Proceso:"
+            if marker in actividad_txt:
+                proceso = actividad_txt.split(marker, 1)[1].strip()
+            horas_total = float(horas or 0)
+            preloaded_rows.append(
+                {
+                    "nombre": str(operario or "").strip(),
+                    "ot_id": str(ot_id or "").strip(),
+                    "proceso": proceso,
+                    "lun": horas_total,
+                    "mar": 0,
+                    "mie": 0,
+                    "jue": 0,
+                    "vie": 0,
+                    "sab": 0,
+                }
+            )
+
+    semana_form_value = editar_semana if editar_semana else ""
+    banner_edicion_html = ""
+    if editar_semana:
+        banner_edicion_html = (
+            '<div class="flash flash-error" style="margin-top:0;">'
+            + f'✏️ Editando semana {html_lib.escape(editar_semana)}. '
+            + 'Al guardar se reemplazan los registros de esa semana. '
+            + 'Los valores guardados se cargan en Lunes para facilitar la corrección.'
+            + '</div>'
+        )
 
     operarios_options = ""
     for (nombre_operario,) in operarios_catalogo:
@@ -392,13 +443,15 @@ def parte_semanal():
             <a href="/" class="btn">⬅️ Volver</a>
         </div>
     </div>
-    """ + mensaje_html + """
+    """ + mensaje_html + banner_edicion_html + """
     
     <form method="post" id="parte-form">
         <input type="hidden" name="accion" value="guardar_parte">
+        <input type="hidden" name="modo_edicion_semana" value="__MODO_EDICION__">
+        <input type="hidden" name="semana_original" value="__SEMANA_ORIGINAL__">
         <div class="form-group">
             <label>Semana iniciando:</label>
-            <input type="date" name="semana_inicio" id="semana_inicio" required>
+            <input type="date" name="semana_inicio" id="semana_inicio" value="__SEMANA_FORM_VALUE__" required>
         </div>
         
         <h3>📋 Planilla de Horas (Lunes a Sábado)</h3>
@@ -478,6 +531,8 @@ def parte_semanal():
     </form>
     
     <script>
+    const PRELOAD_ROWS = __PRELOAD_ROWS__;
+
     function agregarFilaDesde(btn) {
         const sourceRow = btn.closest('tr');
         const template = document.getElementById('template-row');
@@ -536,7 +591,7 @@ def parte_semanal():
         bindAcciones(newRow);
     }
 
-    function agregarEmpleado() {
+    function agregarEmpleado(data) {
         const template = document.getElementById('template-row');
         const newRow = template.cloneNode(true);
         newRow.id = '';
@@ -555,6 +610,19 @@ def parte_semanal():
             actualizarTotales();
         };
         bindAcciones(newRow);
+
+        if (data) {
+            const emp = newRow.querySelector('.empleado-input');
+            const ot = newRow.querySelector('.ot-input');
+            const proc = newRow.querySelector('.proceso-input');
+            if (emp) emp.value = String(data.nombre || '');
+            if (ot) ot.value = String(data.ot_id || '');
+            if (proc) proc.value = String(data.proceso || '');
+            ['lun', 'mar', 'mie', 'jue', 'vie', 'sab'].forEach((dia) => {
+                const i = newRow.querySelector('.' + dia);
+                if (i) i.value = Number(data[dia] || 0);
+            });
+        }
     }
     
     function actualizarTotales() {
@@ -645,12 +713,28 @@ def parte_semanal():
         actualizarTotales();
     }
 
-    inicializarFilasIniciales();
-    document.addEventListener('DOMContentLoaded', inicializarFilasIniciales);
+    function cargarFilasEdicion() {
+        if (!Array.isArray(PRELOAD_ROWS) || PRELOAD_ROWS.length === 0) return;
+        const filas = Array.from(document.querySelectorAll('#planilla-table tr')).filter(
+            r => r.id !== 'template-row' && r.id !== 'resumen-dias' && r.querySelectorAll('th').length === 0
+        );
+        filas.forEach((f) => f.remove());
+        PRELOAD_ROWS.forEach((row) => agregarEmpleado(row));
+        actualizarTotales();
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        inicializarFilasIniciales();
+        cargarFilasEdicion();
+    });
     </script>
     </body>
     </html>
     """
+    html = html.replace("__MODO_EDICION__", "1" if editar_semana else "0")
+    html = html.replace("__SEMANA_ORIGINAL__", html_lib.escape(editar_semana))
+    html = html.replace("__SEMANA_FORM_VALUE__", html_lib.escape(semana_form_value))
+    html = html.replace("__PRELOAD_ROWS__", json.dumps(preloaded_rows, ensure_ascii=False))
     return html
 
 
@@ -1249,11 +1333,15 @@ def parte_semanal_reportes():
 
         horas_semana = sum(float(r[7] or 0) for row_list in reps_semana.values() for r in row_list)
         registros_semana = sum(len(row_list) for row_list in reps_semana.values())
+        editar_semana_url = f"/modulo/parte?editar_semana={quote(str(fecha or ''))}"
 
         filas += f"""
         <tr style="background: #eef8fd; font-weight: bold;">
             <td colspan="8" style="background: #a8d8ea; color: #1f4e5f; padding: 12px; font-size: 16px;">
-                📅 Semana del {fecha} | {total_empleados} empleados | {registros_semana} registros | {horas_semana:.1f} HS
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                    <span>📅 Semana del {fecha} | {total_empleados} empleados | {registros_semana} registros | {horas_semana:.1f} HS</span>
+                    <a href="{editar_semana_url}" style="display:inline-block;padding:6px 10px;border-radius:6px;background:#2563eb;color:#fff;text-decoration:none;font-size:12px;">✏️ Editar semana</a>
+                </div>
             </td>
         </tr>
         """
