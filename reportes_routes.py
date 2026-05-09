@@ -613,6 +613,15 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     .desvio-delta { font-weight: 800; white-space: nowrap; }
     .desvio-hint { border: 1px dashed #cbd5e1; border-radius: 8px; padding: 10px; background: #f8fafc; font-size: 11px; color: #475569; line-height: 1.45; }
 
+    /* Tendencia plan vs real */
+    .trend-wrap { padding: 12px 16px; }
+    .trend-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
+    .trend-kpi { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; text-align: center; background: #f8fafc; }
+    .trend-kpi .v { font-size: 19px; font-weight: 800; line-height: 1.1; }
+    .trend-kpi .l { font-size: 10px; color: #6b7280; margin-top: 4px; text-transform: uppercase; letter-spacing: .3px; }
+    .trend-card { border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; padding: 8px; }
+    .trend-note { margin-top: 8px; font-size: 10px; color: #6b7280; }
+
     /* Producción semanal */
     .prod-section { padding: 14px 16px; }
     .prod-summary { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-top: 12px; font-size: 12px; }
@@ -1018,6 +1027,137 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
                 prog_by_ot[ot_id_pr] = (fi_pr, ff_pr)
             except Exception:
                 pass
+
+    tendencia_html = ""
+    if prog_by_ot:
+        prog_ids = [oid for oid in d.get("ot_ids", []) if oid in prog_by_ot]
+        date_start = min(v[0] for v in prog_by_ot.values())
+        date_end = max(v[1] for v in prog_by_ot.values())
+        if date_end <= date_start:
+            date_end = date_start + timedelta(days=1)
+
+        weights_kg = d.get("kg_total_by_ot", {})
+        w_sum = sum(float(weights_kg.get(oid, 0.0) or 0.0) for oid in prog_ids)
+        use_equal_weights = w_sum <= 0
+        if use_equal_weights:
+            w_sum = float(max(len(prog_ids), 1))
+
+        def _w(oid):
+            return 1.0 if use_equal_weights else float(weights_kg.get(oid, 0.0) or 0.0)
+
+        def _plan_pct_at(day_ref):
+            tot = 0.0
+            for oid in prog_ids:
+                fi_ref, ff_ref = prog_by_ot[oid]
+                den = max((ff_ref - fi_ref).days, 1)
+                elapsed_ref = max(0, min((day_ref - fi_ref).days, den))
+                pct_ref = (elapsed_ref / den) * 100.0
+                tot += _w(oid) * pct_ref
+            return round(tot / w_sum, 1) if w_sum > 0 else 0.0
+
+        today_clamped = min(max(today_d, date_start), date_end)
+        real_pct = float(max(0, min(100, int(avance_pct))))
+        plan_hoy_pct = _plan_pct_at(today_clamped)
+        desvio_hoy = round(real_pct - plan_hoy_pct, 1)
+        desvio_sign = "+" if desvio_hoy >= 0 else ""
+        desvio_clr = "#16a34a" if desvio_hoy >= 0 else "#dc2626"
+
+        elapsed_days = max((today_clamped - date_start).days, 1)
+        rem_days = max((date_end - today_clamped).days, 0)
+        vel_real = real_pct / elapsed_days if elapsed_days > 0 else 0.0
+        proj_end_pct = round(min(180.0, real_pct + vel_real * rem_days), 1)
+        proj_clr = "#16a34a" if proj_end_pct >= 100 else "#ea580c" if proj_end_pct >= 85 else "#dc2626"
+
+        fecha_estimada_cumpl = "Sin tendencia"
+        if vel_real > 0:
+            dias_hasta_100 = int(round((100.0 - real_pct) / vel_real)) if real_pct < 100 else 0
+            if dias_hasta_100 <= 0:
+                fecha_estimada_cumpl = today_clamped.strftime("%d-%b-%Y")
+            else:
+                fecha_estimada_cumpl = (today_clamped + timedelta(days=dias_hasta_100)).strftime("%d-%b-%Y")
+
+        max_y = max(110.0, plan_hoy_pct + 12.0, real_pct + 12.0, proj_end_pct + 12.0)
+        W, H = 760, 220
+        ml, mr, mt, mb = 48, 18, 16, 34
+        pw = W - ml - mr
+        ph = H - mt - mb
+        total_days = max((date_end - date_start).days, 1)
+
+        def _x(day_ref):
+            return ml + ((day_ref - date_start).days / total_days) * pw
+
+        def _y(pct_ref):
+            return mt + (1.0 - max(0.0, min(max_y, pct_ref)) / max_y) * ph
+
+        y_ticks = [0, 25, 50, 75, 100]
+        if max_y > 120:
+            y_ticks.append(125)
+
+        grid = ""
+        for t in y_ticks:
+            yt = _y(t)
+            grid += f'<line x1="{ml}" y1="{yt:.1f}" x2="{W-mr}" y2="{yt:.1f}" stroke="#e5e7eb" stroke-width="1"/>'
+            grid += f'<text x="{ml-6}" y="{yt+3:.1f}" text-anchor="end" font-size="10" fill="#64748b">{t}%</text>'
+
+        x_today = _x(today_clamped)
+        grid += f'<line x1="{x_today:.1f}" y1="{mt}" x2="{x_today:.1f}" y2="{H-mb}" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4,3"/>'
+
+        samples = []
+        for i in range(0, 9):
+            d_i = date_start + timedelta(days=int(round(total_days * i / 8)))
+            samples.append((d_i, _plan_pct_at(d_i)))
+        plan_points = " ".join(f"{_x(d):.1f},{_y(p):.1f}" for d, p in samples)
+
+        real_points = f"{_x(date_start):.1f},{_y(0):.1f} {_x(today_clamped):.1f},{_y(real_pct):.1f}"
+        proj_points = f"{_x(today_clamped):.1f},{_y(real_pct):.1f} {_x(date_end):.1f},{_y(proj_end_pct):.1f}"
+
+        y_plan_today = _y(plan_hoy_pct)
+        y_real_today = _y(real_pct)
+        y_desv_top = min(y_plan_today, y_real_today)
+        y_desv_bot = max(y_plan_today, y_real_today)
+
+        svg_trend = f"""
+<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block">
+  <rect x="0" y="0" width="{W}" height="{H}" fill="#ffffff"/>
+  {grid}
+  <line x1="{ml}" y1="{H-mb}" x2="{W-mr}" y2="{H-mb}" stroke="#94a3b8" stroke-width="1.2"/>
+  <line x1="{ml}" y1="{mt}" x2="{ml}" y2="{H-mb}" stroke="#94a3b8" stroke-width="1.2"/>
+
+  <polyline points="{plan_points}" fill="none" stroke="#1d4ed8" stroke-width="2.2"/>
+  <polyline points="{real_points}" fill="none" stroke="#22c55e" stroke-width="2.4"/>
+  <polyline points="{proj_points}" fill="none" stroke="#ea580c" stroke-width="2.2" stroke-dasharray="6,4"/>
+
+  <line x1="{x_today:.1f}" y1="{y_desv_top:.1f}" x2="{x_today:.1f}" y2="{y_desv_bot:.1f}" stroke="{desvio_clr}" stroke-width="2"/>
+  <circle cx="{x_today:.1f}" cy="{y_plan_today:.1f}" r="3.5" fill="#1d4ed8"/>
+  <circle cx="{x_today:.1f}" cy="{y_real_today:.1f}" r="4" fill="#22c55e"/>
+  <circle cx="{_x(date_end):.1f}" cy="{_y(proj_end_pct):.1f}" r="3.5" fill="#ea580c"/>
+
+  <text x="{ml}" y="{H-10}" font-size="10" fill="#475569">Inicio {date_start.strftime('%d-%b')}</text>
+  <text x="{x_today:.1f}" y="{H-10}" text-anchor="middle" font-size="10" fill="#334155">Hoy {today_clamped.strftime('%d-%b')}</text>
+  <text x="{W-mr}" y="{H-10}" text-anchor="end" font-size="10" fill="#475569">Fin plan {date_end.strftime('%d-%b')}</text>
+
+  <rect x="{ml+10}" y="{mt+6}" width="10" height="3" fill="#1d4ed8"/><text x="{ml+25}" y="{mt+11}" font-size="10" fill="#334155">Avance actual (plan)</text>
+  <rect x="{ml+170}" y="{mt+6}" width="10" height="3" fill="#22c55e"/><text x="{ml+185}" y="{mt+11}" font-size="10" fill="#334155">Avance real</text>
+  <rect x="{ml+285}" y="{mt+6}" width="10" height="3" fill="#ea580c"/><text x="{ml+300}" y="{mt+11}" font-size="10" fill="#334155">Tendencia / proyección</text>
+</svg>"""
+
+        h_tend = next_sec("TENDENCIA DE AVANCE Y PROYECCIÓN DE DESVÍO")
+        tendencia_html = f"""
+<div class="section print-keep-together">
+  <div class="section-header">{h_tend}</div>
+  <div class="trend-wrap">
+    <div class="trend-kpis">
+      <div class="trend-kpi"><div class="v" style="color:#22c55e">{real_pct:.1f}%</div><div class="l">Avance real</div></div>
+      <div class="trend-kpi"><div class="v" style="color:#1d4ed8">{plan_hoy_pct:.1f}%</div><div class="l">Avance actual (plan)</div></div>
+      <div class="trend-kpi"><div class="v" style="color:{desvio_clr}">{desvio_sign}{desvio_hoy:.1f}%</div><div class="l">Desvío hoy</div></div>
+      <div class="trend-kpi"><div class="v" style="color:{proj_clr}">{proj_end_pct:.1f}%</div><div class="l">Proyección al fin plan</div></div>
+    </div>
+    <div class="trend-card">{svg_trend}</div>
+    <div class="trend-note">
+      Proyección lineal usando la tendencia real desde el inicio de programación hasta hoy. Fecha estimada para alcanzar 100%: <b>{fecha_estimada_cumpl}</b>.
+    </div>
+  </div>
+</div>"""
     ots_sorted = sorted(ots, key=lambda r: (r[3] or "9999-99-99", r[0]))
     crono_rows = ""
     desvio_stats = {
@@ -1103,7 +1243,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
             )
             desvio_vals.append(desvio_pr)
             desvio_rank.append((desvio_pr, ot_id, titulo_mostrar, expected_pr, pct_avance, crit_lbl, crit_clr))
-            desvio_stats[crit_key] += 1
+        desvio_stats[crit_key] += 1
         # Row background: criticidad de desvío (si hay dato) tiene precedencia, sino prioridad de fecha
         if crit_bg and crit_lbl not in ("✔ NORMAL",):
             row_bg_style = f' style="background:{crit_bg}"'
@@ -1353,6 +1493,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
   {estado_html}
   {grafico_html}
   {prod_html}
+  {tendencia_html}
   {desvio_html}
   {crono_html}
   {gantt_html}
