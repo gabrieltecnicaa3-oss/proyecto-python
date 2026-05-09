@@ -81,6 +81,211 @@ def _safe_float(value, default=0.0):
         return float(default)
 
 
+def _reglas_tipo_estructura(tipo_estructura):
+    tipo = str(tipo_estructura or "").strip().upper()
+    reglas = {
+        "TIPO I": {
+            "desvio_ok_min": -4.0,
+            "desvio_alerta_min": -8.0,
+            "proy_ok_min": 100.0,
+            "proy_alerta_min": 96.0,
+            "descripcion": "Ritmo alto esperado. Control estricto del desvio.",
+        },
+        "TIPO II": {
+            "desvio_ok_min": -7.0,
+            "desvio_alerta_min": -12.0,
+            "proy_ok_min": 98.0,
+            "proy_alerta_min": 90.0,
+            "descripcion": "Ritmo intermedio. Tolerancia moderada de desvio.",
+        },
+        "TIPO III": {
+            "desvio_ok_min": -10.0,
+            "desvio_alerta_min": -16.0,
+            "proy_ok_min": 95.0,
+            "proy_alerta_min": 85.0,
+            "descripcion": "Ritmo variable por series. Mayor ventana de tolerancia.",
+        },
+    }
+    base = reglas.get(tipo)
+    if base is None:
+        return {
+            "tipo": "GENERAL",
+            "desvio_ok_min": -6.0,
+            "desvio_alerta_min": -12.0,
+            "proy_ok_min": 98.0,
+            "proy_alerta_min": 90.0,
+            "descripcion": "Regla general sin filtro de tipo.",
+        }
+    return {"tipo": tipo, **base}
+
+
+def _clasificar_tendencia(tipo_estructura, desvio_hoy, proj_fin):
+    reglas = _reglas_tipo_estructura(tipo_estructura)
+    desvio = _safe_float(desvio_hoy, 0.0)
+    proy = _safe_float(proj_fin, 0.0)
+
+    if desvio >= reglas["desvio_ok_min"] and proy >= reglas["proy_ok_min"]:
+        return {
+            "codigo": "OK",
+            "label": "En objetivo",
+            "color": "#166534",
+            "bg": "#dcfce7",
+            "border": "#86efac",
+            "reglas": reglas,
+        }
+    if desvio >= reglas["desvio_alerta_min"] and proy >= reglas["proy_alerta_min"]:
+        return {
+            "codigo": "ALERTA",
+            "label": "Desvio controlado",
+            "color": "#9a3412",
+            "bg": "#ffedd5",
+            "border": "#fdba74",
+            "reglas": reglas,
+        }
+    return {
+        "codigo": "CRITICO",
+        "label": "Accion requerida",
+        "color": "#991b1b",
+        "bg": "#fee2e2",
+        "border": "#fecaca",
+        "reglas": reglas,
+    }
+
+
+def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura=""):
+    reglas = _reglas_tipo_estructura(tipo_estructura)
+
+    if not ots or not prog_rows:
+        return {
+            "habilitado": False,
+            "motivo": "Sin programacion cargada",
+            "tipo_estructura": reglas["tipo"],
+            "reglas": reglas,
+        }
+
+    avance_by_ot = {}
+    hs_prev_by_ot = {}
+    for row in ots:
+        ot_id = int(row[0] or 0)
+        hs_prev_by_ot[ot_id] = max(0.0, _safe_float(row[3], 0.0))
+        avance_by_ot[ot_id] = max(0.0, min(100.0, _safe_float(row[5], 0.0)))
+
+    prog_by_ot = {}
+    for pr in prog_rows:
+        try:
+            ot_id = int(pr[0] or 0)
+            fi = datetime.strptime(str(pr[1])[:10], "%Y-%m-%d").date()
+            ff = datetime.strptime(str(pr[2])[:10], "%Y-%m-%d").date()
+        except Exception:
+            continue
+        if ot_id not in avance_by_ot:
+            continue
+        if ff < fi:
+            fi, ff = ff, fi
+        curr = prog_by_ot.get(ot_id)
+        if curr is None:
+            prog_by_ot[ot_id] = (fi, ff)
+        else:
+            prog_by_ot[ot_id] = (min(curr[0], fi), max(curr[1], ff))
+
+    if not prog_by_ot:
+        return {
+            "habilitado": False,
+            "motivo": "Sin programacion valida",
+            "tipo_estructura": reglas["tipo"],
+            "reglas": reglas,
+        }
+
+    ot_ids_prog = list(prog_by_ot.keys())
+    date_start = min(v[0] for v in prog_by_ot.values())
+    date_end = max(v[1] for v in prog_by_ot.values())
+    if date_end <= date_start:
+        date_end = date_start + timedelta(days=1)
+
+    weight_sum = sum(hs_prev_by_ot.get(oid, 0.0) for oid in ot_ids_prog)
+    use_equal = weight_sum <= 0
+    if use_equal:
+        weight_sum = float(max(len(ot_ids_prog), 1))
+
+    def _w(oid):
+        return 1.0 if use_equal else hs_prev_by_ot.get(oid, 0.0)
+
+    def _plan_pct(day_ref):
+        acc = 0.0
+        for oid in ot_ids_prog:
+            fi, ff = prog_by_ot[oid]
+            den = max((ff - fi).days, 1)
+            elapsed = max(0, min((day_ref - fi).days, den))
+            acc += _w(oid) * (elapsed / den * 100.0)
+        return round(acc / weight_sum, 1) if weight_sum > 0 else 0.0
+
+    real_now = round(
+        sum(_w(oid) * avance_by_ot.get(oid, 0.0) for oid in ot_ids_prog) / weight_sum,
+        1,
+    ) if weight_sum > 0 else 0.0
+
+    today_d = date.today()
+    today_clamped = min(max(today_d, date_start), date_end)
+    plan_now = _plan_pct(today_clamped)
+    desvio_now = round(real_now - plan_now, 1)
+
+    elapsed_days = max((today_clamped - date_start).days, 1)
+    rem_days = max((date_end - today_clamped).days, 0)
+    vel_real = real_now / elapsed_days if elapsed_days > 0 else 0.0
+    proj_end = round(min(180.0, real_now + vel_real * rem_days), 1)
+
+    fecha_objetivo = "Sin tendencia"
+    if vel_real > 0:
+        dias_hasta_100 = int(round((100.0 - real_now) / vel_real)) if real_now < 100 else 0
+        fecha_objetivo = (today_clamped + timedelta(days=max(dias_hasta_100, 0))).strftime("%d-%m-%Y")
+
+    semaforo = _clasificar_tendencia(reglas["tipo"], desvio_now, proj_end)
+
+    return {
+        "habilitado": True,
+        "tipo_estructura": reglas["tipo"],
+        "reglas": reglas,
+        "inicio_label": date_start.strftime("%d-%m"),
+        "hoy_label": today_clamped.strftime("%d-%m"),
+        "fin_label": date_end.strftime("%d-%m"),
+        "plan_inicio": 0.0,
+        "plan_hoy": plan_now,
+        "plan_fin": 100.0,
+        "real_inicio": 0.0,
+        "real_hoy": real_now,
+        "proj_fin": proj_end,
+        "desvio_hoy": desvio_now,
+        "fecha_objetivo": fecha_objetivo,
+        "ot_programadas": len(ot_ids_prog),
+        "semaforo": semaforo,
+    }
+
+
+def _resumen_tipos_estructura(ots, prog_rows):
+    tipos = ["TIPO I", "TIPO II", "TIPO III"]
+    salida = []
+    for tipo in tipos:
+        ots_tipo = [row for row in ots if str(row[6] or "").strip().upper() == tipo]
+        ot_ids_tipo = {int(row[0]) for row in ots_tipo if row and row[0] is not None}
+        prog_tipo = [pr for pr in prog_rows if int(pr[0] or 0) in ot_ids_tipo]
+        tendencia = _calcular_tendencia_programacion(ots_tipo, prog_tipo, tipo)
+
+        hs_previstas = round(sum(_safe_float(r[3], 0.0) for r in ots_tipo), 1)
+        hs_cargadas = round(sum(_safe_float(r[4], 0.0) for r in ots_tipo), 1)
+        eficiencia = round((hs_cargadas / hs_previstas * 100.0), 1) if hs_previstas > 0 else 0.0
+
+        salida.append({
+            "tipo": tipo,
+            "descripcion": _reglas_tipo_estructura(tipo)["descripcion"],
+            "ots_activas": len(ots_tipo),
+            "hs_previstas": hs_previstas,
+            "hs_cargadas": hs_cargadas,
+            "eficiencia_hs": eficiencia,
+            "tendencia": tendencia,
+        })
+    return salida
+
+
 def _calcular_kg_por_estacion_y_despachados(rows):
     # Reglas pedidas:
     # - Si SOLDADURA esta aprobada, la pieza cuenta en PINTURA.
@@ -239,6 +444,118 @@ body {
     border-bottom: 2px solid #ffedd5; padding-bottom: 8px;
 }
 .chart-full canvas { max-height: 360px; }
+.trend-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.trend-kpi {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 10px;
+    text-align: center;
+}
+.trend-kpi .v {
+    font-size: 1.35em;
+    font-weight: 800;
+    line-height: 1.1;
+}
+.trend-kpi .l {
+    font-size: 0.72em;
+    margin-top: 4px;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.25px;
+}
+.trend-note {
+    margin-top: 8px;
+    font-size: 0.8em;
+    color: #64748b;
+}
+.tipos-board {
+    background: white;
+    border-radius: 14px;
+    padding: 22px;
+    box-shadow: 0 6px 18px rgba(154,52,18,0.1);
+    border: 1px solid #ffedd5;
+    margin-bottom: 20px;
+}
+.tipos-board h3 {
+    color: #7c2d12;
+    margin-bottom: 12px;
+    font-size: 1.1em;
+    border-bottom: 2px solid #ffedd5;
+    padding-bottom: 8px;
+}
+.tipos-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(220px, 1fr));
+    gap: 12px;
+}
+.tipo-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 12px;
+    background: #f8fafc;
+}
+.tipo-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.tipo-title {
+    font-weight: 800;
+    color: #0f172a;
+    font-size: 0.95em;
+}
+.tipo-badge {
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 0.68em;
+    font-weight: 800;
+    border: 1px solid transparent;
+    text-transform: uppercase;
+}
+.tipo-badge.ok { background: #dcfce7; color: #166534; border-color: #86efac; }
+.tipo-badge.alerta { background: #ffedd5; color: #9a3412; border-color: #fdba74; }
+.tipo-badge.critico { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+.tipo-desc {
+    color: #475569;
+    font-size: 0.76em;
+    margin-bottom: 10px;
+}
+.tipo-kpis {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+.tipo-kpi {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 8px;
+}
+.tipo-kpi .v {
+    font-size: 1.05em;
+    font-weight: 800;
+    color: #0f172a;
+}
+.tipo-kpi .l {
+    margin-top: 2px;
+    font-size: 0.68em;
+    color: #64748b;
+    text-transform: uppercase;
+}
+.tipo-umbrales {
+    margin-top: 8px;
+    font-size: 0.7em;
+    color: #64748b;
+    line-height: 1.35;
+}
 .charts-row {
     display: grid; grid-template-columns: 1fr 1fr;
     gap: 20px; margin-bottom: 20px;
@@ -333,6 +650,7 @@ body {
 }
 @media (max-width: 768px) {
     .charts-row { grid-template-columns: 1fr; }
+    .tipos-grid { grid-template-columns: 1fr; }
     .period-bar {
         display: grid;
         grid-template-columns: 1fr;
@@ -356,6 +674,8 @@ body {
     .top-title h2 { font-size: 1.15em; }
     .compare-variations { grid-template-columns: 1fr; }
     .kpi-row { grid-template-columns: 1fr 1fr; }
+    .trend-grid { grid-template-columns: 1fr 1fr; }
+    .tipo-kpis { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -487,6 +807,11 @@ body {
     </div>
   </div>
 
+    <div class="tipos-board">
+        <h3>🏗 Tablero por Tipo de Estructura</h3>
+        <div class="tipos-grid" id="tipos-grid"></div>
+    </div>
+
   <div class="kpi-row">
     <div class="kpi-card">
       <div class="kpi-valor" id="kpi-hs-prev">—</div>
@@ -518,6 +843,19 @@ body {
         </div>
   </div>
 
+    <div class="chart-full">
+        <h3>📉 Tendencia de Avance y Proyección</h3>
+        <div class="trend-grid">
+            <div class="trend-kpi"><div class="v" id="tend-real">—</div><div class="l">Avance real</div></div>
+            <div class="trend-kpi"><div class="v" id="tend-plan">—</div><div class="l">Avance actual (plan)</div></div>
+            <div class="trend-kpi"><div class="v" id="tend-desvio">—</div><div class="l">Desvío hoy</div></div>
+            <div class="trend-kpi"><div class="v" id="tend-proy">—</div><div class="l">Proyección fin plan</div></div>
+        </div>
+        <div id="no-data-tend" class="no-data-msg" style="display:none">Sin programación suficiente para calcular tendencia.</div>
+        <canvas id="chartTendencia"></canvas>
+        <div class="trend-note" id="tend-note"></div>
+    </div>
+
         <div class="chart-full">
                                 <h3>⏱ HS Consumidas vs HS Previstas por Obra (OTs agrupadas)</h3>
         <div id="no-data-hs" class="no-data-msg" style="display:none">Sin datos de horas por obra para el período seleccionado.</div>
@@ -539,7 +877,7 @@ body {
 </div>
 
 <script>
-let chartHS = null, chartKg = null, chartKgDona = null;
+let chartHS = null, chartKg = null, chartKgDona = null, chartTendencia = null;
 
 let periodoActivo = 'mes';
 let tipoObraActivo = '';
@@ -568,11 +906,66 @@ function cambiarObra() {
 function actualizarDescripcionTipo(tipo) {
     const el = document.getElementById('tipo-desc-text');
     const descripciones = {
-        'TIPO I': 'TIPO I: Trabajos de herreria menores.',
-        'TIPO II': 'TIPO II: Estructuras metalicas pesadas.',
-        'TIPO III': 'TIPO III: Elementos metalicos en serie.'
+        'TIPO I': 'TIPO I: ritmo alto | OK si desvio >= -4% y proyeccion >= 100%.',
+        'TIPO II': 'TIPO II: ritmo intermedio | OK si desvio >= -7% y proyeccion >= 98%.',
+        'TIPO III': 'TIPO III: ritmo variable | OK si desvio >= -10% y proyeccion >= 95%.'
     };
-    el.textContent = descripciones[tipo] || 'Seleccione un tipo para ver la descripcion.';
+    el.textContent = descripciones[tipo] || 'Vista general: cada tipo se evalua con umbrales distintos de desvio y proyeccion.';
+}
+
+function _semaforoClase(codigo) {
+    const c = String(codigo || '').toUpperCase();
+    if (c === 'OK') return 'ok';
+    if (c === 'ALERTA') return 'alerta';
+    return 'critico';
+}
+
+function _renderTarjetasTipo(resumenTipos) {
+    const host = document.getElementById('tipos-grid');
+    if (!host) return;
+    const rows = Array.isArray(resumenTipos) ? resumenTipos : [];
+    if (rows.length === 0) {
+        host.innerHTML = '<div class="no-data-msg">Sin datos por tipo para el filtro actual.</div>';
+        return;
+    }
+
+    host.innerHTML = rows.map(row => {
+        const tipo = String(row.tipo || 'TIPO');
+        const desc = String(row.descripcion || '');
+        const ots = Number(row.ots_activas || 0);
+        const hsPrev = Number(row.hs_previstas || 0).toFixed(1);
+        const hsCarg = Number(row.hs_cargadas || 0).toFixed(1);
+        const efic = Number(row.eficiencia_hs || 0).toFixed(1);
+        const tend = row.tendencia || {};
+        const sem = tend.semaforo || {};
+        const regs = sem.reglas || tend.reglas || {};
+        const desvio = Number(tend.desvio_hoy || 0).toFixed(1);
+        const proy = Number(tend.proj_fin || 0).toFixed(1);
+        const badgeClass = _semaforoClase(sem.codigo);
+        const badgeLabel = String(sem.codigo || 'CRITICO');
+        const semLabel = String(sem.label || 'Sin tendencia');
+        const umbralTxt = 'OK: desvio >= ' + Number(regs.desvio_ok_min || 0).toFixed(1) + '% | proy >= ' + Number(regs.proy_ok_min || 0).toFixed(1) + '%';
+        const alertaTxt = 'Alerta: desvio >= ' + Number(regs.desvio_alerta_min || 0).toFixed(1) + '% | proy >= ' + Number(regs.proy_alerta_min || 0).toFixed(1) + '%';
+
+        return `
+            <div class="tipo-card">
+                <div class="tipo-head">
+                    <div class="tipo-title">${tipo}</div>
+                    <span class="tipo-badge ${badgeClass}">${badgeLabel}</span>
+                </div>
+                <div class="tipo-desc">${desc}</div>
+                <div class="tipo-kpis">
+                    <div class="tipo-kpi"><div class="v">${ots}</div><div class="l">OTs activas</div></div>
+                    <div class="tipo-kpi"><div class="v">${efic}%</div><div class="l">Eficiencia HS</div></div>
+                    <div class="tipo-kpi"><div class="v">${hsPrev} hs</div><div class="l">HS previstas</div></div>
+                    <div class="tipo-kpi"><div class="v">${hsCarg} hs</div><div class="l">HS consumidas</div></div>
+                    <div class="tipo-kpi"><div class="v">${desvio}%</div><div class="l">Desvio hoy</div></div>
+                    <div class="tipo-kpi"><div class="v">${proy}%</div><div class="l">Proyeccion fin</div></div>
+                </div>
+                <div class="tipo-umbrales">${semLabel}<br>${umbralTxt}<br>${alertaTxt}</div>
+            </div>
+        `;
+    }).join('');
 }
 
 async function exportarVistaPDF() {
@@ -804,6 +1197,7 @@ function renderDashboard(data) {
     const hsObra = data.hs_por_obra || [];
     const kg = data.kg_por_estacion;
     const kgDespachados = Number(data.kg_despachados || 0);
+    _renderTarjetasTipo(data.resumen_tipos || []);
 
     // Filtro por obra: mantener opciones sincronizadas con backend
     const filtroObra = document.getElementById('filtro-obra');
@@ -835,6 +1229,112 @@ function renderDashboard(data) {
     document.getElementById('kpi-kg-total').textContent = totalKg.toFixed(1) + ' kg';
     document.getElementById('kpi-kg-desp').textContent = kgDespachados.toFixed(1) + ' kg';
     document.getElementById('kpi-kg-hs').textContent = kgHs !== '—' ? kgHs + ' kg/hs' : '—';
+
+    // === Chart Tendencia plan-real-proyeccion ===
+    const tend = data.tendencia || {};
+    const noTend = document.getElementById('no-data-tend');
+    const cvTend = document.getElementById('chartTendencia');
+    const noteTend = document.getElementById('tend-note');
+
+    if (chartTendencia) chartTendencia.destroy();
+
+    if (!tend.habilitado) {
+        noTend.style.display = 'block';
+        cvTend.style.display = 'none';
+        noteTend.textContent = tend.motivo || '';
+        document.getElementById('tend-real').textContent = '—';
+        document.getElementById('tend-plan').textContent = '—';
+        document.getElementById('tend-desvio').textContent = '—';
+        document.getElementById('tend-proy').textContent = '—';
+    } else {
+        noTend.style.display = 'none';
+        cvTend.style.display = 'block';
+
+        const sem = tend.semaforo || {};
+        const reglas = sem.reglas || tend.reglas || {};
+        const desvio = Number(tend.desvio_hoy || 0);
+        const desvioSign = desvio >= 0 ? '+' : '';
+        const desvioColor = String(sem.color || (desvio >= 0 ? '#16a34a' : '#dc2626'));
+        const proy = Number(tend.proj_fin || 0);
+        const proyColor = String(sem.color || (proy >= 100 ? '#16a34a' : (proy >= 85 ? '#ea580c' : '#dc2626')));
+
+        document.getElementById('tend-real').textContent = Number(tend.real_hoy || 0).toFixed(1) + '%';
+        document.getElementById('tend-real').style.color = '#16a34a';
+        document.getElementById('tend-plan').textContent = Number(tend.plan_hoy || 0).toFixed(1) + '%';
+        document.getElementById('tend-plan').style.color = '#1d4ed8';
+        document.getElementById('tend-desvio').textContent = desvioSign + desvio.toFixed(1) + '%';
+        document.getElementById('tend-desvio').style.color = desvioColor;
+        document.getElementById('tend-proy').textContent = proy.toFixed(1) + '%';
+        document.getElementById('tend-proy').style.color = proyColor;
+
+        noteTend.textContent =
+            'Estado: ' + String(sem.label || 'Sin clasificacion') +
+            ' · Fecha estimada 100%: ' + (tend.fecha_objetivo || 'Sin tendencia') +
+            ' · OTs programadas: ' + String(tend.ot_programadas || 0) +
+            ' · Umbral OK: desvio >= ' + Number(reglas.desvio_ok_min || 0).toFixed(1) +
+            '% y proy >= ' + Number(reglas.proy_ok_min || 0).toFixed(1) + '%';
+
+        chartTendencia = new Chart(cvTend, {
+            type: 'line',
+            data: {
+                labels: [
+                    'Inicio ' + (tend.inicio_label || ''),
+                    'Hoy ' + (tend.hoy_label || ''),
+                    'Fin ' + (tend.fin_label || '')
+                ],
+                datasets: [
+                    {
+                        label: 'Avance actual (plan)',
+                        data: [Number(tend.plan_inicio || 0), Number(tend.plan_hoy || 0), Number(tend.plan_fin || 100)],
+                        borderColor: '#1d4ed8',
+                        backgroundColor: 'rgba(29,78,216,0.12)',
+                        borderWidth: 2,
+                        tension: 0.2,
+                        pointRadius: 4
+                    },
+                    {
+                        label: 'Avance real',
+                        data: [Number(tend.real_inicio || 0), Number(tend.real_hoy || 0), null],
+                        borderColor: '#16a34a',
+                        backgroundColor: 'rgba(22,163,74,0.12)',
+                        borderWidth: 2,
+                        tension: 0.2,
+                        pointRadius: 4,
+                        spanGaps: false
+                    },
+                    {
+                        label: 'Tendencia / proyección',
+                        data: [null, Number(tend.real_hoy || 0), Number(tend.proj_fin || 0)],
+                        borderColor: '#ea580c',
+                        backgroundColor: 'rgba(234,88,12,0.12)',
+                        borderWidth: 2,
+                        borderDash: [7, 5],
+                        tension: 0.2,
+                        pointRadius: 4,
+                        spanGaps: true
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => ctx.dataset.label + ': ' + Number(ctx.parsed.y || 0).toFixed(1) + '%'
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        suggestedMax: 110,
+                        title: { display: true, text: 'Avance (%)' }
+                    }
+                }
+            }
+        });
+    }
 
     // === Chart HS por OBRA (OTs agrupadas) ===
     if (chartHS) chartHS.destroy();
@@ -1028,7 +1528,8 @@ def api_dashboard_estado():
                    COALESCE(NULLIF(TRIM(ot.obra),''), 'SIN OBRA') AS obra_nombre,
                    {hs_prev_expr} AS hs_previstas,
                    0 AS hs_cargadas,
-                   {estado_av_expr} AS estado_avance
+                   {estado_av_expr} AS estado_avance,
+                   UPPER(TRIM(COALESCE(ot.tipo_estructura, ''))) AS tipo_estructura
             FROM ordenes_trabajo ot
             WHERE ot.fecha_cierre IS NULL {tipo_filter_sql}{obra_filter_sql}
             ORDER BY ot.id DESC
@@ -1041,13 +1542,14 @@ def api_dashboard_estado():
                        COALESCE(NULLIF(TRIM(ot.obra),''), 'SIN OBRA') AS obra_nombre,
                        {hs_prev_expr} AS hs_previstas,
                        COALESCE(SUM(CASE WHEN pt.fecha >= ? {fecha_filter_sql_pt} THEN pt.horas ELSE 0 END), 0) AS hs_cargadas,
-                       {estado_av_expr} AS estado_avance
+                       {estado_av_expr} AS estado_avance,
+                       UPPER(TRIM(COALESCE(ot.tipo_estructura, ''))) AS tipo_estructura
                 FROM ordenes_trabajo ot
                 LEFT JOIN partes_trabajo pt ON pt.ot_id = ot.id
                 WHERE ot.fecha_cierre IS NULL {tipo_filter_sql}{obra_filter_sql}
                 GROUP BY ot.id
             )
-            SELECT id, nombre, obra_nombre, hs_previstas, hs_cargadas, estado_avance
+            SELECT id, nombre, obra_nombre, hs_previstas, hs_cargadas, estado_avance, tipo_estructura
             FROM hs_ot
             WHERE hs_previstas > 0 OR hs_cargadas > 0
             ORDER BY id DESC
@@ -1067,7 +1569,8 @@ def api_dashboard_estado():
             "hs_previstas": hs_previstas,
             "hs_cargadas":  round(float(row[4] or 0), 1),
             "hs_segun_avance": hs_segun_avance,
-            "avance_pct": avance_pct
+            "avance_pct": avance_pct,
+            "tipo_estructura": str(row[6] or '').strip().upper(),
         })
 
     if periodo == "actual":
@@ -1131,6 +1634,24 @@ def api_dashboard_estado():
             "hs_cargadas": round(float(row[2] or 0), 1),
             "hs_segun_avance": round(hs_segun_avance_suma, 1)
         })
+
+    tendencia = {"habilitado": False, "motivo": "Sin OTs activas", "tipo_estructura": (tipo_obra or "GENERAL")}
+    prog_rows = []
+    ot_ids_act = [int(row[0]) for row in ots if row and row[0] is not None]
+    if ot_ids_act:
+        ph = ",".join(["?"] * len(ot_ids_act))
+        prog_rows = db.execute(
+            f"""
+            SELECT p.ot_id, p.fecha_inicio, p.fecha_fin
+            FROM programacion p
+            WHERE p.ot_id IN ({ph})
+            ORDER BY p.ot_id, p.fecha_inicio
+            """,
+            tuple(ot_ids_act),
+        ).fetchall()
+        tendencia = _calcular_tendencia_programacion(ots, prog_rows, tipo_obra)
+
+    resumen_tipos = _resumen_tipos_estructura(ots, prog_rows)
 
     if periodo == "actual":
         ot_ids = [int(row[0]) for row in ots]
@@ -1201,6 +1722,8 @@ def api_dashboard_estado():
         "obras_disponibles": obras_disponibles,
         "hs_por_ot": hs_por_ot,
         "hs_por_obra": hs_por_obra,
+        "tendencia": tendencia,
+        "resumen_tipos": resumen_tipos,
         "kg_por_estacion": kg_por_estacion,
         "kg_despachados": kg_despachados,
     })
