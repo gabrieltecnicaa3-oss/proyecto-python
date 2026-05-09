@@ -229,8 +229,14 @@ h4{color:#9a3412;margin:0 0 8px 0;font-size:0.95em;font-weight:700;}
 .kpi .v{font-size:26px;font-weight:800;color:#7c2d12;line-height:1;}
 
 /* ── Gantt ── */
-.gantt-wrap{width:100%;overflow-x:auto;border:1px solid #fed7aa;border-radius:10px;box-shadow:0 3px 10px rgba(154,52,18,0.07);}
-.g-head{display:grid;grid-template-columns:260px 150px 1fr 80px;background:linear-gradient(90deg,#f97316,#ea580c);color:#fff;border-radius:10px 10px 0 0;}
+:root{
+    --g-col-label: 260px;
+    --g-col-need: 150px;
+    --g-col-actions: 80px;
+}
+.gantt-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #fed7aa;border-radius:10px;box-shadow:0 3px 10px rgba(154,52,18,0.07);}
+.gantt-canvas{min-width:980px;}
+.g-head{display:grid;grid-template-columns:var(--g-col-label) var(--g-col-need) 1fr var(--g-col-actions);background:linear-gradient(90deg,#f97316,#ea580c);color:#fff;border-radius:10px 10px 0 0;}
 .g-label-h,.g-act-h{padding:9px 10px;font-weight:700;font-size:12px;display:flex;align-items:center;}
 .g-timeline-h{position:relative;height:38px;overflow:hidden;}
 .g-months-strip{position:absolute;inset:0;}
@@ -238,7 +244,7 @@ h4{color:#9a3412;margin:0 0 8px 0;font-size:0.95em;font-weight:700;}
 .g-weeks-strip{position:absolute;left:0;right:0;top:50%;height:50%;display:flex;}
 .g-week-tick{position:absolute;top:0;height:100%;display:flex;align-items:center;font-size:9px;color:rgba(255,255,255,0.88);padding-left:3px;border-left:1px solid rgba(255,255,255,0.2);}
 .g-body{background:#fff;border-radius:0 0 10px 10px;}
-.g-row{display:grid;grid-template-columns:260px 150px 1fr 80px;border-bottom:1px solid #ffedd5;min-height:38px;}
+.g-row{display:grid;grid-template-columns:var(--g-col-label) var(--g-col-need) 1fr var(--g-col-actions);border-bottom:1px solid #ffedd5;min-height:38px;}
 .g-row:last-child{border-bottom:none;}
 .g-row:hover{background:#fffcf8;}
 .g-label{padding:9px 10px;display:flex;flex-direction:column;justify-content:center;gap:3px;}
@@ -305,7 +311,12 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:#f97316;backgr
 .cumpl-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;}
 .desvio-legend-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px;}
 @media(max-width:800px){
-    .g-head,.g-row{grid-template-columns:180px 120px 1fr 52px;}
+    :root{
+        --g-col-label: 210px;
+        --g-col-need: 120px;
+        --g-col-actions: 92px;
+    }
+    .gantt-canvas{min-width:900px;}
     .form-grid{grid-template-columns:1fr;}
     .hdr{padding:12px;}
     .kpi .v{font-size:22px;}
@@ -317,6 +328,13 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:#f97316;backgr
     .desvio-legend-grid{grid-template-columns:1fr;}
     .hdr-actions{width:100%;}
     .hdr-actions .btn{flex:1 1 100%;text-align:center;}
+}
+@media(max-width:560px){
+    .gantt-canvas{min-width:840px;}
+    .g-timeline-h{height:42px;}
+    .g-row{min-height:42px;}
+    .g-label-h,.g-act-h{font-size:11px;padding:8px 8px;}
+    .g-label,.g-need{padding:8px;}
 }
 </style>"""
 
@@ -610,7 +628,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
             f'border-right:1px solid rgba(0,0,0,.06);" title="{operarios_disponibles} operarios disponibles">{a_lbl}</div>'
         )
 
-    col_grid = "260px 150px 1fr 80px"
+    col_grid = "var(--g-col-label) var(--g-col-need) 1fr var(--g-col-actions)"
     footer_html = f"""
     <div style="border-top:2px solid #f97316;">
         <div style="display:grid;grid-template-columns:{col_grid};background:#fff7ed;min-height:32px;border-bottom:1px solid #fed7aa;">
@@ -633,24 +651,26 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0):
 
     return f"""
     <div class="gantt-wrap">
-        <div class="g-head">
-            <div class="g-label-h">OT / Obra</div>
-            <div class="g-label-h">Fecha necesidad</div>
-            <div class="g-timeline-h">
-                <div class="g-months-strip">{meses_html}</div>
-                <div class="g-weeks-strip">{weeks_html}</div>
+        <div class="gantt-canvas">
+            <div class="g-head">
+                <div class="g-label-h">OT / Obra</div>
+                <div class="g-label-h">Fecha necesidad</div>
+                <div class="g-timeline-h">
+                    <div class="g-months-strip">{meses_html}</div>
+                    <div class="g-weeks-strip">{weeks_html}</div>
+                </div>
+                <div class="g-act-h">Acc.</div>
             </div>
-            <div class="g-act-h">Acc.</div>
-        </div>
-        <div class="g-body">
-            {rows_html}
-        </div>
-        {footer_html}
-        <div style="padding:6px 14px 8px;font-size:11px;color:#6b7280;display:flex;gap:18px;align-items:center;flex-wrap:wrap;border-top:1px solid #ffedd5;background:#fffaf5;border-radius:0 0 10px 10px;">
-            <span style="font-weight:700;color:#9a3412;">Leyenda:</span>
-            <span><span style="display:inline-block;width:12px;height:3px;background:#ef4444;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>Hoy</span>
-            <span><span style="color:#dc2626;font-size:13px;vertical-align:middle;margin-right:3px;">◆</span>HITO – Fecha de entrega</span>
-            <span><span style="display:inline-block;width:12px;height:8px;background:#16a34a;border-radius:2px;vertical-align:middle;opacity:0.9;margin-right:3px;"></span>Avance real</span>
+            <div class="g-body">
+                {rows_html}
+            </div>
+            {footer_html}
+            <div style="padding:6px 14px 8px;font-size:11px;color:#6b7280;display:flex;gap:18px;align-items:center;flex-wrap:wrap;border-top:1px solid #ffedd5;background:#fffaf5;border-radius:0 0 10px 10px;">
+                <span style="font-weight:700;color:#9a3412;">Leyenda:</span>
+                <span><span style="display:inline-block;width:12px;height:3px;background:#ef4444;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>Hoy</span>
+                <span><span style="color:#dc2626;font-size:13px;vertical-align:middle;margin-right:3px;">◆</span>HITO – Fecha de entrega</span>
+                <span><span style="display:inline-block;width:12px;height:8px;background:#16a34a;border-radius:2px;vertical-align:middle;opacity:0.9;margin-right:3px;"></span>Avance real</span>
+            </div>
         </div>
     </div>
     """
