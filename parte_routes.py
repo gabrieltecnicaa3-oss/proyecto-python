@@ -532,7 +532,7 @@ def parte_semanal():
     
     <script>
     const PRELOAD_ROWS = __PRELOAD_ROWS__;
-    const IS_EDIT_MODE = __MODO_EDICION__ === "1";
+    const IS_EDIT_MODE = __MODO_EDICION__;
 
     function agregarFilaDesde(btn) {
         const sourceRow = btn.closest('tr');
@@ -738,7 +738,7 @@ def parte_semanal():
     </body>
     </html>
     """
-    html = html.replace("__MODO_EDICION__", "1" if editar_semana else "0")
+    html = html.replace("__MODO_EDICION__", "true" if editar_semana else "false")
     html = html.replace("__SEMANA_ORIGINAL__", html_lib.escape(editar_semana))
     html = html.replace("__SEMANA_FORM_VALUE__", html_lib.escape(semana_form_value))
     html = html.replace("__PRELOAD_ROWS__", json.dumps(preloaded_rows, ensure_ascii=False))
