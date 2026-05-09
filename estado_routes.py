@@ -1424,10 +1424,10 @@ function renderDashboard(data) {
                         z: 1
                     },
                     {
-                        label: 'HS Según Avance Real',
+                        label: 'HS Según Avance Actual',
                         data: hsObra.map(o => o.hs_segun_avance || 0),
-                        backgroundColor: 'rgba(55, 65, 81, 0.85)', // gris oscuro
-                        borderColor: '#374151',
+                        backgroundColor: 'rgba(59, 130, 246, 0.85)', // azul intenso
+                        borderColor: '#1e40af',
                         borderWidth: 2,
                         borderRadius: 8,
                         barPercentage: 0.7,
@@ -1439,8 +1439,8 @@ function renderDashboard(data) {
                     {
                         label: 'HS Reales Totales',
                         data: hsObra.map(o => o.hs_cargadas),
-                        backgroundColor: 'rgba(249, 115, 22, 0.85)', // naranja
-                        borderColor: '#c2410c',
+                        backgroundColor: 'rgba(34, 197, 94, 0.85)', // verde
+                        borderColor: '#15803d',
                         borderWidth: 2,
                         borderRadius: 8,
                         barPercentage: 0.45,
