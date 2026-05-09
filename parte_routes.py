@@ -231,15 +231,22 @@ def parte_semanal():
         for emp in empleados:
             nombre_emp = str(emp.get('nombre') or '').strip()
             firma_data = empleados_map.get(nombre_emp.lower(), {})
-            horas_total = sum([float(emp.get(dia, 0) or 0) for dia in ['lun', 'mar', 'mie', 'jue', 'vie', 'sab']])
+            _lun = float(emp.get('lun', 0) or 0)
+            _mar = float(emp.get('mar', 0) or 0)
+            _mie = float(emp.get('mie', 0) or 0)
+            _jue = float(emp.get('jue', 0) or 0)
+            _vie = float(emp.get('vie', 0) or 0)
+            _sab = float(emp.get('sab', 0) or 0)
+            horas_total = _lun + _mar + _mie + _jue + _vie + _sab
             db.execute("""
-                INSERT INTO partes_trabajo (fecha, operario, ot_id, horas, firma_digital, firma_imagen_path, actividad)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO partes_trabajo (fecha, operario, ot_id, horas, lun, mar, mie, jue, vie, sab, firma_digital, firma_imagen_path, actividad)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 semana_inicio,
                 nombre_emp,
                 emp.get('ot_id'),
                 horas_total,
+                _lun, _mar, _mie, _jue, _vie, _sab,
                 firma_data.get("firma_digital", ""),
                 firma_data.get("firma_imagen_path", ""),
                 f"Semana del {semana_inicio}" + (f" | Proceso: {emp.get('proceso')}" if emp.get('proceso') else "")
@@ -743,6 +750,300 @@ def parte_semanal():
     html = html.replace("__SEMANA_FORM_VALUE__", html_lib.escape(semana_form_value))
     html = html.replace("__PRELOAD_ROWS__", json.dumps(preloaded_rows, ensure_ascii=False))
     return html
+
+
+@parte_bp.route("/modulo/parte/editar-semana/<fecha>", methods=["GET", "POST"])
+def parte_editar_semana(fecha):
+    db = get_db()
+
+    if request.method == "POST":
+        semana_nueva = (request.form.get("semana_inicio") or fecha).strip()
+        empleados_json = request.form.get("empleados_json", "[]")
+        try:
+            empleados = json.loads(empleados_json)
+        except Exception:
+            empleados = []
+
+        empleados_map = {}
+        for _nombre, _firma_digital, _firma_imagen_path in db.execute(
+            "SELECT nombre, firma_electronica, firma_imagen_path FROM empleados_parte"
+        ).fetchall():
+            clave = str(_nombre or "").strip().lower()
+            if clave:
+                empleados_map[clave] = {
+                    "firma_digital": str(_firma_digital or "").strip(),
+                    "firma_imagen_path": str(_firma_imagen_path or "").strip(),
+                }
+
+        db.execute("DELETE FROM partes_trabajo WHERE fecha = ?", (fecha,))
+
+        for emp in empleados:
+            nombre_emp = str(emp.get("nombre") or "").strip()
+            if not nombre_emp:
+                continue
+            firma_data = empleados_map.get(nombre_emp.lower(), {})
+            _lun = float(emp.get("lun", 0) or 0)
+            _mar = float(emp.get("mar", 0) or 0)
+            _mie = float(emp.get("mie", 0) or 0)
+            _jue = float(emp.get("jue", 0) or 0)
+            _vie = float(emp.get("vie", 0) or 0)
+            _sab = float(emp.get("sab", 0) or 0)
+            horas_total = _lun + _mar + _mie + _jue + _vie + _sab
+            proceso = str(emp.get("proceso") or "").strip()
+            db.execute(
+                """
+                INSERT INTO partes_trabajo (fecha, operario, ot_id, horas, lun, mar, mie, jue, vie, sab, firma_digital, firma_imagen_path, actividad)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    semana_nueva,
+                    nombre_emp,
+                    emp.get("ot_id") or None,
+                    horas_total,
+                    _lun, _mar, _mie, _jue, _vie, _sab,
+                    firma_data.get("firma_digital", ""),
+                    firma_data.get("firma_imagen_path", ""),
+                    f"Semana del {semana_nueva}" + (f" | Proceso: {proceso}" if proceso else ""),
+                ),
+            )
+
+        db.commit()
+        return redirect("/modulo/parte/reportes?mensaje=" + quote("✅ Semana actualizada"))
+
+    # GET: Load existing week data and show editable table
+    ots = db.execute(
+        "SELECT id, obra, titulo FROM ordenes_trabajo WHERE estado != 'Finalizada' AND fecha_cierre IS NULL ORDER BY id DESC"
+    ).fetchall()
+
+    todos_empleados = db.execute(
+        """
+        SELECT nombre FROM empleados_parte
+        ORDER BY LOWER(TRIM(COALESCE(apellido, ''))) COLLATE NOCASE ASC,
+                 LOWER(TRIM(COALESCE(nombre_base, nombre, ''))) COLLATE NOCASE ASC
+        """
+    ).fetchall()
+
+    rows_edit = db.execute(
+        """
+        SELECT COALESCE(operario,''), COALESCE(ot_id,''), COALESCE(actividad,''),
+               COALESCE(lun,0), COALESCE(mar,0), COALESCE(mie,0),
+               COALESCE(jue,0), COALESCE(vie,0), COALESCE(sab,0), COALESCE(horas,0)
+        FROM partes_trabajo
+        WHERE fecha = ?
+        ORDER BY LOWER(TRIM(COALESCE(operario,''))) ASC, id ASC
+        """,
+        (fecha,),
+    ).fetchall()
+
+    preloaded = []
+    for operario, ot_id, actividad, lun, mar, mie, jue, vie, sab, horas in rows_edit:
+        actividad_txt = str(actividad or "")
+        proceso = ""
+        if " | Proceso:" in actividad_txt:
+            proceso = actividad_txt.split(" | Proceso:", 1)[1].strip()
+        _lun = float(lun or 0)
+        _mar = float(mar or 0)
+        _mie = float(mie or 0)
+        _jue = float(jue or 0)
+        _vie = float(vie or 0)
+        _sab = float(sab or 0)
+        # Fallback: if no per-day data stored, put total in lun
+        if _lun == 0 and _mar == 0 and _mie == 0 and _jue == 0 and _vie == 0 and _sab == 0:
+            _lun = float(horas or 0)
+        preloaded.append({
+            "nombre": str(operario or "").strip(),
+            "ot_id": str(ot_id or "").strip(),
+            "proceso": proceso,
+            "lun": _lun, "mar": _mar, "mie": _mie,
+            "jue": _jue, "vie": _vie, "sab": _sab,
+        })
+
+    # Build OT options HTML
+    ot_options_html = '<option value="">Sin OT</option>'
+    for ot in ots:
+        obra_ot = str(ot[1] or "").strip()
+        titulo_ot = str(ot[2] or "").strip()
+        etiqueta_ot = f"{ot[0]} - {obra_ot}" + (f" - {titulo_ot}" if titulo_ot else "")
+        ot_options_html += f'<option value="{ot[0]}">{html_lib.escape(etiqueta_ot)}</option>'
+
+    emp_options_html = '<option value="">-- Empleado --</option>'
+    for (nombre_emp,) in todos_empleados:
+        nombre_txt = str(nombre_emp or "").strip()
+        if nombre_txt:
+            emp_options_html += f'<option value="{html_lib.escape(nombre_txt)}">{html_lib.escape(nombre_txt)}</option>'
+
+    preloaded_json = json.dumps(preloaded, ensure_ascii=False)
+    fecha_esc = html_lib.escape(fecha)
+
+    return f"""
+    <html>
+    <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+    * {{ box-sizing: border-box; }}
+    body {{ font-family: Arial; padding: 15px; background: #f4f4f4; margin: 0; }}
+    h2 {{ color: #1e40af; border-bottom: 3px solid #2563eb; padding-bottom: 8px; margin-bottom: 16px; }}
+    .header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 12px; flex-wrap: wrap; }}
+    .btn {{ display: inline-block; background: #f97316; color: white; padding: 9px 14px; text-decoration: none; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; font-size: 13px; }}
+    .btn-blue {{ background: #2563eb; }} .btn-blue:hover {{ background: #1d4ed8; }}
+    .btn-green {{ background: #16a34a; }} .btn-green:hover {{ background: #15803d; }}
+    .btn-gray {{ background: #6b7280; }} .btn-gray:hover {{ background: #4b5563; }}
+    .card {{ background: white; border-radius: 8px; padding: 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); overflow-x: auto; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 13px; min-width: 780px; }}
+    th {{ background: #2563eb; color: white; padding: 8px 6px; text-align: center; white-space: nowrap; }}
+    td {{ padding: 5px 4px; border: 1px solid #e2e8f0; text-align: center; vertical-align: middle; }}
+    input[type="number"] {{ width: 60px; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; text-align: center; font-size: 13px; }}
+    select {{ padding: 4px 4px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 12px; width: 100%; }}
+    .total-cell {{ font-weight: bold; background: #ecfdf5; color: #166534; }}
+    .sum-row td {{ background: #dbeafe; font-weight: bold; color: #1e3a8a; }}
+    .btn-del {{ background: #ef4444; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 13px; width: auto; }}
+    .btn-del:hover {{ background: #b91c1c; }}
+    .actions {{ margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }}
+    .flash-ok {{ background: #e8f5e9; color: #1b5e20; border: 1px solid #a5d6a7; padding: 10px 14px; border-radius: 6px; margin-bottom: 14px; font-weight: bold; }}
+    </style>
+    </head>
+    <body>
+    <div class="header">
+      <h2>✏️ Editar Semana del {fecha_esc}</h2>
+      <a href="/modulo/parte/reportes" class="btn btn-gray">⬅️ Volver</a>
+    </div>
+    <div class="card">
+      <form id="edit-form" method="post">
+        <input type="hidden" name="semana_inicio" value="{fecha_esc}">
+        <input type="hidden" name="empleados_json" id="empleados_json">
+        <table id="edit-table">
+          <thead>
+            <tr>
+              <th style="min-width:130px;">Empleado</th>
+              <th style="min-width:140px;">OT</th>
+              <th style="min-width:100px;">Proceso</th>
+              <th>Lun</th><th>Mar</th><th>Mié</th><th>Jue</th><th>Vie</th><th>Sáb</th>
+              <th>Total</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="edit-tbody">
+            <tr id="tpl-row" style="display:none;">
+              <td><select class="emp-sel">{emp_options_html}</select></td>
+              <td><select class="ot-sel">{ot_options_html}</select></td>
+              <td>
+                <select class="proc-sel">
+                  <option value="">--</option>
+                  <option value="Armado">Armado</option>
+                  <option value="Soldadura">Soldadura</option>
+                  <option value="Pintura">Pintura</option>
+                  <option value="Mantenimiento">Mantenimiento</option>
+                </select>
+              </td>
+              <td><input type="number" class="h lun" min="0" max="24" step="0.5" value="0"></td>
+              <td><input type="number" class="h mar" min="0" max="24" step="0.5" value="0"></td>
+              <td><input type="number" class="h mie" min="0" max="24" step="0.5" value="0"></td>
+              <td><input type="number" class="h jue" min="0" max="24" step="0.5" value="0"></td>
+              <td><input type="number" class="h vie" min="0" max="24" step="0.5" value="0"></td>
+              <td><input type="number" class="h sab" min="0" max="24" step="0.5" value="0"></td>
+              <td class="total-cell">0.0</td>
+              <td><button type="button" class="btn-del" onclick="this.closest('tr').remove();actualizarTotales();">✕</button></td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr class="sum-row">
+              <td colspan="3" style="text-align:left;padding-left:8px;">📊 Sumatoria HS por día</td>
+              <td id="sum-lun">0.0</td>
+              <td id="sum-mar">0.0</td>
+              <td id="sum-mie">0.0</td>
+              <td id="sum-jue">0.0</td>
+              <td id="sum-vie">0.0</td>
+              <td id="sum-sab">0.0</td>
+              <td id="sum-total">0.0</td>
+              <td>—</td>
+            </tr>
+          </tfoot>
+        </table>
+        <div class="actions">
+          <button type="button" class="btn" onclick="agregarFila()">➕ Agregar fila</button>
+          <button type="button" class="btn btn-green" onclick="guardar()">💾 Guardar semana</button>
+          <a href="/modulo/parte/reportes" class="btn btn-gray">✕ Cancelar</a>
+        </div>
+      </form>
+    </div>
+    <script>
+    const PRELOAD = {preloaded_json};
+
+    function agregarFila(data) {{
+      const tpl = document.getElementById('tpl-row');
+      const newRow = tpl.cloneNode(true);
+      newRow.id = '';
+      newRow.style.display = '';
+      if (data) {{
+        newRow.querySelector('.emp-sel').value = String(data.nombre || '');
+        newRow.querySelector('.ot-sel').value = String(data.ot_id || '');
+        newRow.querySelector('.proc-sel').value = String(data.proceso || '');
+        ['lun','mar','mie','jue','vie','sab'].forEach(d => {{
+          const el = newRow.querySelector('.' + d);
+          if (el) el.value = Number(data[d] || 0);
+        }});
+      }}
+      newRow.querySelectorAll('.h').forEach(el => el.addEventListener('input', actualizarTotales));
+      newRow.querySelector('.btn-del').onclick = function() {{ this.closest('tr').remove(); actualizarTotales(); }};
+      document.getElementById('edit-tbody').appendChild(newRow);
+      actualizarTotales();
+    }}
+
+    function actualizarTotales() {{
+      const sum = {{lun:0,mar:0,mie:0,jue:0,vie:0,sab:0}};
+      document.querySelectorAll('#edit-tbody tr:not(#tpl-row)').forEach(row => {{
+        let total = 0;
+        ['lun','mar','mie','jue','vie','sab'].forEach(d => {{
+          const el = row.querySelector('.' + d);
+          const v = el ? (parseFloat(el.value) || 0) : 0;
+          sum[d] += v;
+          total += v;
+        }});
+        const tc = row.querySelector('.total-cell');
+        if (tc) tc.textContent = total.toFixed(1);
+      }});
+      ['lun','mar','mie','jue','vie','sab'].forEach(d => {{
+        const el = document.getElementById('sum-' + d);
+        if (el) el.textContent = sum[d].toFixed(1);
+      }});
+      const grand = sum.lun + sum.mar + sum.mie + sum.jue + sum.vie + sum.sab;
+      document.getElementById('sum-total').textContent = grand.toFixed(1);
+    }}
+
+    function guardar() {{
+      const rows = document.querySelectorAll('#edit-tbody tr:not(#tpl-row)');
+      const empleados = [];
+      rows.forEach(row => {{
+        const empEl = row.querySelector('.emp-sel');
+        if (!empEl || !empEl.value.trim()) return;
+        empleados.push({{
+          nombre: empEl.value,
+          ot_id: row.querySelector('.ot-sel').value,
+          proceso: row.querySelector('.proc-sel').value,
+          lun: parseFloat(row.querySelector('.lun').value) || 0,
+          mar: parseFloat(row.querySelector('.mar').value) || 0,
+          mie: parseFloat(row.querySelector('.mie').value) || 0,
+          jue: parseFloat(row.querySelector('.jue').value) || 0,
+          vie: parseFloat(row.querySelector('.vie').value) || 0,
+          sab: parseFloat(row.querySelector('.sab').value) || 0,
+        }});
+      }});
+      if (empleados.length === 0) {{ alert('❌ No hay filas para guardar'); return; }}
+      document.getElementById('empleados_json').value = JSON.stringify(empleados);
+      document.getElementById('edit-form').submit();
+    }}
+
+    document.addEventListener('DOMContentLoaded', function() {{
+      if (PRELOAD.length > 0) {{
+        PRELOAD.forEach(row => agregarFila(row));
+      }} else {{
+        agregarFila();
+      }}
+    }});
+    </script>
+    </body>
+    </html>
+    """
 
 
 @parte_bp.route("/modulo/parte/carga-empleados", methods=["GET", "POST"])
@@ -1340,7 +1641,7 @@ def parte_semanal_reportes():
 
         horas_semana = sum(float(r[7] or 0) for row_list in reps_semana.values() for r in row_list)
         registros_semana = sum(len(row_list) for row_list in reps_semana.values())
-        editar_semana_url = f"/modulo/parte?editar_semana={quote(str(fecha or ''))}"
+        editar_semana_url = f"/modulo/parte/editar-semana/{quote(str(fecha or ''))}"
 
         filas += f"""
         <tr style="background: #eef8fd; font-weight: bold;">

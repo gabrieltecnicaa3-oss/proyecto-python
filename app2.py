@@ -779,6 +779,14 @@ def init_db():
             except Exception:
                 pass
 
+        for _col_dia in ['lun', 'mar', 'mie', 'jue', 'vie', 'sab']:
+            if _col_dia not in partes_columns:
+                try:
+                    db.execute(f"ALTER TABLE partes_trabajo ADD COLUMN {_col_dia} REAL DEFAULT 0")
+                    db.commit()
+                except Exception:
+                    pass
+
         cursor = db.execute("PRAGMA table_info(empleados_parte)")
         empleados_parte_columns = {row[1] for row in cursor.fetchall()}
 
