@@ -1286,40 +1286,54 @@ function renderDashboard(data) {
                     {
                         label: 'Avance actual (plan)',
                         data: [Number(tend.plan_inicio || 0), Number(tend.plan_hoy || 0), Number(tend.plan_fin || 100)],
-                        borderColor: '#1d4ed8',
-                        backgroundColor: 'rgba(29,78,216,0.12)',
-                        borderWidth: 2,
-                        tension: 0.2,
-                        pointRadius: 4
+                        borderColor: '#0284c7',
+                        backgroundColor: 'rgba(2, 132, 199, 0.08)',
+                        borderWidth: 3,
+                        tension: 0.3,
+                        pointRadius: 5,
+                        pointBackgroundColor: '#0284c7',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2
                     },
                     {
                         label: 'Avance real',
                         data: [Number(tend.real_inicio || 0), Number(tend.real_hoy || 0), null],
                         borderColor: '#16a34a',
-                        backgroundColor: 'rgba(22,163,74,0.12)',
-                        borderWidth: 2,
-                        tension: 0.2,
-                        pointRadius: 4,
+                        backgroundColor: 'rgba(22, 163, 74, 0.08)',
+                        borderWidth: 3,
+                        tension: 0.3,
+                        pointRadius: 5,
+                        pointBackgroundColor: '#16a34a',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
                         spanGaps: false
                     },
                     {
                         label: 'Tendencia / proyección',
                         data: [null, Number(tend.real_hoy || 0), Number(tend.proj_fin || 0)],
-                        borderColor: '#ea580c',
-                        backgroundColor: 'rgba(234,88,12,0.12)',
-                        borderWidth: 2,
+                        borderColor: '#dc2626',
+                        backgroundColor: 'rgba(220, 38, 38, 0.08)',
+                        borderWidth: 3,
                         borderDash: [7, 5],
-                        tension: 0.2,
-                        pointRadius: 4,
+                        tension: 0.3,
+                        pointRadius: 5,
+                        pointBackgroundColor: '#dc2626',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
                         spanGaps: true
                     }
                 ]
             },
             options: {
                 responsive: true,
+                interaction: { mode: 'index', intersect: false },
                 plugins: {
-                    legend: { position: 'top' },
+                    legend: { position: 'top', labels: { font: { size: 12, weight: 'bold' }, usePointStyle: true, padding: 15 } },
                     tooltip: {
+                        backgroundColor: 'rgba(0,0,0,0.8)',
+                        padding: 12,
+                        titleFont: { size: 13, weight: 'bold' },
+                        bodyFont: { size: 12 },
                         callbacks: {
                             label: ctx => ctx.dataset.label + ': ' + Number(ctx.parsed.y || 0).toFixed(1) + '%'
                         }
@@ -1329,7 +1343,13 @@ function renderDashboard(data) {
                     y: {
                         beginAtZero: true,
                         suggestedMax: 110,
-                        title: { display: true, text: 'Avance (%)' }
+                        ticks: { font: { size: 11 } },
+                        grid: { color: 'rgba(200,200,200,0.15)' },
+                        title: { display: true, text: 'Avance (%)', font: { size: 12, weight: 'bold' } }
+                    },
+                    x: { 
+                        ticks: { font: { size: 11 } },
+                        grid: { display: false }
                     }
                 }
             }
@@ -1350,40 +1370,71 @@ function renderDashboard(data) {
                 labels: hsObra.map(o => o.label),
                 datasets: [
                     {
-                        label: 'HS Previstas',
-                        data: hsObra.map(o => o.hs_previstas),
-                        backgroundColor: 'rgba(253,186,116,0.85)',
-                        borderColor: '#f97316',
-                        borderWidth: 2,
-                        borderRadius: 5
-                    },
-                    {
                         label: 'HS Consumidas',
                         data: hsObra.map(o => o.hs_cargadas),
-                        backgroundColor: 'rgba(234,88,12,0.85)',
-                        borderColor: '#c2410c',
+                        backgroundColor: 'rgba(249, 115, 22, 0.7)',
+                        borderColor: '#ea580c',
                         borderWidth: 2,
-                        borderRadius: 5
+                        borderRadius: 6,
+                        type: 'bar'
                     },
                     {
                         label: 'HS según Avance',
                         data: hsObra.map(o => o.hs_segun_avance || 0),
-                        backgroundColor: 'rgba(134,239,172,0.85)',
-                        borderColor: '#22c55e',
+                        backgroundColor: 'rgba(34, 197, 94, 0.65)',
+                        borderColor: '#16a34a',
                         borderWidth: 2,
-                        borderRadius: 5
+                        borderRadius: 6,
+                        type: 'bar'
+                    },
+                    {
+                        label: 'HS Previstas (Tope)',
+                        data: hsObra.map(o => o.hs_previstas),
+                        borderColor: '#dc2626',
+                        backgroundColor: 'transparent',
+                        borderWidth: 3,
+                        borderDash: [5, 5],
+                        fill: false,
+                        pointRadius: 4,
+                        pointBackgroundColor: '#dc2626',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                        tension: 0.2,
+                        type: 'line'
                     }
                 ]
             },
             options: {
                 responsive: true,
+                interaction: { mode: 'index', intersect: false },
                 plugins: {
-                    legend: { position: 'top' },
-                    tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(1) + ' hs' } }
+                    legend: { position: 'top', labels: { font: { size: 12, weight: 'bold' }, usePointStyle: true, padding: 15 } },
+                    tooltip: { 
+                        backgroundColor: 'rgba(0,0,0,0.8)',
+                        padding: 12,
+                        titleFont: { size: 13, weight: 'bold' },
+                        bodyFont: { size: 12 },
+                        callbacks: { 
+                            label: ctx => {
+                                let label = ctx.dataset.label || '';
+                                if (label) label += ': ';
+                                label += ctx.parsed.y.toFixed(1) + ' hs';
+                                return label;
+                            }
+                        }
+                    }
                 },
                 scales: {
-                    y: { beginAtZero: true, title: { display: true, text: 'Horas' } },
-                    x: { ticks: { maxRotation: 35, minRotation: 10 } }
+                    y: { 
+                        beginAtZero: true, 
+                        ticks: { font: { size: 11 } },
+                        grid: { color: 'rgba(200,200,200,0.15)' },
+                        title: { display: true, text: 'Horas', font: { size: 12, weight: 'bold' } }
+                    },
+                    x: { 
+                        ticks: { maxRotation: 35, minRotation: 10, font: { size: 11 } },
+                        grid: { display: false }
+                    }
                 }
             }
         });
@@ -1391,7 +1442,7 @@ function renderDashboard(data) {
 
     // === Chart KG bar ===
     const estaciones = ['ARMADO Y SOLDADURA', 'PINTURA', 'P/DESPACHO'];
-    const colores = ['rgba(249,115,22,0.85)', 'rgba(194,65,12,0.85)', 'rgba(124,45,18,0.85)'];
+    const colores = ['rgba(251, 146, 60, 0.75)', 'rgba(239, 68, 68, 0.75)', 'rgba(168, 85, 247, 0.75)'];
     const kgVals = estaciones.map(e => kg[e] || 0);
     const hayKg = kgVals.some(v => v > 0);
 
@@ -1410,6 +1461,7 @@ function renderDashboard(data) {
                     label: 'KG',
                     data: kgVals,
                     backgroundColor: colores,
+                    borderColor: ['#f97316', '#dc2626', '#a855f7'],
                     borderWidth: 2,
                     borderRadius: 8
                 }]
@@ -1418,9 +1470,26 @@ function renderDashboard(data) {
                 responsive: true,
                 plugins: {
                     legend: { display: false },
-                    tooltip: { callbacks: { label: ctx => ctx.parsed.y.toFixed(1) + ' kg' } }
+                    tooltip: { 
+                        backgroundColor: 'rgba(0,0,0,0.8)',
+                        padding: 12,
+                        titleFont: { size: 13, weight: 'bold' },
+                        bodyFont: { size: 12 },
+                        callbacks: { label: ctx => ctx.parsed.y.toFixed(1) + ' kg' } 
+                    }
                 },
-                scales: { y: { beginAtZero: true, title: { display: true, text: 'KG' } } }
+                scales: { 
+                    y: { 
+                        beginAtZero: true,
+                        ticks: { font: { size: 11 } },
+                        grid: { color: 'rgba(200,200,200,0.15)' },
+                        title: { display: true, text: 'KG (Kg)', font: { size: 12, weight: 'bold' } } 
+                    },
+                    x: { 
+                        ticks: { font: { size: 11 } },
+                        grid: { display: false }
+                    }
+                }
             }
         });
     }
@@ -1433,8 +1502,8 @@ function renderDashboard(data) {
             labels: estaciones,
             datasets: [{
                 data: kgVals,
-                backgroundColor: ['#f97316', '#c2410c', '#7c2d12'],
-                borderWidth: 2,
+                backgroundColor: ['#fb9260', '#ef4444', '#a855f7'],
+                borderWidth: 3,
                 borderColor: '#fff'
             }]
         },
@@ -1442,8 +1511,17 @@ function renderDashboard(data) {
             responsive: true,
             cutout: '60%',
             plugins: {
-                legend: { position: 'bottom' },
-                tooltip: { callbacks: { label: ctx => ctx.label + ': ' + ctx.parsed.toFixed(1) + ' kg' } }
+                legend: { 
+                    position: 'bottom',
+                    labels: { font: { size: 12, weight: 'bold' }, padding: 15, usePointStyle: true }
+                },
+                tooltip: { 
+                    backgroundColor: 'rgba(0,0,0,0.8)',
+                    padding: 12,
+                    titleFont: { size: 13, weight: 'bold' },
+                    bodyFont: { size: 12 },
+                    callbacks: { label: ctx => ctx.label + ': ' + ctx.parsed.toFixed(1) + ' kg' } 
+                }
             }
         }
     });

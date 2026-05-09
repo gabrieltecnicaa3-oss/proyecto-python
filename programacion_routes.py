@@ -913,6 +913,8 @@ def programacion_index():
     semana_key = semana_sel.strftime("%Y-%m-%d")
     cumplimiento_rows_html = ""
     pcts_semana = []
+    oninput_cumplimiento = "" if es_obra else " oninput=\"toggleDesvio({ot_id}); calcCumplimientoKPIs();\""
+    disabled_cumplimiento = " disabled" if es_obra else ""
     for e in entradas_semana:
         ot_id = int(e["ot_id"])
         obra = html_lib.escape(str(e.get("obra") or ""))
@@ -935,10 +937,10 @@ def programacion_index():
             <td style="padding:4px 6px;">{titulo}</td>
             <td style="text-align:center;padding:4px 6px;">
                 <input type="number" min="0" max="100" step="1" value="{pct_val}" name="pct_{ot_id}"
-                       style="width:64px;font-size:11px;padding:3px 5px;" oninput="toggleDesvio({ot_id}); calcCumplimientoKPIs();"> %
+                       style="width:64px;font-size:11px;padding:3px 5px;"{disabled_cumplimiento}{oninput_cumplimiento.format(ot_id=ot_id)}> %
             </td>
             <td id="desv-wrap-{ot_id}" style="{show_desv}padding:4px 6px;">
-                <select name="desvio_{ot_id}" id="desv-{ot_id}" style="min-width:240px;font-size:11px;padding:3px 5px;">{opts}</select>
+                <select name="desvio_{ot_id}" id="desv-{ot_id}" style="min-width:240px;font-size:11px;padding:3px 5px;"{disabled_cumplimiento}>{opts}</select>
             </td>
         </tr>
         """
@@ -1174,7 +1176,8 @@ def programacion_index():
         <div class="kpi"><div class="t">Semana evaluada</div><div class="v" style="font-size:18px;">{_fmt(semana_sel)} a {_fmt(semana_fin)}</div></div>
     </div>
 
-    <form method="post" action="/modulo/programacion/cumplimiento" onsubmit="return validarDesvios();">
+    {"<div style='margin:6px 0 10px 0;padding:8px 10px;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:8px;font-size:12px;font-weight:600;'>Vista solo lectura para usuario OBRA: no puede editar ni guardar cumplimiento semanal.</div>" if es_obra else ""}
+    <form method="post" action="/modulo/programacion/cumplimiento" {"" if es_obra else "onsubmit=\"return validarDesvios();\""}>
         <input type="hidden" name="semana_inicio" value="{semana_str}">
         <input type="hidden" name="fi" value="{fi_str}">
         <input type="hidden" name="ff" value="{ff_str}">
@@ -1184,7 +1187,7 @@ def programacion_index():
                 {cumplimiento_rows_html if cumplimiento_rows_html else "<tr><td colspan='5' style='text-align:center;color:#64748b;'>No hay OTs programadas en la semana seleccionada.</td></tr>"}
             </table>
         </div>
-        <div style="margin-top:10px;"><button type="submit" class="btn">Guardar cumplimiento semanal</button></div>
+        {'' if es_obra else '<div style="margin-top:10px;"><button type="submit" class="btn">Guardar cumplimiento semanal</button></div>'}
     </form>
 
     <div class="cumpl-grid">
@@ -1394,6 +1397,9 @@ function printCumplimiento() {{
 
 @programacion_bp.route("/modulo/programacion/cumplimiento", methods=["POST"])
 def programacion_cumplimiento():
+    if _es_usuario_obra():
+        return redirect("/modulo/programacion")
+
     db = get_db()
     semana_inicio = (request.form.get("semana_inicio") or "").strip()
     fi = (request.form.get("fi") or "").strip()
