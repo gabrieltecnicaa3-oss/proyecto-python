@@ -532,6 +532,7 @@ def parte_semanal():
     
     <script>
     const PRELOAD_ROWS = __PRELOAD_ROWS__;
+    const IS_EDIT_MODE = __MODO_EDICION__ === "1";
 
     function agregarFilaDesde(btn) {
         const sourceRow = btn.closest('tr');
@@ -724,8 +725,14 @@ def parte_semanal():
     }
 
     document.addEventListener('DOMContentLoaded', function() {
-        inicializarFilasIniciales();
-        cargarFilasEdicion();
+        if (IS_EDIT_MODE) {
+            cargarFilasEdicion();
+            if (!Array.isArray(PRELOAD_ROWS) || PRELOAD_ROWS.length === 0) {
+                inicializarFilasIniciales();
+            }
+        } else {
+            inicializarFilasIniciales();
+        }
     });
     </script>
     </body>
