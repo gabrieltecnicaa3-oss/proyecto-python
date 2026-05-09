@@ -1411,9 +1411,18 @@ function renderDashboard(data) {
                 labels: hsObra.map(o => o.label),
                 datasets: [
                     {
+                        label: 'HS Previstas (Tope)',
+                        data: hsObra.map(o => o.hs_previstas),
+                        backgroundColor: 'rgba(107, 114, 128, 0.15)',
+                        borderColor: 'rgba(107, 114, 128, 0.3)',
+                        borderWidth: 1,
+                        borderRadius: 6,
+                        type: 'bar'
+                    },
+                    {
                         label: 'HS Consumidas',
                         data: hsObra.map(o => o.hs_cargadas),
-                        backgroundColor: 'rgba(249, 115, 22, 0.7)',
+                        backgroundColor: 'rgba(249, 115, 22, 0.8)',
                         borderColor: '#c2410c',
                         borderWidth: 2,
                         borderRadius: 6,
@@ -1422,26 +1431,11 @@ function renderDashboard(data) {
                     {
                         label: 'HS según Avance',
                         data: hsObra.map(o => o.hs_segun_avance || 0),
-                        backgroundColor: 'rgba(34, 197, 94, 0.65)',
+                        backgroundColor: 'rgba(34, 197, 94, 0.75)',
                         borderColor: '#15803d',
                         borderWidth: 2,
                         borderRadius: 6,
                         type: 'bar'
-                    },
-                    {
-                        label: 'HS Previstas (Tope)',
-                        data: hsObra.map(o => o.hs_previstas),
-                        borderColor: '#6b7280',
-                        backgroundColor: 'transparent',
-                        borderWidth: 3,
-                        borderDash: [5, 5],
-                        fill: false,
-                        pointRadius: 4,
-                        pointBackgroundColor: '#6b7280',
-                        pointBorderColor: '#fff',
-                        pointBorderWidth: 2,
-                        tension: 0.2,
-                        type: 'line'
                     }
                 ]
             },
