@@ -1190,6 +1190,25 @@ def programacion_index():
         {'' if es_obra else '<div style="margin-top:10px;"><button type="submit" class="btn">Guardar cumplimiento semanal</button></div>'}
     </form>
 
+    <!-- HISTORIAL DE CUMPLIMIENTOS GUARDADOS -->
+    <div style="margin-top:20px;padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+        <h4 style="margin:0 0 12px 0;">📋 Historial de cumplimientos guardados</h4>
+        <div style="overflow-x:auto;">
+            <table class="tbl tbl-compact" id="historial-table" style="font-size:12px;">
+                <tr>
+                    <th>Semana</th>
+                    <th>OT</th>
+                    <th>Obra</th>
+                    <th>Título</th>
+                    <th>% Cumplido</th>
+                    <th>Desvío</th>
+                    <th>Acciones</th>
+                </tr>
+            </table>
+            <div id="historial-vacio" style="text-align:center;color:#64748b;padding:20px;">Cargando historial...</div>
+        </div>
+    </div>
+
     <div class="cumpl-grid">
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">
             <h4>% Cumplimiento promedio por semana</h4>
@@ -1233,6 +1252,49 @@ def programacion_index():
             if (w) w.style.display = '';
         }}
     }}
+    function cargarHistorialCumplimientos() {{
+        fetch('/api/programacion/cumplimientos-historial')
+            .then(r => r.json())
+            .then(data => {{
+                var tabla = document.getElementById('historial-table');
+                var vacio = document.getElementById('historial-vacio');
+                if (!data.cumplimientos || data.cumplimientos.length === 0) {{
+                    vacio.style.display = 'block';
+                    return;
+                }}
+                vacio.style.display = 'none';
+                var rows = '';
+                data.cumplimientos.forEach(c => {{
+                    var desvio_label = c.desvio_codigo ? (data.desvios[c.desvio_codigo] || c.desvio_codigo) : '-';
+                    rows += `<tr>
+                        <td>${{c.semana}}</td>
+                        <td><b>${{c.ot_id}}</b></td>
+                        <td>${{c.obra || '-'}}</td>
+                        <td>${{c.titulo || '---'}}</td>
+                        <td style="text-align:center;font-weight:700;">${{c.pct_cumplido}}%</td>
+                        <td style="font-size:11px;">${{desvio_label}}</td>
+                        <td style="text-align:center;white-space:nowrap;">
+                            <button type="button" class="btn btn-sm" style="padding:3px 8px;font-size:11px;background:#3b82f6;color:white;border:0;border-radius:4px;cursor:pointer;" onclick="editarCumplimiento(${{c.ot_id}}, '${{c.semana}}', ${{c.pct_cumplido}}, '${{c.desvio_codigo}}');">✏️ Editar</button>
+                        </td>
+                    </tr>`;
+                }});
+                var tbody = tabla.querySelector('tr').parentElement;
+                var filas = tbody.querySelectorAll('tr');
+                for (var i = filas.length - 1; i >= 1; i--) filas[i].remove();
+                tabla.insertAdjacentHTML('beforeend', rows);
+            }})
+            .catch(e => console.error('Error cargando historial:', e));
+    }}
+    function editarCumplimiento(otId, semana, pct, desvio) {{
+        document.getElementById('semana_inicio').value = semana;
+        var form = document.querySelector('form[action="/modulo/programacion/cumplimiento"]');
+        form.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+        document.getElementById('pct_' + otId).value = pct;
+        document.getElementById('pct_' + otId).focus();
+        if (document.getElementById('desv-' + otId)) document.getElementById('desv-' + otId).value = desvio || '';
+        toggleDesvio(otId);
+        alert('Semana y OT cargados para editar. Actualiza los valores y guarda.');
+    }}
     function validarDesvios() {{
         var ok = true;
         var rows = document.querySelectorAll('input[name^="pct_"]');
@@ -1271,7 +1333,7 @@ def programacion_index():
         var k = document.getElementById('kpi-semanal');
         if (k) k.textContent = n > 0 ? ((sum / n).toFixed(1) + '%') : '—';
     }}
-    document.addEventListener('DOMContentLoaded', calcCumplimientoKPIs);
+    document.addEventListener('DOMContentLoaded', function() {{ calcCumplimientoKPIs(); cargarHistorialCumplimientos(); }});
     </script>
 </div>
 """
@@ -1650,3 +1712,31 @@ def programacion_reordenar():
         counter += 1
     db.commit()
     return redirect("/modulo/programacion")
+
+@programacion_bp.route("/api/programacion/cumplimientos-historial")
+def api_cumplimientos_historial():
+    from db_utils import get_db
+    from flask import jsonify
+    db = get_db()
+    cumplimientos = db.execute(
+        "SELECT c.ot_id, c.semana_inicio, c.pct_cumplido, c.desvio_codigo, "
+        "COALESCE(o.obra, ''), COALESCE(o.titulo, '') "
+        "FROM programacion_cumplimiento c "
+        "LEFT JOIN ordenes_trabajo o ON o.id = c.ot_id "
+        "ORDER BY c.semana_inicio DESC, c.ot_id ASC"
+    ).fetchall()
+    result = {
+        "cumplimientos": [
+            {
+                "ot_id": c[0],
+                "semana": c[1],
+                "pct_cumplido": int(c[2] or 0),
+                "desvio_codigo": str(c[3] or ""),
+                "obra": c[4],
+                "titulo": c[5]
+            }
+            for c in cumplimientos
+        ],
+        "desvios": _DESVIOS
+    }
+    return jsonify(result)
