@@ -1411,36 +1411,49 @@ function renderDashboard(data) {
                 labels: hsObra.map(o => o.label),
                 datasets: [
                     {
-                        label: 'HS Previstas (Tope)',
+                        label: 'HS Totales Previstas',
                         data: hsObra.map(o => o.hs_previstas),
-                        backgroundColor: 'rgba(107, 114, 128, 0.15)',
-                        borderColor: 'rgba(107, 114, 128, 0.3)',
-                        borderWidth: 1,
-                        borderRadius: 6,
-                        type: 'bar'
+                        backgroundColor: 'rgba(59, 130, 246, 0.18)', // azul claro translúcido
+                        borderColor: 'rgba(59, 130, 246, 0.35)',
+                        borderWidth: 2,
+                        borderRadius: 8,
+                        barPercentage: 1.0,
+                        categoryPercentage: 1.0,
+                        type: 'bar',
+                        order: 1,
+                        z: 1
                     },
                     {
-                        label: 'HS Consumidas',
+                        label: 'HS Según Avance Real',
+                        data: hsObra.map(o => o.hs_segun_avance || 0),
+                        backgroundColor: 'rgba(55, 65, 81, 0.85)', // gris oscuro
+                        borderColor: '#374151',
+                        borderWidth: 2,
+                        borderRadius: 8,
+                        barPercentage: 0.7,
+                        categoryPercentage: 0.7,
+                        type: 'bar',
+                        order: 2,
+                        z: 2
+                    },
+                    {
+                        label: 'HS Reales Totales',
                         data: hsObra.map(o => o.hs_cargadas),
-                        backgroundColor: 'rgba(249, 115, 22, 0.8)',
+                        backgroundColor: 'rgba(249, 115, 22, 0.85)', // naranja
                         borderColor: '#c2410c',
                         borderWidth: 2,
-                        borderRadius: 6,
-                        type: 'bar'
-                    },
-                    {
-                        label: 'HS según Avance',
-                        data: hsObra.map(o => o.hs_segun_avance || 0),
-                        backgroundColor: 'rgba(34, 197, 94, 0.75)',
-                        borderColor: '#15803d',
-                        borderWidth: 2,
-                        borderRadius: 6,
-                        type: 'bar'
+                        borderRadius: 8,
+                        barPercentage: 0.45,
+                        categoryPercentage: 0.45,
+                        type: 'bar',
+                        order: 3,
+                        z: 3
                     }
                 ]
             },
             options: {
                 responsive: true,
+                indexAxis: 'y', // BARRAS HORIZONTALES
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
                     legend: { position: 'top', labels: { font: { size: 12, weight: 'bold' }, usePointStyle: true, padding: 15 } },
@@ -1453,21 +1466,21 @@ function renderDashboard(data) {
                             label: ctx => {
                                 let label = ctx.dataset.label || '';
                                 if (label) label += ': ';
-                                label += ctx.parsed.y.toFixed(1) + ' hs';
+                                label += ctx.parsed.x.toFixed(1) + ' hs';
                                 return label;
                             }
                         }
                     }
                 },
                 scales: {
-                    y: { 
+                    x: { 
                         beginAtZero: true, 
                         ticks: { font: { size: 11 } },
                         grid: { color: 'rgba(200,200,200,0.15)' },
                         title: { display: true, text: 'Horas', font: { size: 12, weight: 'bold' } }
                     },
-                    x: { 
-                        ticks: { maxRotation: 35, minRotation: 10, font: { size: 11 } },
+                    y: { 
+                        ticks: { font: { size: 11 } },
                         grid: { display: false }
                     }
                 }
