@@ -102,6 +102,8 @@ OBRA_RESTRICTED_PREFIXES = (
     "/modulo/programacion/nueva",
     "/modulo/programacion/editar",
     "/modulo/programacion/eliminar",
+    "/modulo/estado",
+    "/api/dashboard-estado",
 )
 
 OBRA_ALLOWED_POST_PREFIXES = (
@@ -132,6 +134,7 @@ def _rol_puede_acceder(role, path, method):
     ADMIN_ONLY_PREFIXES = (
         "/modulo/historial",
         "/modulo/reportes",
+        "/modulo/rutina-control",
     )
     p = str(path or "").lower()
     if any(p.startswith(pref) for pref in ADMIN_ONLY_PREFIXES):
@@ -589,6 +592,22 @@ def init_db():
         fecha_actualizacion DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE (ot_id, semana_inicio),
         FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)
+    )
+    """)
+
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS rutina_control_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        periodo TEXT NOT NULL,
+        titulo TEXT NOT NULL,
+        detalle TEXT,
+        responsable TEXT,
+        estado TEXT DEFAULT 'pendiente',
+        fecha_objetivo DATE,
+        orden INTEGER DEFAULT 0,
+        activo INTEGER DEFAULT 1,
+        actualizado_por TEXT,
+        fecha_actualizacion DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
@@ -1803,9 +1822,17 @@ def dashboard():
             "titulo": "Reportes",
             "desc": "Informes de avance por obra: versión cliente e interna con KPIs, procesos y prioridades",
         },
+        {
+            "href": "/modulo/rutina-control",
+            "css": "rutina",
+            "icon": "🗂️",
+            "titulo": "Rutina de Control",
+            "desc": "Rutina diaria, semanal y mensual para mantener el avance real alineado al plan",
+        },
     ]
 
-    ADMIN_ONLY_HREFS = {"/modulo/historial", "/modulo/reportes"}
+    ADMIN_ONLY_HREFS = {"/modulo/historial", "/modulo/reportes", "/modulo/rutina-control"}
+    OBRA_HIDDEN_HREFS = {"/modulo/estado"}
     is_admin = _is_admin_session()
     cards_html = "".join(
         f'''
@@ -1816,7 +1843,8 @@ def dashboard():
             </a>
         '''
         for m in modulos
-        if m["href"] not in ADMIN_ONLY_HREFS or is_admin
+        if (m["href"] not in ADMIN_ONLY_HREFS or is_admin)
+        and not (role_actual == ROLE_OBRA and m["href"] in OBRA_HIDDEN_HREFS)
     )
 
     top_actions = '''
@@ -2015,6 +2043,9 @@ def dashboard():
     }
     .module-card.reportes {
         border-left: 5px solid #0ea5e9;
+    }
+    .module-card.rutina {
+        border-left: 5px solid #0f766e;
     }
     .footer {
         text-align: center;
@@ -5461,6 +5492,7 @@ from produccion_routes import produccion_bp
 from generador_routes import generador_bp
 from programacion_routes import programacion_bp
 from reportes_routes import reportes_bp
+from rutina_routes import rutina_bp
 
 app.register_blueprint(gestion_calidad_bp)
 app.register_blueprint(calidad_bp)
@@ -5471,6 +5503,7 @@ app.register_blueprint(produccion_bp)
 app.register_blueprint(generador_bp)
 app.register_blueprint(programacion_bp)
 app.register_blueprint(reportes_bp)
+app.register_blueprint(rutina_bp)
 
 
 # ====================== BÚSQUEDA GLOBAL ======================
