@@ -32,6 +32,47 @@ def _guardar_pdf_databook(obra, seccion_key, filename, pdf_bytes, ot_id=None):
 
 estado_bp = Blueprint("estado", __name__)
 
+# ============================================
+# PALETA DE COLORES POR PROCESO
+# ============================================
+COLORES_PROCESOS = {
+    "ARMADO": {
+        "bg": "rgba(59, 130, 246, 0.7)",  # Azul
+        "border": "#1e40af",
+        "light_bg": "rgba(59, 130, 246, 0.15)",
+    },
+    "SOLDADURA": {
+        "bg": "rgba(249, 115, 22, 0.7)",  # Naranja
+        "border": "#c2410c",
+        "light_bg": "rgba(249, 115, 22, 0.15)",
+    },
+    "PINTURA": {
+        "bg": "rgba(34, 197, 94, 0.7)",  # Verde
+        "border": "#15803d",
+        "light_bg": "rgba(34, 197, 94, 0.15)",
+    },
+    "DESPACHO": {
+        "bg": "rgba(168, 85, 247, 0.7)",  # Violeta
+        "border": "#6d28d9",
+        "light_bg": "rgba(168, 85, 247, 0.15)",
+    },
+    "P/DESPACHO": {
+        "bg": "rgba(168, 85, 247, 0.7)",  # Violeta (igual a DESPACHO)
+        "border": "#6d28d9",
+        "light_bg": "rgba(168, 85, 247, 0.15)",
+    },
+    "ARMADO Y SOLDADURA": {
+        "bg": "rgba(100, 120, 230, 0.7)",  # Azul+Naranja blend
+        "border": "#1e40af",
+        "light_bg": "rgba(100, 120, 230, 0.15)",
+    },
+}
+
+def _obtener_color_proceso(proceso_nombre):
+    """Devuelve diccionario de colores para un proceso específico."""
+    nombre = str(proceso_nombre or "").strip().upper()
+    return COLORES_PROCESOS.get(nombre, COLORES_PROCESOS.get("DESPACHO", {}))
+
 
 def _es_usuario_obra():
     return str(session.get("user_role") or "").strip().lower() == "obra"
@@ -1373,7 +1414,7 @@ function renderDashboard(data) {
                         label: 'HS Consumidas',
                         data: hsObra.map(o => o.hs_cargadas),
                         backgroundColor: 'rgba(249, 115, 22, 0.7)',
-                        borderColor: '#ea580c',
+                        borderColor: '#c2410c',
                         borderWidth: 2,
                         borderRadius: 6,
                         type: 'bar'
@@ -1382,7 +1423,7 @@ function renderDashboard(data) {
                         label: 'HS según Avance',
                         data: hsObra.map(o => o.hs_segun_avance || 0),
                         backgroundColor: 'rgba(34, 197, 94, 0.65)',
-                        borderColor: '#16a34a',
+                        borderColor: '#15803d',
                         borderWidth: 2,
                         borderRadius: 6,
                         type: 'bar'
@@ -1390,13 +1431,13 @@ function renderDashboard(data) {
                     {
                         label: 'HS Previstas (Tope)',
                         data: hsObra.map(o => o.hs_previstas),
-                        borderColor: '#dc2626',
+                        borderColor: '#6b7280',
                         backgroundColor: 'transparent',
                         borderWidth: 3,
                         borderDash: [5, 5],
                         fill: false,
                         pointRadius: 4,
-                        pointBackgroundColor: '#dc2626',
+                        pointBackgroundColor: '#6b7280',
                         pointBorderColor: '#fff',
                         pointBorderWidth: 2,
                         tension: 0.2,
@@ -1442,7 +1483,18 @@ function renderDashboard(data) {
 
     // === Chart KG bar ===
     const estaciones = ['ARMADO Y SOLDADURA', 'PINTURA', 'P/DESPACHO'];
-    const colores = ['rgba(251, 146, 60, 0.75)', 'rgba(239, 68, 68, 0.75)', 'rgba(168, 85, 247, 0.75)'];
+    const colores_procesos = {
+        'ARMADO Y SOLDADURA': 'rgba(100, 120, 230, 0.7)',
+        'PINTURA': 'rgba(34, 197, 94, 0.7)',
+        'P/DESPACHO': 'rgba(168, 85, 247, 0.7)'
+    };
+    const colores_bordes = {
+        'ARMADO Y SOLDADURA': '#1e40af',
+        'PINTURA': '#15803d',
+        'P/DESPACHO': '#6d28d9'
+    };
+    const colores = estaciones.map(e => colores_procesos[e]);
+    const bordes = estaciones.map(e => colores_bordes[e]);
     const kgVals = estaciones.map(e => kg[e] || 0);
     const hayKg = kgVals.some(v => v > 0);
 
@@ -1461,7 +1513,7 @@ function renderDashboard(data) {
                     label: 'KG',
                     data: kgVals,
                     backgroundColor: colores,
-                    borderColor: ['#f97316', '#dc2626', '#a855f7'],
+                    borderColor: bordes,
                     borderWidth: 2,
                     borderRadius: 8
                 }]
@@ -1502,7 +1554,7 @@ function renderDashboard(data) {
             labels: estaciones,
             datasets: [{
                 data: kgVals,
-                backgroundColor: ['#fb9260', '#ef4444', '#a855f7'],
+                backgroundColor: colores,
                 borderWidth: 3,
                 borderColor: '#fff'
             }]
