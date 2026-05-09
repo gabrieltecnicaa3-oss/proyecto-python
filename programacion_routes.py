@@ -298,11 +298,25 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:#f97316;backgr
 
 .tbl-compact td,.tbl-compact th{padding:5px 8px!important;font-size:12px!important;}
 @media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}}
+/* Helpers for responsive layout in index page */
+.hdr-actions{display:flex;gap:8px;flex-wrap:wrap;}
+.filters-form,.cumpl-filter-form{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.gantt-toolbar,.cumpl-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;}
+.cumpl-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;}
+.desvio-legend-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px;}
 @media(max-width:800px){
     .g-head,.g-row{grid-template-columns:180px 120px 1fr 52px;}
     .form-grid{grid-template-columns:1fr;}
     .hdr{padding:12px;}
     .kpi .v{font-size:22px;}
+    .filters-form,.cumpl-filter-form{display:grid;grid-template-columns:1fr;gap:8px;}
+    .filters-form input[type=date],.filters-form select,
+    .cumpl-filter-form input[type=date],.cumpl-filter-form select,
+    .filters-form .btn,.cumpl-filter-form .btn{width:100%!important;min-width:0!important;}
+    .cumpl-grid{grid-template-columns:1fr;}
+    .desvio-legend-grid{grid-template-columns:1fr;}
+    .hdr-actions{width:100%;}
+    .hdr-actions .btn{flex:1 1 100%;text-align:center;}
 }
 </style>"""
 
@@ -1120,11 +1134,11 @@ def programacion_index():
     cumpl_kpi_ac = f"{pct_acumulado:.1f}%" if pct_acumulado is not None else "—"
     cumplimiento_panel = f"""
 <div class="panel" id="cumplimiento-section">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <div class="cumpl-head">
         <h3>Cumplimiento de objetivos semanales</h3>
         {'' if es_obra else '<button onclick="printCumplimiento()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>'}
     </div>
-    <form method="get" action="/modulo/programacion" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+    <form method="get" action="/modulo/programacion" class="cumpl-filter-form" style="margin-bottom:10px;">
         <label>Semana (lunes):</label>
         <input type="date" name="semana" value="{semana_str}" style="width:170px;">
         <label>Obra:</label>
@@ -1153,7 +1167,7 @@ def programacion_index():
         <div style="margin-top:10px;"><button type="submit" class="btn">Guardar cumplimiento semanal</button></div>
     </form>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;">
+    <div class="cumpl-grid">
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">
             <h4>% Cumplimiento promedio por semana</h4>
             <div style="font-size:12px;color:#475569;margin-bottom:8px;line-height:1.4;">
@@ -1178,7 +1192,7 @@ def programacion_index():
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px;display:flex;flex-direction:column;">
             <h4 style="margin:0 0 8px 0;">Distribución acumulada de causas de desvío</h4>
             <div style="display:flex;justify-content:center;margin-bottom:10px;">{donut_svg}</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px;">{desv_legend}</div>
+            <div class="desvio-legend-grid">{desv_legend}</div>
         </div>
     </div>
 
@@ -1308,7 +1322,7 @@ function printCumplimiento() {{
         <span class="hdr-chip">📆 Planificación</span>
         <h2>Programación de Fabricación</h2>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <div class="hdr-actions">
         <a href="/modulo/programacion/nueva" class="btn">➕ Nueva Programación</a>
         <a href="/" class="btn btn-sec">⬅️ Volver</a>
     </div>
@@ -1322,8 +1336,7 @@ function printCumplimiento() {{
 </div>
 
 <div class="panel">
-    <form method="get" action="/modulo/programacion"
-          style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <form method="get" action="/modulo/programacion" class="filters-form">
         <label>Desde:</label>
         <input type="date" name="fi" value="{fi_str}" style="width:160px;">
         <label>Hasta:</label>
@@ -1336,7 +1349,7 @@ function printCumplimiento() {{
 </div>
 
 <div class="panel" id="gantt-section">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+    <div class="gantt-toolbar">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <h3>Diagrama de Gantt</h3>
             <a href="/modulo/programacion?vista=trimestral{obra_qs}" class="btn btn-sm" style="{btn_trimestral_active}">📊 Trimestral</a>

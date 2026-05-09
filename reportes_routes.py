@@ -649,6 +649,44 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 
     .print-page-footer { display: none; }
 
+    /* Responsive screen layout */
+    @media screen and (max-width: 1100px) {
+      .report-wrap { max-width: 100%; padding: 14px 10px 24px; }
+      .kpi-row { grid-template-columns: repeat(3, 1fr); }
+      .desvio-kpis { grid-template-columns: repeat(3, 1fr); }
+      .trend-kpis { grid-template-columns: repeat(2, 1fr); }
+      .prod-summary { grid-template-columns: 1fr; }
+      .obs-grid { grid-template-columns: 1fr 1fr; }
+      .obs-col { border-right: none; border-bottom: 1px solid #e5e7eb; }
+      .obs-col:last-child { border-bottom: none; }
+    }
+
+    @media screen and (max-width: 760px) {
+      .rpt-header { padding: 12px 12px; flex-direction: column; align-items: flex-start; gap: 10px; }
+      .rpt-header-right { text-align: left; }
+      .rpt-header-left { width: 100%; }
+      .ficha-row { grid-template-columns: 1fr; }
+      .ficha-cell { border-right: none; border-bottom: 1px solid #e5e7eb; }
+      .ficha-row .ficha-cell:last-child { border-bottom: none; }
+      .kpi-row { grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; }
+      .desvio-kpis { grid-template-columns: 1fr 1fr; }
+      .desvio-grid { grid-template-columns: 1fr; }
+      .trend-kpis { grid-template-columns: 1fr 1fr; }
+      .obs-grid { grid-template-columns: 1fr; }
+      .bar-row { flex-wrap: wrap; gap: 6px; }
+      .bar-ot-label { width: 100%; }
+      .bar-real, .bar-fe { width: auto; margin-left: 0; }
+      .axis-labels { padding-left: 16px; }
+      .firma-row { grid-template-columns: 1fr; gap: 14px; max-width: 100%; }
+    }
+
+    @media screen and (max-width: 520px) {
+      .kpi-row, .desvio-kpis, .trend-kpis { grid-template-columns: 1fr; }
+      .main-table { font-size: 11px; }
+      .main-table th, .main-table td { padding: 5px 6px; }
+      .tc-titulo { max-width: 130px; }
+    }
+
     /* Print */
     @media print {
       html, body { background: #fff; font-size: 10.5px; }
@@ -1591,6 +1629,17 @@ def reportes_index():
     .logo-row img{{height:34px;object-fit:contain}}
     .logo-row span{{color:#374151;font-weight:700;font-size:1rem}}
     .hidden{{display:none}}
+    @media (max-width:760px){{
+      body{{padding:12px;display:block}}
+      .card{{width:100%;padding:18px 14px;border-radius:10px}}
+      .logo-row{{margin-bottom:14px}}
+      .logo-row img{{height:28px}}
+      .logo-row span{{font-size:.92rem}}
+      .tipo-group{{flex-direction:column;gap:8px}}
+      .tipo-btn{{padding:10px 8px}}
+      select{{margin-bottom:12px}}
+      .btn{{padding:12px;font-size:.95rem}}
+    }}
   </style>
 </head>
 <body>
