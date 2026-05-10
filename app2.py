@@ -384,16 +384,20 @@ def init_db():
     )
     """)
 
-    # Migración automática de columnas nuevas
+    # Migración compatible con SQLite/MySQL: intentar ALTER TABLE directamente.
     try:
-        cursor = db.execute("PRAGMA table_info(ordenes_trabajo)")
-        ot_columns = {row[1] for row in cursor.fetchall()}
-        if 'esquema_pintura' not in ot_columns:
-            db.execute("ALTER TABLE ordenes_trabajo ADD COLUMN esquema_pintura TEXT")
-            db.commit()
-        if 'espesor_total_requerido' not in ot_columns:
-            db.execute("ALTER TABLE ordenes_trabajo ADD COLUMN espesor_total_requerido TEXT")
-            db.commit()
+        db.execute("ALTER TABLE ordenes_trabajo ADD COLUMN esquema_pintura TEXT")
+        db.commit()
+    except Exception:
+        pass
+    try:
+        db.execute("ALTER TABLE ordenes_trabajo ADD COLUMN espesor_total_requerido TEXT")
+        db.commit()
+    except Exception:
+        pass
+    try:
+        db.execute("ALTER TABLE ordenes_trabajo ADD COLUMN es_mantenimiento INTEGER DEFAULT 0")
+        db.commit()
     except Exception:
         pass
     
@@ -917,24 +921,31 @@ def init_db():
             except Exception:
                 pass
 
-        # Migración tabla programacion
+        # Migración tabla programacion (compatible con SQLite/MySQL)
         try:
-            cursor = db.execute("PRAGMA table_info(programacion)")
-            prog_columns = {row[1] for row in cursor.fetchall()}
-            if 'cantidad_recursos' not in prog_columns:
-                db.execute("ALTER TABLE programacion ADD COLUMN cantidad_recursos INTEGER DEFAULT 1")
-                db.commit()
-            if 'hito_titulo' not in prog_columns:
-                db.execute("ALTER TABLE programacion ADD COLUMN hito_titulo TEXT")
-                db.commit()
-            if 'hito_fecha' not in prog_columns:
-                db.execute("ALTER TABLE programacion ADD COLUMN hito_fecha DATE")
-                db.commit()
-            if 'orden' not in prog_columns:
-                db.execute("ALTER TABLE programacion ADD COLUMN orden INTEGER DEFAULT 0")
-                # Inicializar orden = id para mantener el orden actual
-                db.execute("UPDATE programacion SET orden = id WHERE orden = 0 OR orden IS NULL")
-                db.commit()
+            db.execute("ALTER TABLE programacion ADD COLUMN cantidad_recursos INTEGER DEFAULT 1")
+            db.commit()
+        except Exception:
+            pass
+        try:
+            db.execute("ALTER TABLE programacion ADD COLUMN hito_titulo TEXT")
+            db.commit()
+        except Exception:
+            pass
+        try:
+            db.execute("ALTER TABLE programacion ADD COLUMN hito_fecha DATE")
+            db.commit()
+        except Exception:
+            pass
+        try:
+            db.execute("ALTER TABLE programacion ADD COLUMN orden INTEGER DEFAULT 0")
+            db.commit()
+        except Exception:
+            pass
+        try:
+            # Inicializar orden = id para mantener orden estable aunque la columna ya existiera.
+            db.execute("UPDATE programacion SET orden = id WHERE orden = 0 OR orden IS NULL")
+            db.commit()
         except Exception:
             pass
 
