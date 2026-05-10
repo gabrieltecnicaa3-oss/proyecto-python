@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+import html as html_lib
 from urllib.parse import quote
 
 from flask import Blueprint, redirect, request
@@ -74,6 +75,15 @@ def calidad():
 def gestion_calidad_dashboard():
     db = get_db()
     if request.method == "POST":
+        def _to_float(value):
+            txt = str(value or "").strip().replace(",", ".")
+            if not txt:
+                return 0.0
+            try:
+                return float(txt)
+            except Exception:
+                return 0.0
+
         periodo_post = (request.form.get("periodo") or "mensual").strip().lower()
         if periodo_post not in ("mensual", "trimestral", "semestral"):
             periodo_post = "mensual"
@@ -85,22 +95,110 @@ def gestion_calidad_dashboard():
         accion_inmediata = (request.form.get("accion_inmediata") or "").strip()
         acciones_correctivas = (request.form.get("acciones_correctivas") or "").strip()
 
+        requiere_causa_raiz = 1 if (request.form.get("requiere_causa_raiz") or "") == "1" else 0
+        porque_1 = (request.form.get("porque_1") or "").strip()
+        porque_2 = (request.form.get("porque_2") or "").strip()
+        porque_3 = (request.form.get("porque_3") or "").strip()
+        porque_4 = (request.form.get("porque_4") or "").strip()
+        porque_5 = (request.form.get("porque_5") or "").strip()
+        clasificacion_causa = (request.form.get("clasificacion_causa") or "").strip().upper()
+
+        genero_retrabajo = 1 if (request.form.get("genero_retrabajo") or "") == "1" else 0
+        retrabajo_hs = _to_float(request.form.get("retrabajo_hs"))
+        retrabajo_proceso_afectado = (request.form.get("retrabajo_proceso_afectado") or "").strip().upper()
+        retrabajo_impacto = (request.form.get("retrabajo_impacto") or "").strip()
+        desperdicio_kg = _to_float(request.form.get("desperdicio_kg"))
+        impacto_entrega_dias = _to_float(request.form.get("impacto_entrega_dias"))
+        costo_hallazgo = _to_float(request.form.get("costo_hallazgo"))
+
         procesos_validos = {"ARMADO", "SOLDADURA", "PINTURA", "DESPACHO"}
         tipos_validos = {"NC", "OBS", "OM"}
         estados_validos = {"ABIERTO", "EN PROCESO", "CERRADA"}
+        clasificaciones_validas = {
+            "MANO_DE_OBRA",
+            "INGENIERIA",
+            "MATERIAL",
+            "METODO",
+            "MAQUINA",
+            "COMPRAS",
+            "PAGOS_PROVEEDORES",
+        }
+        procesos_retrabajo_validos = {"ARMADO", "SOLDADURA", "PINTURA", "DESPACHO", "COMPRAS", "PAGOS_PROVEEDORES"}
 
         if proceso_h not in procesos_validos or tipo_hallazgo not in tipos_validos or estado_tratamiento not in estados_validos:
             return redirect("/modulo/gestion-calidad?periodo=" + quote(periodo_post) + "&mensaje=" + quote("⚠️ Revisá los datos del hallazgo"))
         if not accion_inmediata or not acciones_correctivas:
             return redirect("/modulo/gestion-calidad?periodo=" + quote(periodo_post) + "&mensaje=" + quote("⚠️ Completá acción inmediata y acciones correctivas"))
 
+        if requiere_causa_raiz:
+            if (not porque_1 or not porque_2 or not porque_3 or not porque_4 or not porque_5 or clasificacion_causa not in clasificaciones_validas):
+                return redirect("/modulo/gestion-calidad?periodo=" + quote(periodo_post) + "&mensaje=" + quote("⚠️ Si requiere causa raíz, completá los 5 por qué y la clasificación"))
+        else:
+            porque_1 = ""
+            porque_2 = ""
+            porque_3 = ""
+            porque_4 = ""
+            porque_5 = ""
+            clasificacion_causa = ""
+
+        if genero_retrabajo:
+            if retrabajo_hs <= 0 or retrabajo_proceso_afectado not in procesos_retrabajo_validos or not retrabajo_impacto:
+                return redirect("/modulo/gestion-calidad?periodo=" + quote(periodo_post) + "&mensaje=" + quote("⚠️ Si hubo retrabajo, indicá hs, proceso afectado e impacto"))
+        else:
+            retrabajo_hs = 0
+            retrabajo_proceso_afectado = ""
+            retrabajo_impacto = ""
+            desperdicio_kg = 0
+            impacto_entrega_dias = 0
+            costo_hallazgo = 0
+
         db.execute(
             """
             INSERT INTO hallazgos_calidad (
-                fecha_hallazgo, proceso, tipo_hallazgo, estado_tratamiento, accion_inmediata, acciones_correctivas
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                fecha_hallazgo,
+                proceso,
+                tipo_hallazgo,
+                estado_tratamiento,
+                accion_inmediata,
+                acciones_correctivas,
+                requiere_causa_raiz,
+                porque_1,
+                porque_2,
+                porque_3,
+                porque_4,
+                porque_5,
+                clasificacion_causa,
+                genero_retrabajo,
+                retrabajo_hs,
+                retrabajo_proceso_afectado,
+                retrabajo_impacto,
+                desperdicio_kg,
+                impacto_entrega_dias,
+                costo_hallazgo
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (fecha_hallazgo, proceso_h, tipo_hallazgo, estado_tratamiento, accion_inmediata, acciones_correctivas)
+            (
+                fecha_hallazgo,
+                proceso_h,
+                tipo_hallazgo,
+                estado_tratamiento,
+                accion_inmediata,
+                acciones_correctivas,
+                requiere_causa_raiz,
+                porque_1,
+                porque_2,
+                porque_3,
+                porque_4,
+                porque_5,
+                clasificacion_causa,
+                genero_retrabajo,
+                retrabajo_hs,
+                retrabajo_proceso_afectado,
+                retrabajo_impacto,
+                desperdicio_kg,
+                impacto_entrega_dias,
+                costo_hallazgo,
+            )
         )
         db.commit()
         return redirect("/modulo/gestion-calidad?periodo=" + quote(periodo_post) + "&mensaje=" + quote("✅ Tratamiento de hallazgo guardado"))
@@ -176,6 +274,73 @@ def gestion_calidad_dashboard():
             critico_valor = hallazgos
             proceso_critico = proceso
 
+    resumen_retrabajo = db.execute(
+        """
+        SELECT
+            COUNT(*) AS total_retrabajos,
+            COALESCE(SUM(COALESCE(retrabajo_hs, 0)), 0),
+            COALESCE(SUM(COALESCE(desperdicio_kg, 0)), 0),
+            COALESCE(SUM(COALESCE(impacto_entrega_dias, 0)), 0),
+            COALESCE(SUM(COALESCE(costo_hallazgo, 0)), 0)
+        FROM hallazgos_calidad
+        WHERE fecha_hallazgo IS NOT NULL
+          AND TRIM(fecha_hallazgo) <> ''
+          AND fecha_hallazgo >= ?
+          AND fecha_hallazgo <= ?
+          AND COALESCE(genero_retrabajo, 0) = 1
+        """,
+        (fecha_desde.isoformat(), fecha_hasta.isoformat())
+    ).fetchone()
+
+    total_retrabajos = int((resumen_retrabajo[0] if resumen_retrabajo else 0) or 0)
+    total_hs_retrabajo = float((resumen_retrabajo[1] if resumen_retrabajo else 0) or 0)
+    total_desperdicio_kg = float((resumen_retrabajo[2] if resumen_retrabajo else 0) or 0)
+    total_impacto_dias = float((resumen_retrabajo[3] if resumen_retrabajo else 0) or 0)
+    total_costo_hallazgos = float((resumen_retrabajo[4] if resumen_retrabajo else 0) or 0)
+
+    filas_causa = db.execute(
+        """
+        SELECT UPPER(TRIM(COALESCE(clasificacion_causa, ''))) AS causa, COUNT(*)
+        FROM hallazgos_calidad
+        WHERE fecha_hallazgo IS NOT NULL
+          AND TRIM(fecha_hallazgo) <> ''
+          AND fecha_hallazgo >= ?
+          AND fecha_hallazgo <= ?
+          AND COALESCE(requiere_causa_raiz, 0) = 1
+          AND TRIM(COALESCE(clasificacion_causa, '')) <> ''
+        GROUP BY UPPER(TRIM(COALESCE(clasificacion_causa, '')))
+        ORDER BY COUNT(*) DESC
+        """,
+        (fecha_desde.isoformat(), fecha_hasta.isoformat())
+    ).fetchall()
+
+    mapa_causa_legible = {
+        "MANO_DE_OBRA": "Mano de obra",
+        "INGENIERIA": "Ingeniería",
+        "MATERIAL": "Material",
+        "METODO": "Método",
+        "MAQUINA": "Máquina",
+        "COMPRAS": "Compras",
+        "PAGOS_PROVEEDORES": "Pagos proveedores",
+    }
+    total_causa_raiz = sum(int(r[1] or 0) for r in filas_causa)
+    causas_rows_html = ""
+    for causa, cantidad in filas_causa:
+        causa_txt = mapa_causa_legible.get(str(causa or "").strip().upper(), str(causa or "-").strip() or "-")
+        causas_rows_html += f"""
+        <tr>
+            <td>{html_lib.escape(causa_txt)}</td>
+            <td><b>{int(cantidad or 0)}</b></td>
+        </tr>
+        """
+
+    if not causas_rows_html:
+        causas_rows_html = """
+        <tr>
+            <td colspan="2" style="text-align:center; color:#6b7280;">Sin causas clasificadas para el período</td>
+        </tr>
+        """
+
     filas_html = ""
     barras_html = ""
     for proceso in procesos_base:
@@ -209,7 +374,20 @@ def gestion_calidad_dashboard():
 
     tratamientos = db.execute(
         """
-        SELECT fecha_hallazgo, proceso, tipo_hallazgo, estado_tratamiento, accion_inmediata, acciones_correctivas
+                SELECT
+                        fecha_hallazgo,
+                        proceso,
+                        tipo_hallazgo,
+                        estado_tratamiento,
+                        accion_inmediata,
+                        acciones_correctivas,
+                        COALESCE(requiere_causa_raiz, 0),
+                        COALESCE(clasificacion_causa, ''),
+                        COALESCE(genero_retrabajo, 0),
+                        COALESCE(retrabajo_hs, 0),
+                        COALESCE(desperdicio_kg, 0),
+                        COALESCE(impacto_entrega_dias, 0),
+                        COALESCE(costo_hallazgo, 0)
         FROM hallazgos_calidad
         WHERE fecha_hallazgo IS NOT NULL
           AND TRIM(fecha_hallazgo) <> ''
@@ -222,7 +400,7 @@ def gestion_calidad_dashboard():
     ).fetchall()
 
     tratamientos_rows_html = ""
-    for fh, proc, tipo, est, acc_i, acc_c in tratamientos:
+    for fh, proc, tipo, est, acc_i, acc_c, req_cr, clasif, gen_rtb, hs_rtb, kg_rtb, dias_rtb, costo_rtb in tratamientos:
         tipo_class = "tipo-obs"
         if tipo == "NC":
             tipo_class = "tipo-nc"
@@ -235,21 +413,36 @@ def gestion_calidad_dashboard():
         elif est == "CERRADA":
             est_class = "estado-cerrada"
 
+        causa_txt = "NO"
+        if int(req_cr or 0) == 1:
+            clasif_key = str(clasif or "").strip().upper()
+            clasif_desc = mapa_causa_legible.get(clasif_key, clasif_key.replace("_", " "))
+            causa_txt = f"SI ({clasif_desc})"
+
+        retrabajo_txt = "NO"
+        if int(gen_rtb or 0) == 1:
+            retrabajo_txt = (
+                f"SI | HH: {float(hs_rtb or 0):.1f} | KG: {float(kg_rtb or 0):.1f} | "
+                f"Días: {float(dias_rtb or 0):.1f} | Costo: {float(costo_rtb or 0):.2f}"
+            )
+
         tratamientos_rows_html += f"""
         <tr>
             <td>{fh}</td>
-            <td><b>{proc}</b></td>
+            <td><b>{html_lib.escape(str(proc or ''))}</b></td>
             <td><span class="badge {tipo_class}">{tipo}</span></td>
             <td><span class="badge {est_class}">{est}</span></td>
-            <td style="text-align:left;">{acc_i}</td>
-            <td style="text-align:left;">{acc_c}</td>
+            <td>{html_lib.escape(causa_txt)}</td>
+            <td style="text-align:left;">{html_lib.escape(retrabajo_txt)}</td>
+            <td style="text-align:left;">{html_lib.escape(str(acc_i or ''))}</td>
+            <td style="text-align:left;">{html_lib.escape(str(acc_c or ''))}</td>
         </tr>
         """
 
     if not tratamientos_rows_html:
         tratamientos_rows_html = """
         <tr>
-            <td colspan="6" style="text-align:center; color:#6b7280;">Sin tratamientos cargados para el período seleccionado</td>
+            <td colspan="8" style="text-align:center; color:#6b7280;">Sin tratamientos cargados para el período seleccionado</td>
         </tr>
         """
 
@@ -302,6 +495,10 @@ def gestion_calidad_dashboard():
     .tratamiento-form input, .tratamiento-form select, .tratamiento-form textarea {{ width:100%; padding:10px; border:1px solid #d1d5db; border-radius:6px; }}
     .tratamiento-form textarea {{ min-height:74px; resize:vertical; }}
     .tratamiento-form button {{ margin-top:10px; background:#16a34a; color:white; border:none; padding:10px 14px; border-radius:6px; font-weight:bold; cursor:pointer; }}
+    .toggle-line {{ margin: 10px 0 4px 0; padding: 8px 10px; background: #ecfdf3; border: 1px solid #bbf7d0; border-radius: 8px; }}
+    .toggle-line label {{ display: inline-flex; align-items: center; gap: 8px; font-weight: bold; color: #166534; }}
+    .subbloque {{ display:none; margin-top:10px; padding:10px; border:1px dashed #86efac; border-radius:8px; background:#f0fdf4; }}
+    .hint-mini {{ color:#166534; font-size:12px; margin:2px 0 8px 0; }}
 
     .badge {{ display:inline-block; padding:3px 8px; border-radius:999px; font-weight:bold; font-size:11px; }}
     .tipo-nc {{ background:#fee2e2; color:#991b1b; }}
@@ -322,7 +519,7 @@ def gestion_calidad_dashboard():
         <a href="/" class="btn-home">⬅️ Volver</a>
     </div>
 
-    {f'<div class="msg-ok">{mensaje}</div>' if mensaje else ''}
+    {f'<div class="msg-ok">{html_lib.escape(mensaje)}</div>' if mensaje else ''}
 
     <div class="filtro">
         <form method="get" action="/modulo/gestion-calidad">
@@ -344,6 +541,12 @@ def gestion_calidad_dashboard():
         <div class="kpi"><div class="t">Total Hallazgos</div><div class="v">{total_hallazgos}</div></div>
         <div class="kpi"><div class="t">% Hallazgos / Registros</div><div class="v">{porcentaje_hallazgos:.1f}%</div></div>
         <div class="kpi"><div class="t">Proceso con más hallazgos</div><div class="v" style="font-size:18px;">{proceso_critico}</div></div>
+        <div class="kpi"><div class="t">Con análisis causa raíz</div><div class="v">{total_causa_raiz}</div></div>
+        <div class="kpi"><div class="t">Hallazgos con retrabajo</div><div class="v">{total_retrabajos}</div></div>
+        <div class="kpi"><div class="t">HH retrabajo</div><div class="v">{total_hs_retrabajo:.1f}</div></div>
+        <div class="kpi"><div class="t">Desperdicio material (kg)</div><div class="v">{total_desperdicio_kg:.1f}</div></div>
+        <div class="kpi"><div class="t">Impacto entrega (días)</div><div class="v">{total_impacto_dias:.1f}</div></div>
+        <div class="kpi"><div class="t">Costo total hallazgos</div><div class="v">{total_costo_hallazgos:.2f}</div></div>
     </div>
 
     <div class="layout">
@@ -364,6 +567,16 @@ def gestion_calidad_dashboard():
         <div class="card">
             <h3>Indicador Visual de Hallazgos</h3>
             {barras_html}
+        </div>
+        <div class="card">
+            <h3>Dashboard de causa raíz</h3>
+            <table>
+                <tr>
+                    <th>Tipo causa</th>
+                    <th>Cantidad</th>
+                </tr>
+                {causas_rows_html}
+            </table>
         </div>
     </div>
 
@@ -412,6 +625,95 @@ def gestion_calidad_dashboard():
                     <textarea name="acciones_correctivas" required placeholder="Describir acciones correctivas"></textarea>
                 </div>
             </div>
+
+            <div class="toggle-line">
+                <label>
+                    <input type="checkbox" id="chk_causa_raiz" name="requiere_causa_raiz" value="1">
+                    Checkbox 1: ¿Requiere análisis causa raíz? (SI/NO)
+                </label>
+            </div>
+            <div id="bloque_causa_raiz" class="subbloque">
+                <div class="hint-mini">Si marcás SI, completá los 5 por qué y clasificá la causa.</div>
+                <div class="trat-grid">
+                    <div>
+                        <label><b>¿Por qué? (1)</b></label>
+                        <input type="text" name="porque_1" id="porque_1" placeholder="Primer por qué">
+                    </div>
+                    <div>
+                        <label><b>¿Por qué? (2)</b></label>
+                        <input type="text" name="porque_2" id="porque_2" placeholder="Segundo por qué">
+                    </div>
+                    <div>
+                        <label><b>¿Por qué? (3)</b></label>
+                        <input type="text" name="porque_3" id="porque_3" placeholder="Tercer por qué">
+                    </div>
+                    <div>
+                        <label><b>¿Por qué? (4)</b></label>
+                        <input type="text" name="porque_4" id="porque_4" placeholder="Cuarto por qué">
+                    </div>
+                    <div>
+                        <label><b>¿Por qué? (5)</b></label>
+                        <input type="text" name="porque_5" id="porque_5" placeholder="Quinto por qué">
+                    </div>
+                    <div>
+                        <label><b>Clasificación de causa</b></label>
+                        <select name="clasificacion_causa" id="clasificacion_causa">
+                            <option value="">-- Seleccionar --</option>
+                            <option value="MANO_DE_OBRA">Mano de obra</option>
+                            <option value="INGENIERIA">Ingeniería</option>
+                            <option value="MATERIAL">Material</option>
+                            <option value="METODO">Método</option>
+                            <option value="MAQUINA">Máquina</option>
+                            <option value="COMPRAS">Compras</option>
+                            <option value="PAGOS_PROVEEDORES">Pagos proveedores</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="toggle-line">
+                <label>
+                    <input type="checkbox" id="chk_retrabajo" name="genero_retrabajo" value="1">
+                    Checkbox 2: ¿Generó retrabajo? (SI/NO)
+                </label>
+            </div>
+            <div id="bloque_retrabajo" class="subbloque">
+                <div class="hint-mini">Si marcás SI, definí HH, proceso afectado, impacto, desperdicio, atraso y costo.</div>
+                <div class="trat-grid">
+                    <div>
+                        <label><b>HH retrabajo</b></label>
+                        <input type="number" step="0.1" min="0" name="retrabajo_hs" id="retrabajo_hs" placeholder="Ej: 10">
+                    </div>
+                    <div>
+                        <label><b>Proceso afectado</b></label>
+                        <select name="retrabajo_proceso_afectado" id="retrabajo_proceso_afectado">
+                            <option value="">-- Seleccionar --</option>
+                            <option value="ARMADO">ARMADO</option>
+                            <option value="SOLDADURA">SOLDADURA</option>
+                            <option value="PINTURA">PINTURA</option>
+                            <option value="DESPACHO">DESPACHO</option>
+                            <option value="COMPRAS">COMPRAS</option>
+                            <option value="PAGOS_PROVEEDORES">PAGOS PROVEEDORES</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label><b>Desperdicio material (kg)</b></label>
+                        <input type="number" step="0.1" min="0" name="desperdicio_kg" placeholder="Ej: 150">
+                    </div>
+                    <div>
+                        <label><b>Impacto entrega (días)</b></label>
+                        <input type="number" step="0.1" min="0" name="impacto_entrega_dias" placeholder="Ej: 5">
+                    </div>
+                    <div>
+                        <label><b>Costo del hallazgo</b></label>
+                        <input type="number" step="0.01" min="0" name="costo_hallazgo" placeholder="Costo estimado/real">
+                    </div>
+                    <div style="grid-column: 1 / -1;">
+                        <label><b>Impacto del retrabajo (NC ↔ HH ↔ Costos ↔ Atrasos)</b></label>
+                        <textarea name="retrabajo_impacto" id="retrabajo_impacto" placeholder="Describir el impacto sobre producción, costo y entrega"></textarea>
+                    </div>
+                </div>
+            </div>
             <button type="submit">Guardar tratamiento</button>
         </form>
     </div>
@@ -424,12 +726,60 @@ def gestion_calidad_dashboard():
                 <th>Proceso</th>
                 <th>Hallazgo</th>
                 <th>Estado</th>
+                <th>Causa raíz</th>
+                <th>Retrabajo / Costo</th>
                 <th>Acción inmediata</th>
                 <th>Acciones correctivas</th>
             </tr>
             {tratamientos_rows_html}
         </table>
     </div>
+    <script>
+    (function () {{
+        const chkCausa = document.getElementById('chk_causa_raiz');
+        const bloqueCausa = document.getElementById('bloque_causa_raiz');
+        const chkRetrabajo = document.getElementById('chk_retrabajo');
+        const bloqueRetrabajo = document.getElementById('bloque_retrabajo');
+
+        const causaFields = [
+            document.getElementById('porque_1'),
+            document.getElementById('porque_2'),
+            document.getElementById('porque_3'),
+            document.getElementById('porque_4'),
+            document.getElementById('porque_5'),
+            document.getElementById('clasificacion_causa')
+        ];
+
+        const retrabajoReq = [
+            document.getElementById('retrabajo_hs'),
+            document.getElementById('retrabajo_proceso_afectado'),
+            document.getElementById('retrabajo_impacto')
+        ];
+
+        function toggleCausa() {{
+            const on = !!(chkCausa && chkCausa.checked);
+            if (bloqueCausa) bloqueCausa.style.display = on ? 'block' : 'none';
+            causaFields.forEach(function (el) {{
+                if (!el) return;
+                el.required = on;
+            }});
+        }}
+
+        function toggleRetrabajo() {{
+            const on = !!(chkRetrabajo && chkRetrabajo.checked);
+            if (bloqueRetrabajo) bloqueRetrabajo.style.display = on ? 'block' : 'none';
+            retrabajoReq.forEach(function (el) {{
+                if (!el) return;
+                el.required = on;
+            }});
+        }}
+
+        if (chkCausa) chkCausa.addEventListener('change', toggleCausa);
+        if (chkRetrabajo) chkRetrabajo.addEventListener('change', toggleRetrabajo);
+        toggleCausa();
+        toggleRetrabajo();
+    }})();
+    </script>
     </body>
     </html>
     """

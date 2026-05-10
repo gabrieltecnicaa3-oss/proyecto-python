@@ -531,6 +531,20 @@ def init_db():
         estado_tratamiento TEXT,
         accion_inmediata TEXT,
         acciones_correctivas TEXT,
+        requiere_causa_raiz INTEGER DEFAULT 0,
+        porque_1 TEXT,
+        porque_2 TEXT,
+        porque_3 TEXT,
+        porque_4 TEXT,
+        porque_5 TEXT,
+        clasificacion_causa TEXT,
+        genero_retrabajo INTEGER DEFAULT 0,
+        retrabajo_hs REAL DEFAULT 0,
+        retrabajo_proceso_afectado TEXT,
+        retrabajo_impacto TEXT,
+        desperdicio_kg REAL DEFAULT 0,
+        impacto_entrega_dias REAL DEFAULT 0,
+        costo_hallazgo REAL DEFAULT 0,
         fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """)
@@ -876,6 +890,34 @@ def init_db():
                 db.commit()
             except Exception:
                 pass
+
+        cursor = db.execute("PRAGMA table_info(hallazgos_calidad)")
+        hallazgos_columns = {row[1] for row in cursor.fetchall()}
+
+        hallazgos_cols_defs = [
+            ("requiere_causa_raiz", "INTEGER DEFAULT 0"),
+            ("porque_1", "TEXT"),
+            ("porque_2", "TEXT"),
+            ("porque_3", "TEXT"),
+            ("porque_4", "TEXT"),
+            ("porque_5", "TEXT"),
+            ("clasificacion_causa", "TEXT"),
+            ("genero_retrabajo", "INTEGER DEFAULT 0"),
+            ("retrabajo_hs", "REAL DEFAULT 0"),
+            ("retrabajo_proceso_afectado", "TEXT"),
+            ("retrabajo_impacto", "TEXT"),
+            ("desperdicio_kg", "REAL DEFAULT 0"),
+            ("impacto_entrega_dias", "REAL DEFAULT 0"),
+            ("costo_hallazgo", "REAL DEFAULT 0"),
+        ]
+
+        for _col_h, _def_h in hallazgos_cols_defs:
+            if _col_h not in hallazgos_columns:
+                try:
+                    db.execute(f"ALTER TABLE hallazgos_calidad ADD COLUMN {_col_h} {_def_h}")
+                    db.commit()
+                except Exception:
+                    pass
 
         # Migración tabla programacion
         try:
