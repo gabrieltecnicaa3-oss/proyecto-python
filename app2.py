@@ -574,6 +574,8 @@ def init_db():
         fecha_fin DATE NOT NULL,
         hs_programadas REAL DEFAULT 0,
         cantidad_recursos INTEGER DEFAULT 1,
+        hito_titulo TEXT,
+        hito_fecha DATE,
         recursos TEXT,
         observaciones TEXT,
         fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -869,6 +871,12 @@ def init_db():
             prog_columns = {row[1] for row in cursor.fetchall()}
             if 'cantidad_recursos' not in prog_columns:
                 db.execute("ALTER TABLE programacion ADD COLUMN cantidad_recursos INTEGER DEFAULT 1")
+                db.commit()
+            if 'hito_titulo' not in prog_columns:
+                db.execute("ALTER TABLE programacion ADD COLUMN hito_titulo TEXT")
+                db.commit()
+            if 'hito_fecha' not in prog_columns:
+                db.execute("ALTER TABLE programacion ADD COLUMN hito_fecha DATE")
                 db.commit()
             if 'orden' not in prog_columns:
                 db.execute("ALTER TABLE programacion ADD COLUMN orden INTEGER DEFAULT 0")

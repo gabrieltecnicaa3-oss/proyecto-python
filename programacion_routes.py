@@ -393,6 +393,8 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=F
         fi = _parse_date(e.get("fecha_inicio"))
         ff = _parse_date(e.get("fecha_fin"))
         fecha_nec = _parse_date(e.get("fecha_entrega"))
+        hito_fecha = _parse_date(e.get("hito_fecha"))
+        hito_titulo = str(e.get("hito_titulo") or "").strip()
         ot_id = e["ot_id"]
         obra = html_lib.escape(str(e.get("obra") or f"OT {ot_id}"))
         titulo = html_lib.escape(str(e.get("titulo") or ""))
@@ -515,15 +517,27 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=F
 
             bar_html = date_label + planned_bar + avance_bar
 
-        # ── HITO: marcador de fecha de entrega ──
-        hito_html = ""
+        # ── Marcador de fecha de entrega (rojo) ──
+        entrega_html = ""
         if fecha_nec and fi_vista <= fecha_nec <= ff_vista:
             hito_pct = (fecha_nec - fi_vista).days / total_dias * 100
             hito_tip = html_lib.escape(f"HITO – Fecha de entrega: {_fmt(fecha_nec)}")
-            hito_html = (
+            entrega_html = (
                 f'<div style="position:absolute;left:{hito_pct:.2f}%;top:1px;'
                 f'transform:translateX(-50%);font-size:13px;color:#dc2626;z-index:4;'
                 f'pointer-events:none;line-height:1;" title="{hito_tip}">◆</div>'
+            )
+
+        # ── HITO custom: marcador negro (fecha + titulo) ──
+        hito_html = ""
+        if hito_fecha and fi_vista <= hito_fecha <= ff_vista:
+            hito_pct = (hito_fecha - fi_vista).days / total_dias * 100
+            hito_txt = hito_titulo if hito_titulo else "Hito"
+            hito_tip = html_lib.escape(f"HITO: {hito_txt} | {_fmt(hito_fecha)}")
+            hito_html = (
+                f'<div style="position:absolute;left:{hito_pct:.2f}%;top:2px;'
+                f'transform:translateX(-50%) rotate(45deg);width:9px;height:9px;'
+                f'background:#111827;z-index:5;pointer-events:auto;" title="{hito_tip}"></div>'
             )
 
         avance_chip_color = "#f59e0b" if es_sub else "#16a34a"
@@ -549,6 +563,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=F
                 {gridlines_html}
                 {today_html}
                 {bar_html}
+                {entrega_html}
                 {hito_html}
             </div>
             {'' if es_obra else f'''<div class="g-act">
@@ -669,7 +684,8 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=F
             <div style="padding:6px 14px 8px;font-size:11px;color:#6b7280;display:flex;gap:18px;align-items:center;flex-wrap:wrap;border-top:1px solid #ffedd5;background:#fffaf5;border-radius:0 0 10px 10px;">
                 <span style="font-weight:700;color:#9a3412;">Leyenda:</span>
                 <span><span style="display:inline-block;width:12px;height:3px;background:#ef4444;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>Hoy</span>
-                <span><span style="color:#dc2626;font-size:13px;vertical-align:middle;margin-right:3px;">◆</span>HITO – Fecha de entrega</span>
+                <span><span style="color:#dc2626;font-size:13px;vertical-align:middle;margin-right:3px;">◆</span>Fecha de entrega</span>
+                <span><span style="display:inline-block;width:9px;height:9px;background:#111827;transform:rotate(45deg);vertical-align:middle;margin-right:5px;"></span>HITO</span>
                 <span><span style="display:inline-block;width:12px;height:8px;background:#16a34a;border-radius:2px;vertical-align:middle;opacity:0.9;margin-right:3px;"></span>Avance real</span>
             </div>
         </div>
@@ -695,6 +711,8 @@ def _form_html(ots_activas, prog=None, error=""):
     fi_val = str(prog.get("fecha_inicio") or "") if es_edicion else ""
     ff_val = str(prog.get("fecha_fin") or "") if es_edicion else ""
     cant_rec_val = int(prog.get("cantidad_recursos", 1)) if es_edicion else 1
+    hito_titulo_val = html_lib.escape(str(prog.get("hito_titulo") or "")) if es_edicion else ""
+    hito_fecha_val = str(prog.get("hito_fecha") or "") if es_edicion else ""
     obs_val = html_lib.escape(str(prog.get("observaciones") or "")) if es_edicion else ""
 
     err_html = f'<div class="err">{html_lib.escape(error)}</div>' if error else ""
@@ -742,6 +760,14 @@ def _form_html(ots_activas, prog=None, error=""):
                 <span id="hs-detail" style="font-size:12px;color:#9a3412;"></span>
             </div>
         </div>
+        <div class="form-group">
+            <label>Hito - Título (opcional)</label>
+            <input type="text" name="hito_titulo" id="hito_titulo" value="{hito_titulo_val}" maxlength="120" placeholder="Ej: Liberación para despacho">
+        </div>
+        <div class="form-group">
+            <label>Hito - Fecha (opcional)</label>
+            <input type="date" name="hito_fecha" id="hito_fecha" value="{hito_fecha_val}">
+        </div>
         <div class="form-group full">
             <label>Observaciones</label>
             <textarea name="observaciones" rows="3"
@@ -777,6 +803,13 @@ document.getElementById('main-form').addEventListener('submit', function(e) {{
     if (fi && ff && ff < fi) {{
         e.preventDefault();
         alert('La fecha de fin debe ser igual o posterior a la fecha de inicio.');
+        return;
+    }}
+    const hitoTitulo = (document.getElementById('hito_titulo').value || '').trim();
+    const hitoFecha = (document.getElementById('hito_fecha').value || '').trim();
+    if ((hitoTitulo && !hitoFecha) || (!hitoTitulo && hitoFecha)) {{
+        e.preventDefault();
+        alert('Para cargar un HITO debés completar título y fecha.');
         return;
     }}
     calcHoras();
@@ -824,6 +857,7 @@ def programacion_index():
     rows = db.execute("""
         SELECT p.id, p.ot_id, p.fecha_inicio, p.fecha_fin,
                COALESCE(p.hs_programadas, 0), COALESCE(p.cantidad_recursos, 0), COALESCE(p.observaciones, ''),
+             COALESCE(p.hito_titulo, ''), COALESCE(p.hito_fecha, ''),
                COALESCE(ot.obra, ''), COALESCE(ot.titulo, ''),
                COALESCE(ot.cliente, ''), COALESCE(ot.estado, ''), COALESCE(ot.fecha_entrega, ''),
                COALESCE(ot.estado_avance, 0), COALESCE(ot.hs_previstas, 0)
@@ -836,9 +870,10 @@ def programacion_index():
         {
             "id": r[0], "ot_id": r[1], "fecha_inicio": r[2], "fecha_fin": r[3],
             "hs_programadas": r[4], "cantidad_recursos": r[5], "observaciones": r[6],
-            "obra": r[7], "titulo": r[8], "cliente": r[9], "estado_ot": r[10], "fecha_entrega": r[11],
-            "avance": int(r[12] or 0),
-            "es_subcontrato": float(r[13] or 0) == 0 or int(r[5] or 0) == 0,
+            "hito_titulo": r[7], "hito_fecha": r[8],
+            "obra": r[9], "titulo": r[10], "cliente": r[11], "estado_ot": r[12], "fecha_entrega": r[13],
+            "avance": int(r[14] or 0),
+            "es_subcontrato": float(r[15] or 0) == 0 or int(r[5] or 0) == 0,
         }
         for r in rows
     ]
@@ -1534,6 +1569,8 @@ def programacion_nueva():
         fecha_inicio = (request.form.get("fecha_inicio") or "").strip()
         fecha_fin = (request.form.get("fecha_fin") or "").strip()
         cant_rec_txt = (request.form.get("cantidad_recursos") or "0").strip()
+        hito_titulo = (request.form.get("hito_titulo") or "").strip()
+        hito_fecha = (request.form.get("hito_fecha") or "").strip()
         observaciones = (request.form.get("observaciones") or "").strip()
 
         error = ""
@@ -1543,6 +1580,10 @@ def programacion_nueva():
             error = "Las fechas de inicio y fin son obligatorias."
         elif fecha_fin < fecha_inicio:
             error = "La fecha de fin debe ser igual o posterior a la fecha de inicio."
+        elif (hito_titulo and not hito_fecha) or (hito_fecha and not hito_titulo):
+            error = "Para cargar un HITO completá título y fecha."
+        elif hito_fecha and (hito_fecha < fecha_inicio or hito_fecha > fecha_fin):
+            error = "La fecha del HITO debe quedar dentro del rango inicio-fin."
 
         if error:
             return _form_html(ots_activas, error=error)
@@ -1561,10 +1602,10 @@ def programacion_nueva():
         max_orden = db.execute("SELECT COALESCE(MAX(COALESCE(orden, id)), 0) FROM programacion").fetchone()[0]
         db.execute(
             """
-            INSERT INTO programacion (ot_id, fecha_inicio, fecha_fin, hs_programadas, cantidad_recursos, observaciones, orden)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO programacion (ot_id, fecha_inicio, fecha_fin, hs_programadas, cantidad_recursos, hito_titulo, hito_fecha, observaciones, orden)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (int(ot_id_txt), fecha_inicio, fecha_fin, hs, cant_rec, observaciones, int(max_orden) + 1),
+            (int(ot_id_txt), fecha_inicio, fecha_fin, hs, cant_rec, hito_titulo, hito_fecha or None, observaciones, int(max_orden) + 1),
         )
         db.commit()
         return redirect("/modulo/programacion")
@@ -1576,7 +1617,7 @@ def programacion_nueva():
 def programacion_editar(prog_id):
     db = get_db()
     row = db.execute(
-        "SELECT id, ot_id, fecha_inicio, fecha_fin, hs_programadas, COALESCE(cantidad_recursos, 1), observaciones "
+        "SELECT id, ot_id, fecha_inicio, fecha_fin, hs_programadas, COALESCE(cantidad_recursos, 1), COALESCE(hito_titulo, ''), COALESCE(hito_fecha, ''), observaciones "
         "FROM programacion WHERE id = ?",
         (prog_id,),
     ).fetchone()
@@ -1585,7 +1626,7 @@ def programacion_editar(prog_id):
 
     prog = {
         "id": row[0], "ot_id": row[1], "fecha_inicio": row[2], "fecha_fin": row[3],
-        "hs_programadas": row[4], "cantidad_recursos": row[5], "observaciones": row[6],
+        "hs_programadas": row[4], "cantidad_recursos": row[5], "hito_titulo": row[6], "hito_fecha": row[7], "observaciones": row[8],
     }
 
     ots_activas = db.execute("""
@@ -1600,6 +1641,8 @@ def programacion_editar(prog_id):
         fecha_inicio = (request.form.get("fecha_inicio") or "").strip()
         fecha_fin = (request.form.get("fecha_fin") or "").strip()
         cant_rec_txt = (request.form.get("cantidad_recursos") or "0").strip()
+        hito_titulo = (request.form.get("hito_titulo") or "").strip()
+        hito_fecha = (request.form.get("hito_fecha") or "").strip()
         observaciones = (request.form.get("observaciones") or "").strip()
 
         error = ""
@@ -1609,6 +1652,10 @@ def programacion_editar(prog_id):
             error = "Las fechas son obligatorias."
         elif fecha_fin < fecha_inicio:
             error = "La fecha de fin debe ser igual o posterior a la fecha de inicio."
+        elif (hito_titulo and not hito_fecha) or (hito_fecha and not hito_titulo):
+            error = "Para cargar un HITO completá título y fecha."
+        elif hito_fecha and (hito_fecha < fecha_inicio or hito_fecha > fecha_fin):
+            error = "La fecha del HITO debe quedar dentro del rango inicio-fin."
 
         if error:
             return _form_html(ots_activas, prog=prog, error=error)
@@ -1626,10 +1673,10 @@ def programacion_editar(prog_id):
         db.execute(
             """
             UPDATE programacion
-            SET ot_id=?, fecha_inicio=?, fecha_fin=?, hs_programadas=?, cantidad_recursos=?, observaciones=?
+            SET ot_id=?, fecha_inicio=?, fecha_fin=?, hs_programadas=?, cantidad_recursos=?, hito_titulo=?, hito_fecha=?, observaciones=?
             WHERE id=?
             """,
-            (int(ot_id_txt), fecha_inicio, fecha_fin, hs, cant_rec, observaciones, prog_id),
+            (int(ot_id_txt), fecha_inicio, fecha_fin, hs, cant_rec, hito_titulo, hito_fecha or None, observaciones, prog_id),
         )
         db.commit()
         return redirect("/modulo/programacion")
