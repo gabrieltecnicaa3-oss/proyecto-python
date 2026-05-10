@@ -891,9 +891,8 @@ def init_db():
             except Exception:
                 pass
 
-        cursor = db.execute("PRAGMA table_info(hallazgos_calidad)")
-        hallazgos_columns = {row[1] for row in cursor.fetchall()}
-
+        # Migración compatible con SQLite y MySQL: intentar ALTER TABLE directamente
+        # (falla silenciosamente si la columna ya existe en ambos motores)
         hallazgos_cols_defs = [
             ("requiere_causa_raiz", "INTEGER DEFAULT 0"),
             ("porque_1", "TEXT"),
@@ -912,12 +911,11 @@ def init_db():
         ]
 
         for _col_h, _def_h in hallazgos_cols_defs:
-            if _col_h not in hallazgos_columns:
-                try:
-                    db.execute(f"ALTER TABLE hallazgos_calidad ADD COLUMN {_col_h} {_def_h}")
-                    db.commit()
-                except Exception:
-                    pass
+            try:
+                db.execute(f"ALTER TABLE hallazgos_calidad ADD COLUMN {_col_h} {_def_h}")
+                db.commit()
+            except Exception:
+                pass
 
         # Migración tabla programacion
         try:
