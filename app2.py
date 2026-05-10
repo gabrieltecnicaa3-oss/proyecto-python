@@ -134,6 +134,7 @@ def _rol_puede_acceder(role, path, method):
     ADMIN_ONLY_PREFIXES = (
         "/modulo/historial",
         "/modulo/reportes",
+        "/modulo/tablero-ejecutivo",
     )
     p = str(path or "").lower()
     if any(p.startswith(pref) for pref in ADMIN_ONLY_PREFIXES):
@@ -1977,9 +1978,16 @@ def dashboard():
             "titulo": "Reportes",
             "desc": "Informes de avance por obra: versión cliente e interna con KPIs, procesos y prioridades",
         },
+        {
+            "href": "/modulo/tablero-ejecutivo",
+            "css": "ejecutivo",
+            "icon": "📊",
+            "titulo": "Tablero Ejecutivo Integral",
+            "desc": "Vista estratégica PREVISTO vs PROGRAMADO vs REAL con KPIs de avance, HH, producción y calidad",
+        },
     ]
 
-    ADMIN_ONLY_HREFS = {"/modulo/historial", "/modulo/reportes"}
+    ADMIN_ONLY_HREFS = {"/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo"}
     OBRA_HIDDEN_HREFS = {"/modulo/estado", "/modulo/generador"}
     is_admin = _is_admin_session()
     cards_html = "".join(
@@ -2191,6 +2199,9 @@ def dashboard():
     }
     .module-card.reportes {
         border-left: 5px solid #0ea5e9;
+    }
+    .module-card.ejecutivo {
+        border-left: 5px solid #111827;
     }
     .module-card.rutina {
         border-left: 5px solid #0f766e;
@@ -5640,6 +5651,7 @@ from produccion_routes import produccion_bp
 from generador_routes import generador_bp
 from programacion_routes import programacion_bp
 from reportes_routes import reportes_bp
+from tablero_ejecutivo_routes import tablero_ejecutivo_bp
 
 app.register_blueprint(gestion_calidad_bp)
 app.register_blueprint(calidad_bp)
@@ -5650,6 +5662,7 @@ app.register_blueprint(produccion_bp)
 app.register_blueprint(generador_bp)
 app.register_blueprint(programacion_bp)
 app.register_blueprint(reportes_bp)
+app.register_blueprint(tablero_ejecutivo_bp)
 
 
 # ====================== BÚSQUEDA GLOBAL ======================
