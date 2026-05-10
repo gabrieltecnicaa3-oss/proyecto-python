@@ -545,6 +545,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=F
 
         # ── HITOS custom: marcadores negros (fecha + titulo) ──
         hitos_html = ""
+        hitos_label_items = []
         for h in hitos:
             h_fecha = _parse_date(h.get("fecha"))
             h_titulo = str(h.get("titulo") or "").strip() or "Hito"
@@ -552,10 +553,26 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=F
                 continue
             h_pct = (h_fecha - fi_vista).days / total_dias * 100
             h_tip = html_lib.escape(f"HITO: {h_titulo} | {_fmt(h_fecha)}")
+            h_label = html_lib.escape(f"{_fmt(h_fecha)} - {h_titulo}")
+            hitos_label_items.append(h_label)
             hitos_html += (
                 f'<div style="position:absolute;left:{h_pct:.2f}%;top:2px;'
                 f'transform:translateX(-50%) rotate(45deg);width:9px;height:9px;'
                 f'background:#111827;z-index:5;pointer-events:auto;" title="{h_tip}"></div>'
+            )
+
+        hitos_label_html = ""
+        if hitos_label_items:
+            max_visible = 2
+            visible_items = hitos_label_items[:max_visible]
+            extra_count = len(hitos_label_items) - max_visible
+            suffix = f" +{extra_count} más" if extra_count > 0 else ""
+            hitos_text = " | ".join(visible_items) + suffix
+            hitos_label_html = (
+                f'<div style="margin-left:14px;margin-top:2px;font-size:10px;color:#111827;font-weight:700;line-height:1.2;">'
+                f'<span style="display:inline-block;width:8px;height:8px;background:#111827;transform:rotate(45deg);margin-right:5px;vertical-align:middle;"></span>'
+                f'HITO: {hitos_text}'
+                f'</div>'
             )
 
         avance_chip_color = "#f59e0b" if es_sub else "#16a34a"
@@ -574,6 +591,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=F
         <div class="g-row">
             <div class="g-label">
                 <div style="display:flex;align-items:baseline;gap:4px;flex-wrap:wrap;line-height:1.3;"><span class="g-dot" style="{dot_style}"></span><span class="g-ot">{obra}</span><span class="g-sub" style="margin-left:0;">OT{ot_id}‑{titulo}</span></div>
+                {hitos_label_html}
                 <div class="g-chips">{rec_chips}{avance_chip}{sub_chip}</div>
             </div>
             <div class="g-need">{_fmt(fecha_nec)}</div>
