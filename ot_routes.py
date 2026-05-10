@@ -983,12 +983,13 @@ def ot_eliminar(ot_id):
 
     obra = str(ot[0] or "").strip()
     try:
+        # Limpiar tablas dependientes en orden correcto (del más profundo al más superficial)
         db.execute("DELETE FROM recepcion_materiales WHERE ot_id=?", (ot_id,))
         db.execute("DELETE FROM control_proceso WHERE ot_id=?", (ot_id,))
         db.execute("DELETE FROM control_despacho WHERE ot_id=?", (ot_id,))
         db.execute("DELETE FROM partes_trabajo WHERE ot_id=?", (ot_id,))
         db.execute("DELETE FROM remitos WHERE ot_id=?", (ot_id,))
-
+        
         # Limpiar procesos de la OT y fallback legacy por obra cuando ot_id no estaba informado.
         db.execute("DELETE FROM procesos WHERE ot_id=?", (ot_id,))
         if obra:
@@ -996,7 +997,16 @@ def ot_eliminar(ot_id):
                 "DELETE FROM procesos WHERE (ot_id IS NULL OR ot_id=0) AND TRIM(COALESCE(obra,''))=TRIM(?)",
                 (obra,),
             )
+        
+        # Limpiar programación (hitos primero, luego cumplimientos, luego programación)
+        db.execute(
+            "DELETE FROM programacion_hitos WHERE prog_id IN (SELECT id FROM programacion WHERE ot_id=?)",
+            (ot_id,),
+        )
+        db.execute("DELETE FROM programacion_cumplimiento WHERE ot_id=?", (ot_id,))
+        db.execute("DELETE FROM programacion WHERE ot_id=?", (ot_id,))
 
+        # Finalmente eliminar la OT
         db.execute("DELETE FROM ordenes_trabajo WHERE id=?", (ot_id,))
         db.commit()
         return redirect("/modulo/ot?mensaje=OT eliminada")
