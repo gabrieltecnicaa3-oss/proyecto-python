@@ -558,7 +558,8 @@ def gestion_calidad_dashboard():
     .tratamiento-form textarea {{ min-height:74px; resize:vertical; }}
     .tratamiento-form button {{ margin-top:10px; background:#16a34a; color:white; border:none; padding:10px 14px; border-radius:6px; font-weight:bold; cursor:pointer; }}
     .toggle-line {{ margin: 10px 0 4px 0; padding: 8px 10px; background: #ecfdf3; border: 1px solid #bbf7d0; border-radius: 8px; }}
-    .toggle-line label {{ display: flex; align-items: center; gap: 8px; font-weight: bold; color: #166534; }}
+    .toggle-line label {{ display: flex; align-items: center; justify-content: flex-start; gap: 8px; font-weight: bold; color: #166534; }}
+    .toggle-line input[type="checkbox"] {{ width: auto; margin: 0; padding: 0; }}
     .subbloque {{ display:none; margin-top:10px; padding:10px; border:1px dashed #86efac; border-radius:8px; background:#f0fdf4; }}
     .hint-mini {{ color:#166534; font-size:12px; margin:2px 0 8px 0; }}
 
@@ -603,12 +604,6 @@ def gestion_calidad_dashboard():
         <div class="kpi"><div class="t">Total Hallazgos</div><div class="v">{total_hallazgos}</div></div>
         <div class="kpi"><div class="t">% Hallazgos / Registros</div><div class="v">{porcentaje_hallazgos:.1f}%</div></div>
         <div class="kpi"><div class="t">Proceso con más hallazgos</div><div class="v" style="font-size:18px;">{proceso_critico}</div></div>
-        <div class="kpi"><div class="t">Con análisis causa raíz</div><div class="v">{total_causa_raiz}</div></div>
-        <div class="kpi"><div class="t">Hallazgos con retrabajo</div><div class="v">{total_retrabajos}</div></div>
-        <div class="kpi"><div class="t">HH retrabajo</div><div class="v">{total_hs_retrabajo:.1f}</div></div>
-        <div class="kpi"><div class="t">Desperdicio material (kg)</div><div class="v">{total_desperdicio_kg:.1f}</div></div>
-        <div class="kpi"><div class="t">Impacto entrega (días)</div><div class="v">{total_impacto_dias:.1f}</div></div>
-        <div class="kpi"><div class="t">Costo total hallazgos</div><div class="v">{total_costo_hallazgos:.2f}</div></div>
     </div>
 
     <div class="layout">
@@ -733,28 +728,6 @@ def gestion_calidad_dashboard():
                 </div>
             </div>
 
-            <div style="margin-top: 15px; padding: 14px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border: 2px solid #22c55e; border-radius: 8px;">
-                <h4 style="margin: 0 0 12px 0; color: #166534;">📊 Resumen Impactos (Período actual)</h4>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px;">
-                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #ef4444; text-align: center;">
-                        <div style="font-size: 11px; color: #666;">No Conformes</div>
-                        <div style="font-size: 22px; font-weight: bold; color: #991b1b;">{total_nc}</div>
-                    </div>
-                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #f59e0b; text-align: center;">
-                        <div style="font-size: 11px; color: #666;">HH Retrabajo</div>
-                        <div style="font-size: 22px; font-weight: bold; color: #92400e;">{total_hs_retrabajo:.1f}</div>
-                    </div>
-                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #8b5cf6; text-align: center;">
-                        <div style="font-size: 11px; color: #666;">Costo Total</div>
-                        <div style="font-size: 22px; font-weight: bold; color: #6d28d9;">${total_costo_hallazgos:.2f}</div>
-                    </div>
-                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #06b6d4; text-align: center;">
-                        <div style="font-size: 11px; color: #666;">Atraso (días)</div>
-                        <div style="font-size: 22px; font-weight: bold; color: #164e63;">{total_impacto_dias:.1f}</div>
-                    </div>
-                </div>
-            </div>
-
             <div class="toggle-line">
                 <label>
                     <input type="checkbox" id="chk_retrabajo" name="genero_retrabajo" value="1">
@@ -781,9 +754,36 @@ def gestion_calidad_dashboard():
                         <input type="number" step="0.01" min="0" name="costo_hallazgo" placeholder="Costo estimado/real">
                     </div>
                     <input type="hidden" name="retrabajo_proceso_afectado" value="">
-                    <div style="grid-column: 1 / -1;">
-                        <label><b>Impacto del retrabajo (NC ↔ HH ↔ Costos ↔ Atrasos)</b></label>
-                        <textarea name="retrabajo_impacto" id="retrabajo_impacto" placeholder="Describir el impacto sobre producción, costo y entrega"></textarea>
+                    <input type="hidden" name="retrabajo_impacto" id="retrabajo_impacto" value="SIN_DETALLE">
+                </div>
+            </div>
+
+            <div style="margin-top: 15px; padding: 14px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border: 2px solid #22c55e; border-radius: 8px;">
+                <h4 style="margin: 0 0 12px 0; color: #166534;">📊 Resumen Impactos (Período actual)</h4>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px;">
+                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #16a34a; text-align: center;">
+                        <div style="font-size: 11px; color: #666;">Con análisis causa raíz</div>
+                        <div style="font-size: 22px; font-weight: bold; color: #166534;">{total_causa_raiz}</div>
+                    </div>
+                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #0ea5e9; text-align: center;">
+                        <div style="font-size: 11px; color: #666;">Hallazgos con retrabajo</div>
+                        <div style="font-size: 22px; font-weight: bold; color: #0c4a6e;">{total_retrabajos}</div>
+                    </div>
+                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #f59e0b; text-align: center;">
+                        <div style="font-size: 11px; color: #666;">HH Retrabajo</div>
+                        <div style="font-size: 22px; font-weight: bold; color: #92400e;">{total_hs_retrabajo:.1f}</div>
+                    </div>
+                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #eab308; text-align: center;">
+                        <div style="font-size: 11px; color: #666;">Desperdicio material (kg)</div>
+                        <div style="font-size: 22px; font-weight: bold; color: #854d0e;">{total_desperdicio_kg:.1f}</div>
+                    </div>
+                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #06b6d4; text-align: center;">
+                        <div style="font-size: 11px; color: #666;">Impacto entrega (días)</div>
+                        <div style="font-size: 22px; font-weight: bold; color: #164e63;">{total_impacto_dias:.1f}</div>
+                    </div>
+                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #8b5cf6; text-align: center;">
+                        <div style="font-size: 11px; color: #666;">Costo total hallazgos</div>
+                        <div style="font-size: 22px; font-weight: bold; color: #6d28d9;">${total_costo_hallazgos:.2f}</div>
                     </div>
                 </div>
             </div>
