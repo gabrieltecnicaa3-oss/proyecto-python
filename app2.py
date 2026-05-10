@@ -670,6 +670,79 @@ def init_db():
         pass
     
     db.commit()
+
+    # Migraciones criticas cross-db (no dependen de PRAGMA).
+    # En MySQL, PRAGMA falla y no debe bloquear estas columnas/tablas usadas por Programacion y Gestion de Calidad.
+    columnas_criticas = [
+        ("hallazgos_calidad", "requiere_causa_raiz", "INTEGER DEFAULT 0"),
+        ("hallazgos_calidad", "porque_1", "TEXT"),
+        ("hallazgos_calidad", "porque_2", "TEXT"),
+        ("hallazgos_calidad", "porque_3", "TEXT"),
+        ("hallazgos_calidad", "porque_4", "TEXT"),
+        ("hallazgos_calidad", "porque_5", "TEXT"),
+        ("hallazgos_calidad", "clasificacion_causa", "TEXT"),
+        ("hallazgos_calidad", "genero_retrabajo", "INTEGER DEFAULT 0"),
+        ("hallazgos_calidad", "retrabajo_hs", "REAL DEFAULT 0"),
+        ("hallazgos_calidad", "retrabajo_proceso_afectado", "TEXT"),
+        ("hallazgos_calidad", "retrabajo_impacto", "TEXT"),
+        ("hallazgos_calidad", "desperdicio_kg", "REAL DEFAULT 0"),
+        ("hallazgos_calidad", "impacto_entrega_dias", "REAL DEFAULT 0"),
+        ("hallazgos_calidad", "costo_hallazgo", "REAL DEFAULT 0"),
+        ("programacion", "cantidad_recursos", "INTEGER DEFAULT 1"),
+        ("programacion", "hito_titulo", "TEXT"),
+        ("programacion", "hito_fecha", "DATE"),
+        ("programacion", "orden", "INTEGER DEFAULT 0"),
+    ]
+    for _tabla, _col, _def in columnas_criticas:
+        try:
+            db.execute(f"ALTER TABLE {_tabla} ADD COLUMN {_col} {_def}")
+            db.commit()
+        except Exception:
+            pass
+
+    try:
+        db.execute("UPDATE programacion SET orden = id WHERE orden = 0 OR orden IS NULL")
+        db.commit()
+    except Exception:
+        pass
+
+    try:
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS programacion_hitos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prog_id INTEGER NOT NULL,
+                titulo TEXT NOT NULL,
+                fecha DATE NOT NULL,
+                fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (prog_id) REFERENCES programacion(id)
+            )
+            """
+        )
+        db.commit()
+    except Exception:
+        try:
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS programacion_hitos (
+                    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    prog_id BIGINT NOT NULL,
+                    titulo TEXT NOT NULL,
+                    fecha DATE NOT NULL,
+                    fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            db.commit()
+        except Exception:
+            pass
+
+    try:
+        db.execute("CREATE INDEX IF NOT EXISTS idx_programacion_hitos_prog_id ON programacion_hitos(prog_id)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_programacion_hitos_fecha ON programacion_hitos(fecha)")
+        db.commit()
+    except Exception:
+        pass
     
     # Migración: Agregar columnas faltantes y limpiar datos incorrectos
     try:
