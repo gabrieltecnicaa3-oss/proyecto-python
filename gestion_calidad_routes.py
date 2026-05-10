@@ -204,8 +204,8 @@ def gestion_calidad_dashboard():
             clasificacion_causa = ""
 
         if genero_retrabajo:
-            if retrabajo_hs <= 0 or retrabajo_proceso_afectado not in procesos_retrabajo_validos or not retrabajo_impacto:
-                return redirect("/modulo/gestion-calidad?periodo=" + quote(periodo_post) + "&mensaje=" + quote("⚠️ Si hubo retrabajo, indicá hs, proceso afectado e impacto"))
+            if retrabajo_hs <= 0 or not retrabajo_impacto:
+                return redirect("/modulo/gestion-calidad?periodo=" + quote(periodo_post) + "&mensaje=" + quote("⚠️ Si hubo retrabajo, indicá hs e impacto"))
         else:
             retrabajo_hs = 0
             retrabajo_proceso_afectado = ""
@@ -558,7 +558,7 @@ def gestion_calidad_dashboard():
     .tratamiento-form textarea {{ min-height:74px; resize:vertical; }}
     .tratamiento-form button {{ margin-top:10px; background:#16a34a; color:white; border:none; padding:10px 14px; border-radius:6px; font-weight:bold; cursor:pointer; }}
     .toggle-line {{ margin: 10px 0 4px 0; padding: 8px 10px; background: #ecfdf3; border: 1px solid #bbf7d0; border-radius: 8px; }}
-    .toggle-line label {{ display: inline-flex; align-items: center; gap: 8px; font-weight: bold; color: #166534; }}
+    .toggle-line label {{ display: flex; align-items: center; gap: 8px; font-weight: bold; color: #166534; }}
     .subbloque {{ display:none; margin-top:10px; padding:10px; border:1px dashed #86efac; border-radius:8px; background:#f0fdf4; }}
     .hint-mini {{ color:#166534; font-size:12px; margin:2px 0 8px 0; }}
 
@@ -691,14 +691,14 @@ def gestion_calidad_dashboard():
             <div class="toggle-line">
                 <label>
                     <input type="checkbox" id="chk_causa_raiz" name="requiere_causa_raiz" value="1">
-                    Checkbox 1: ¿Requiere análisis causa raíz? (SI/NO)
+                    1-¿Requiere análisis causa raíz? (SI/NO)
                 </label>
             </div>
             <div id="bloque_causa_raiz" class="subbloque">
                 <div class="hint-mini">Si marcás SI, completá los 5 por qué y clasificá la causa.</div>
                 <div class="trat-grid">
                     <div>
-                        <label><b>¿Por qué? (1)</b></label>
+                        <label><b>¿Por qué ocurrió (1)</b></label>
                         <input type="text" name="porque_1" id="porque_1" placeholder="Primer por qué">
                     </div>
                     <div>
@@ -714,8 +714,8 @@ def gestion_calidad_dashboard():
                         <input type="text" name="porque_4" id="porque_4" placeholder="Cuarto por qué">
                     </div>
                     <div>
-                        <label><b>¿Por qué? (5)</b></label>
-                        <input type="text" name="porque_5" id="porque_5" placeholder="Quinto por qué">
+                        <label><b>¿Causa raiz (5)</b></label>
+                        <input type="text" name="porque_5" id="porque_5" placeholder="Causa raíz">
                     </div>
                     <div>
                         <label><b>Clasificación de causa</b></label>
@@ -733,30 +733,40 @@ def gestion_calidad_dashboard():
                 </div>
             </div>
 
+            <div style="margin-top: 15px; padding: 14px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border: 2px solid #22c55e; border-radius: 8px;">
+                <h4 style="margin: 0 0 12px 0; color: #166534;">📊 Resumen Impactos (Período actual)</h4>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px;">
+                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #ef4444; text-align: center;">
+                        <div style="font-size: 11px; color: #666;">No Conformes</div>
+                        <div style="font-size: 22px; font-weight: bold; color: #991b1b;">{total_nc}</div>
+                    </div>
+                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #f59e0b; text-align: center;">
+                        <div style="font-size: 11px; color: #666;">HH Retrabajo</div>
+                        <div style="font-size: 22px; font-weight: bold; color: #92400e;">{total_hs_retrabajo:.1f}</div>
+                    </div>
+                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #8b5cf6; text-align: center;">
+                        <div style="font-size: 11px; color: #666;">Costo Total</div>
+                        <div style="font-size: 22px; font-weight: bold; color: #6d28d9;">${total_costo_hallazgos:.2f}</div>
+                    </div>
+                    <div style="background: #fff; padding: 12px; border-radius: 6px; border-left: 4px solid #06b6d4; text-align: center;">
+                        <div style="font-size: 11px; color: #666;">Atraso (días)</div>
+                        <div style="font-size: 22px; font-weight: bold; color: #164e63;">{total_impacto_dias:.1f}</div>
+                    </div>
+                </div>
+            </div>
+
             <div class="toggle-line">
                 <label>
                     <input type="checkbox" id="chk_retrabajo" name="genero_retrabajo" value="1">
-                    Checkbox 2: ¿Generó retrabajo? (SI/NO)
+                    2- ¿Generó retrabajo? (SI/NO)
                 </label>
             </div>
             <div id="bloque_retrabajo" class="subbloque">
-                <div class="hint-mini">Si marcás SI, definí HH, proceso afectado, impacto, desperdicio, atraso y costo.</div>
+                <div class="hint-mini">Si marcás SI, definí HH, impacto, desperdicio, atraso y costo.</div>
                 <div class="trat-grid">
                     <div>
                         <label><b>HH retrabajo</b></label>
                         <input type="number" step="0.1" min="0" name="retrabajo_hs" id="retrabajo_hs" placeholder="Ej: 10">
-                    </div>
-                    <div>
-                        <label><b>Proceso afectado</b></label>
-                        <select name="retrabajo_proceso_afectado" id="retrabajo_proceso_afectado">
-                            <option value="">-- Seleccionar --</option>
-                            <option value="ARMADO">ARMADO</option>
-                            <option value="SOLDADURA">SOLDADURA</option>
-                            <option value="PINTURA">PINTURA</option>
-                            <option value="DESPACHO">DESPACHO</option>
-                            <option value="COMPRAS">COMPRAS</option>
-                            <option value="PAGOS_PROVEEDORES">PAGOS PROVEEDORES</option>
-                        </select>
                     </div>
                     <div>
                         <label><b>Desperdicio material (kg)</b></label>
@@ -770,6 +780,7 @@ def gestion_calidad_dashboard():
                         <label><b>Costo del hallazgo</b></label>
                         <input type="number" step="0.01" min="0" name="costo_hallazgo" placeholder="Costo estimado/real">
                     </div>
+                    <input type="hidden" name="retrabajo_proceso_afectado" value="">
                     <div style="grid-column: 1 / -1;">
                         <label><b>Impacto del retrabajo (NC ↔ HH ↔ Costos ↔ Atrasos)</b></label>
                         <textarea name="retrabajo_impacto" id="retrabajo_impacto" placeholder="Describir el impacto sobre producción, costo y entrega"></textarea>
@@ -814,7 +825,6 @@ def gestion_calidad_dashboard():
 
         const retrabajoReq = [
             document.getElementById('retrabajo_hs'),
-            document.getElementById('retrabajo_proceso_afectado'),
             document.getElementById('retrabajo_impacto')
         ];
 
