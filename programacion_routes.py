@@ -125,6 +125,22 @@ def _fmt(d):
     return d.strftime("%d/%m/%Y")
 
 
+def _normalizar_hitos_desde_form(form):
+    titulos = form.getlist("hito_titulo[]")
+    fechas = form.getlist("hito_fecha[]")
+    hitos = []
+    n = max(len(titulos), len(fechas))
+    for i in range(n):
+        t = (titulos[i] if i < len(titulos) else "") or ""
+        f = (fechas[i] if i < len(fechas) else "") or ""
+        t = str(t).strip()
+        f = str(f).strip()
+        if not t and not f:
+            continue
+        hitos.append({"titulo": t, "fecha": f})
+    return hitos
+
+
 # ── CSS compartido ─────────────────────────────────────────────────────────────
 _CSS = """<style>
 *{box-sizing:border-box;}
@@ -393,8 +409,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=F
         fi = _parse_date(e.get("fecha_inicio"))
         ff = _parse_date(e.get("fecha_fin"))
         fecha_nec = _parse_date(e.get("fecha_entrega"))
-        hito_fecha = _parse_date(e.get("hito_fecha"))
-        hito_titulo = str(e.get("hito_titulo") or "").strip()
+        hitos = e.get("hitos") or []
         ot_id = e["ot_id"]
         obra = html_lib.escape(str(e.get("obra") or f"OT {ot_id}"))
         titulo = html_lib.escape(str(e.get("titulo") or ""))
@@ -528,16 +543,19 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=F
                 f'pointer-events:none;line-height:1;" title="{hito_tip}">◆</div>'
             )
 
-        # ── HITO custom: marcador negro (fecha + titulo) ──
-        hito_html = ""
-        if hito_fecha and fi_vista <= hito_fecha <= ff_vista:
-            hito_pct = (hito_fecha - fi_vista).days / total_dias * 100
-            hito_txt = hito_titulo if hito_titulo else "Hito"
-            hito_tip = html_lib.escape(f"HITO: {hito_txt} | {_fmt(hito_fecha)}")
-            hito_html = (
-                f'<div style="position:absolute;left:{hito_pct:.2f}%;top:2px;'
+        # ── HITOS custom: marcadores negros (fecha + titulo) ──
+        hitos_html = ""
+        for h in hitos:
+            h_fecha = _parse_date(h.get("fecha"))
+            h_titulo = str(h.get("titulo") or "").strip() or "Hito"
+            if not h_fecha or not (fi_vista <= h_fecha <= ff_vista):
+                continue
+            h_pct = (h_fecha - fi_vista).days / total_dias * 100
+            h_tip = html_lib.escape(f"HITO: {h_titulo} | {_fmt(h_fecha)}")
+            hitos_html += (
+                f'<div style="position:absolute;left:{h_pct:.2f}%;top:2px;'
                 f'transform:translateX(-50%) rotate(45deg);width:9px;height:9px;'
-                f'background:#111827;z-index:5;pointer-events:auto;" title="{hito_tip}"></div>'
+                f'background:#111827;z-index:5;pointer-events:auto;" title="{h_tip}"></div>'
             )
 
         avance_chip_color = "#f59e0b" if es_sub else "#16a34a"
@@ -564,7 +582,7 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=F
                 {today_html}
                 {bar_html}
                 {entrega_html}
-                {hito_html}
+                {hitos_html}
             </div>
             {'' if es_obra else f'''<div class="g-act">
                 <form method="post" action="/modulo/programacion/reordenar" style="display:inline;">
@@ -711,9 +729,22 @@ def _form_html(ots_activas, prog=None, error=""):
     fi_val = str(prog.get("fecha_inicio") or "") if es_edicion else ""
     ff_val = str(prog.get("fecha_fin") or "") if es_edicion else ""
     cant_rec_val = int(prog.get("cantidad_recursos", 1)) if es_edicion else 1
-    hito_titulo_val = html_lib.escape(str(prog.get("hito_titulo") or "")) if es_edicion else ""
-    hito_fecha_val = str(prog.get("hito_fecha") or "") if es_edicion else ""
+    hitos = prog.get("hitos", []) if es_edicion else []
+    if not hitos:
+        hitos = [{"titulo": "", "fecha": ""}]
     obs_val = html_lib.escape(str(prog.get("observaciones") or "")) if es_edicion else ""
+
+    hitos_rows_html = ""
+    for h in hitos:
+        ht = html_lib.escape(str(h.get("titulo") or ""))
+        hf = html_lib.escape(str(h.get("fecha") or ""))
+        hitos_rows_html += f'''
+        <div class="hito-row" style="display:grid;grid-template-columns:1fr 180px auto;gap:8px;margin-bottom:8px;">
+            <input type="text" name="hito_titulo[]" value="{ht}" maxlength="120" placeholder="Título del hito">
+            <input type="date" name="hito_fecha[]" value="{hf}">
+            <button type="button" class="btn btn-sec btn-sm" style="width:auto;" onclick="eliminarHito(this)">Quitar</button>
+        </div>
+        '''
 
     err_html = f'<div class="err">{html_lib.escape(error)}</div>' if error else ""
     btn_label = "Guardar cambios" if es_edicion else "Crear Programación"
@@ -760,13 +791,10 @@ def _form_html(ots_activas, prog=None, error=""):
                 <span id="hs-detail" style="font-size:12px;color:#9a3412;"></span>
             </div>
         </div>
-        <div class="form-group">
-            <label>Hito - Título (opcional)</label>
-            <input type="text" name="hito_titulo" id="hito_titulo" value="{hito_titulo_val}" maxlength="120" placeholder="Ej: Liberación para despacho">
-        </div>
-        <div class="form-group">
-            <label>Hito - Fecha (opcional)</label>
-            <input type="date" name="hito_fecha" id="hito_fecha" value="{hito_fecha_val}">
+        <div class="form-group full">
+            <label>Hitos (opcional) - Podés agregar varios</label>
+            <div id="hitos-wrap">{hitos_rows_html}</div>
+            <button type="button" class="btn btn-sec btn-sm" style="width:auto;" onclick="agregarHito()">+ Agregar hito</button>
         </div>
         <div class="form-group full">
             <label>Observaciones</label>
@@ -797,6 +825,32 @@ function calcHoras() {{
         hs > 0 ? rec + ' rec. × 10 hs/día × ' + dias + ' días' : 'Completá fechas y recursos';
     document.getElementById('hs-hidden').value = hs;
 }}
+function agregarHito() {{
+    const wrap = document.getElementById('hitos-wrap');
+    const row = document.createElement('div');
+    row.className = 'hito-row';
+    row.style.display = 'grid';
+    row.style.gridTemplateColumns = '1fr 180px auto';
+    row.style.gap = '8px';
+    row.style.marginBottom = '8px';
+    row.innerHTML = '<input type="text" name="hito_titulo[]" maxlength="120" placeholder="Título del hito">'
+        + '<input type="date" name="hito_fecha[]">'
+        + '<button type="button" class="btn btn-sec btn-sm" style="width:auto;" onclick="eliminarHito(this)">Quitar</button>';
+    wrap.appendChild(row);
+}}
+function eliminarHito(btn) {{
+    const rows = document.querySelectorAll('#hitos-wrap .hito-row');
+    if (rows.length <= 1) {{
+        const r = rows[0];
+        if (!r) return;
+        const t = r.querySelector('input[name="hito_titulo[]"]');
+        const f = r.querySelector('input[name="hito_fecha[]"]');
+        if (t) t.value = '';
+        if (f) f.value = '';
+        return;
+    }}
+    btn.closest('.hito-row').remove();
+}}
 document.getElementById('main-form').addEventListener('submit', function(e) {{
     const fi = document.getElementById('fi').value;
     const ff = document.getElementById('ff').value;
@@ -805,12 +859,16 @@ document.getElementById('main-form').addEventListener('submit', function(e) {{
         alert('La fecha de fin debe ser igual o posterior a la fecha de inicio.');
         return;
     }}
-    const hitoTitulo = (document.getElementById('hito_titulo').value || '').trim();
-    const hitoFecha = (document.getElementById('hito_fecha').value || '').trim();
-    if ((hitoTitulo && !hitoFecha) || (!hitoTitulo && hitoFecha)) {{
-        e.preventDefault();
-        alert('Para cargar un HITO debés completar título y fecha.');
-        return;
+    const titulos = Array.from(document.querySelectorAll('input[name="hito_titulo[]"]'));
+    const fechas = Array.from(document.querySelectorAll('input[name="hito_fecha[]"]'));
+    for (let i = 0; i < Math.max(titulos.length, fechas.length); i++) {{
+        const t = ((titulos[i] && titulos[i].value) || '').trim();
+        const f = ((fechas[i] && fechas[i].value) || '').trim();
+        if ((t && !f) || (!t && f)) {{
+            e.preventDefault();
+            alert('Cada HITO debe tener título y fecha.');
+            return;
+        }}
     }}
     calcHoras();
 }});
@@ -857,7 +915,7 @@ def programacion_index():
     rows = db.execute("""
         SELECT p.id, p.ot_id, p.fecha_inicio, p.fecha_fin,
                COALESCE(p.hs_programadas, 0), COALESCE(p.cantidad_recursos, 0), COALESCE(p.observaciones, ''),
-             COALESCE(p.hito_titulo, ''), COALESCE(p.hito_fecha, ''),
+               COALESCE(p.hito_titulo, ''), COALESCE(p.hito_fecha, ''),
                COALESCE(ot.obra, ''), COALESCE(ot.titulo, ''),
                COALESCE(ot.cliente, ''), COALESCE(ot.estado, ''), COALESCE(ot.fecha_entrega, ''),
                COALESCE(ot.estado_avance, 0), COALESCE(ot.hs_previstas, 0)
@@ -866,11 +924,28 @@ def programacion_index():
         ORDER BY COALESCE(p.orden, p.id) ASC, p.id ASC
     """).fetchall()
 
+    prog_ids = [int(r[0]) for r in rows]
+    hitos_map = {pid: [] for pid in prog_ids}
+    if prog_ids:
+        placeholders = ",".join(["?"] * len(prog_ids))
+        hitos_rows = db.execute(
+            f"""
+            SELECT prog_id, COALESCE(titulo, ''), COALESCE(fecha, '')
+            FROM programacion_hitos
+            WHERE prog_id IN ({placeholders})
+            ORDER BY prog_id ASC, fecha ASC, id ASC
+            """,
+            prog_ids,
+        ).fetchall()
+        for pid, titulo_h, fecha_h in hitos_rows:
+            hitos_map.setdefault(int(pid), []).append({"titulo": str(titulo_h or ""), "fecha": str(fecha_h or "")})
+
     entradas = [
         {
             "id": r[0], "ot_id": r[1], "fecha_inicio": r[2], "fecha_fin": r[3],
             "hs_programadas": r[4], "cantidad_recursos": r[5], "observaciones": r[6],
             "hito_titulo": r[7], "hito_fecha": r[8],
+            "hitos": (hitos_map.get(int(r[0])) or ([{"titulo": str(r[7] or ""), "fecha": str(r[8] or "")}] if (str(r[7] or "").strip() and str(r[8] or "").strip()) else [])),
             "obra": r[9], "titulo": r[10], "cliente": r[11], "estado_ot": r[12], "fecha_entrega": r[13],
             "avance": int(r[14] or 0),
             "es_subcontrato": float(r[15] or 0) == 0 or int(r[5] or 0) == 0,
@@ -940,8 +1015,8 @@ def programacion_index():
 
     # Lista de obras para filtro (union de programadas + activas)
     obras_lista = sorted({
-        str(r[7] or "").strip() for r in rows
-        if str(r[7] or "").strip()
+        str(r[9] or "").strip() for r in rows
+        if str(r[9] or "").strip()
     } | {
         str(r[1] or "").strip() for r in ots_activas_cumpl
         if str(r[1] or "").strip()
@@ -1569,8 +1644,7 @@ def programacion_nueva():
         fecha_inicio = (request.form.get("fecha_inicio") or "").strip()
         fecha_fin = (request.form.get("fecha_fin") or "").strip()
         cant_rec_txt = (request.form.get("cantidad_recursos") or "0").strip()
-        hito_titulo = (request.form.get("hito_titulo") or "").strip()
-        hito_fecha = (request.form.get("hito_fecha") or "").strip()
+        hitos = _normalizar_hitos_desde_form(request.form)
         observaciones = (request.form.get("observaciones") or "").strip()
 
         error = ""
@@ -1580,10 +1654,14 @@ def programacion_nueva():
             error = "Las fechas de inicio y fin son obligatorias."
         elif fecha_fin < fecha_inicio:
             error = "La fecha de fin debe ser igual o posterior a la fecha de inicio."
-        elif (hito_titulo and not hito_fecha) or (hito_fecha and not hito_titulo):
-            error = "Para cargar un HITO completá título y fecha."
-        elif hito_fecha and (hito_fecha < fecha_inicio or hito_fecha > fecha_fin):
-            error = "La fecha del HITO debe quedar dentro del rango inicio-fin."
+        else:
+            for h in hitos:
+                if not h.get("titulo") or not h.get("fecha"):
+                    error = "Cada HITO debe tener título y fecha."
+                    break
+                if h["fecha"] < fecha_inicio or h["fecha"] > fecha_fin:
+                    error = "La fecha de cada HITO debe quedar dentro del rango inicio-fin."
+                    break
 
         if error:
             return _form_html(ots_activas, error=error)
@@ -1600,13 +1678,19 @@ def programacion_nueva():
 
         # Asignar orden = max(orden)+1 para que aparezca al final
         max_orden = db.execute("SELECT COALESCE(MAX(COALESCE(orden, id)), 0) FROM programacion").fetchone()[0]
-        db.execute(
+        cur = db.execute(
             """
             INSERT INTO programacion (ot_id, fecha_inicio, fecha_fin, hs_programadas, cantidad_recursos, hito_titulo, hito_fecha, observaciones, orden)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (int(ot_id_txt), fecha_inicio, fecha_fin, hs, cant_rec, hito_titulo, hito_fecha or None, observaciones, int(max_orden) + 1),
+            (int(ot_id_txt), fecha_inicio, fecha_fin, hs, cant_rec, "", None, observaciones, int(max_orden) + 1),
         )
+        prog_id = int(cur.lastrowid)
+        for h in hitos:
+            db.execute(
+                "INSERT INTO programacion_hitos (prog_id, titulo, fecha) VALUES (?, ?, ?)",
+                (prog_id, h["titulo"], h["fecha"]),
+            )
         db.commit()
         return redirect("/modulo/programacion")
 
@@ -1624,9 +1708,23 @@ def programacion_editar(prog_id):
     if not row:
         return redirect("/modulo/programacion")
 
+    hitos_edit = db.execute(
+        """
+        SELECT COALESCE(titulo, ''), COALESCE(fecha, '')
+        FROM programacion_hitos
+        WHERE prog_id = ?
+        ORDER BY fecha ASC, id ASC
+        """,
+        (prog_id,),
+    ).fetchall()
+    hitos = [{"titulo": str(h[0] or ""), "fecha": str(h[1] or "")} for h in hitos_edit]
+    if not hitos and str(row[6] or "").strip() and str(row[7] or "").strip():
+        hitos = [{"titulo": str(row[6] or ""), "fecha": str(row[7] or "")}]
+
     prog = {
         "id": row[0], "ot_id": row[1], "fecha_inicio": row[2], "fecha_fin": row[3],
         "hs_programadas": row[4], "cantidad_recursos": row[5], "hito_titulo": row[6], "hito_fecha": row[7], "observaciones": row[8],
+        "hitos": hitos,
     }
 
     ots_activas = db.execute("""
@@ -1641,8 +1739,7 @@ def programacion_editar(prog_id):
         fecha_inicio = (request.form.get("fecha_inicio") or "").strip()
         fecha_fin = (request.form.get("fecha_fin") or "").strip()
         cant_rec_txt = (request.form.get("cantidad_recursos") or "0").strip()
-        hito_titulo = (request.form.get("hito_titulo") or "").strip()
-        hito_fecha = (request.form.get("hito_fecha") or "").strip()
+        hitos = _normalizar_hitos_desde_form(request.form)
         observaciones = (request.form.get("observaciones") or "").strip()
 
         error = ""
@@ -1652,10 +1749,14 @@ def programacion_editar(prog_id):
             error = "Las fechas son obligatorias."
         elif fecha_fin < fecha_inicio:
             error = "La fecha de fin debe ser igual o posterior a la fecha de inicio."
-        elif (hito_titulo and not hito_fecha) or (hito_fecha and not hito_titulo):
-            error = "Para cargar un HITO completá título y fecha."
-        elif hito_fecha and (hito_fecha < fecha_inicio or hito_fecha > fecha_fin):
-            error = "La fecha del HITO debe quedar dentro del rango inicio-fin."
+        else:
+            for h in hitos:
+                if not h.get("titulo") or not h.get("fecha"):
+                    error = "Cada HITO debe tener título y fecha."
+                    break
+                if h["fecha"] < fecha_inicio or h["fecha"] > fecha_fin:
+                    error = "La fecha de cada HITO debe quedar dentro del rango inicio-fin."
+                    break
 
         if error:
             return _form_html(ots_activas, prog=prog, error=error)
@@ -1676,8 +1777,14 @@ def programacion_editar(prog_id):
             SET ot_id=?, fecha_inicio=?, fecha_fin=?, hs_programadas=?, cantidad_recursos=?, hito_titulo=?, hito_fecha=?, observaciones=?
             WHERE id=?
             """,
-            (int(ot_id_txt), fecha_inicio, fecha_fin, hs, cant_rec, hito_titulo, hito_fecha or None, observaciones, prog_id),
+            (int(ot_id_txt), fecha_inicio, fecha_fin, hs, cant_rec, "", None, observaciones, prog_id),
         )
+        db.execute("DELETE FROM programacion_hitos WHERE prog_id = ?", (prog_id,))
+        for h in hitos:
+            db.execute(
+                "INSERT INTO programacion_hitos (prog_id, titulo, fecha) VALUES (?, ?, ?)",
+                (prog_id, h["titulo"], h["fecha"]),
+            )
         db.commit()
         return redirect("/modulo/programacion")
 
@@ -1689,6 +1796,7 @@ def programacion_eliminar():
     db = get_db()
     id_txt = (request.form.get("id") or "").strip()
     if id_txt.isdigit():
+        db.execute("DELETE FROM programacion_hitos WHERE prog_id = ?", (int(id_txt),))
         db.execute("DELETE FROM programacion WHERE id = ?", (int(id_txt),))
         db.commit()
     return redirect("/modulo/programacion")

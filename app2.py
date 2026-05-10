@@ -596,6 +596,17 @@ def init_db():
     )
     """)
 
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS programacion_hitos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        prog_id INTEGER NOT NULL,
+        titulo TEXT NOT NULL,
+        fecha DATE NOT NULL,
+        fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (prog_id) REFERENCES programacion(id)
+    )
+    """)
+
     # Indices para acelerar panel de produccion con alto volumen de OTs/procesos.
     try:
         db.execute("CREATE INDEX IF NOT EXISTS idx_procesos_ot_id ON procesos(ot_id)")
@@ -629,6 +640,7 @@ def init_db():
                 "hallazgos_calidad",
                 "trazabilidad_estados",
                 "control_pintura",
+                "programacion_hitos",
             ]
             for tabla in tablas_ai:
                 try:
@@ -883,6 +895,26 @@ def init_db():
                 # Inicializar orden = id para mantener el orden actual
                 db.execute("UPDATE programacion SET orden = id WHERE orden = 0 OR orden IS NULL")
                 db.commit()
+        except Exception:
+            pass
+
+        # Migración tabla de hitos de programación
+        try:
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS programacion_hitos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    prog_id INTEGER NOT NULL,
+                    titulo TEXT NOT NULL,
+                    fecha DATE NOT NULL,
+                    fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (prog_id) REFERENCES programacion(id)
+                )
+                """
+            )
+            db.execute("CREATE INDEX IF NOT EXISTS idx_programacion_hitos_prog_id ON programacion_hitos(prog_id)")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_programacion_hitos_fecha ON programacion_hitos(fecha)")
+            db.commit()
         except Exception:
             pass
 
