@@ -8,6 +8,68 @@ from db_utils import get_db
 
 
 gestion_calidad_bp = Blueprint("gestion_calidad", __name__)
+_gestion_calidad_schema_ready = False
+
+
+def _asegurar_schema_gestion_calidad():
+    global _gestion_calidad_schema_ready
+    if _gestion_calidad_schema_ready:
+        return
+
+    db = get_db()
+
+    try:
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hallazgos_calidad (
+                id INTEGER PRIMARY KEY,
+                fecha_hallazgo DATE,
+                proceso TEXT,
+                tipo_hallazgo TEXT,
+                estado_tratamiento TEXT,
+                accion_inmediata TEXT,
+                acciones_correctivas TEXT,
+                fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    except Exception:
+        pass
+
+    # Columnas usadas por este modulo.
+    for _sql in [
+        "ALTER TABLE hallazgos_calidad ADD COLUMN requiere_causa_raiz INTEGER DEFAULT 0",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN porque_1 TEXT",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN porque_2 TEXT",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN porque_3 TEXT",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN porque_4 TEXT",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN porque_5 TEXT",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN clasificacion_causa TEXT",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN genero_retrabajo INTEGER DEFAULT 0",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN retrabajo_hs REAL DEFAULT 0",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN retrabajo_proceso_afectado TEXT",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN retrabajo_impacto TEXT",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN desperdicio_kg REAL DEFAULT 0",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN impacto_entrega_dias REAL DEFAULT 0",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN costo_hallazgo REAL DEFAULT 0",
+        "ALTER TABLE procesos ADD COLUMN eliminado INTEGER DEFAULT 0",
+    ]:
+        try:
+            db.execute(_sql)
+        except Exception:
+            pass
+
+    try:
+        db.commit()
+    except Exception:
+        pass
+
+    _gestion_calidad_schema_ready = True
+
+
+@gestion_calidad_bp.before_request
+def _gestion_calidad_before_request_schema():
+    _asegurar_schema_gestion_calidad()
 
 
 @gestion_calidad_bp.route("/modulo/calidad")

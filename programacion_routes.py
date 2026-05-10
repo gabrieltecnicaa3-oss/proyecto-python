@@ -8,6 +8,106 @@ from flask import Blueprint, request, redirect, session
 from db_utils import get_db
 
 programacion_bp = Blueprint("programacion", __name__)
+_programacion_schema_ready = False
+
+
+def _asegurar_schema_programacion():
+    global _programacion_schema_ready
+    if _programacion_schema_ready:
+        return
+
+    db = get_db()
+
+    # Tablas base del modulo.
+    try:
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS programacion (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ot_id INTEGER NOT NULL,
+                fecha_inicio DATE NOT NULL,
+                fecha_fin DATE NOT NULL,
+                hs_programadas REAL DEFAULT 0,
+                cantidad_recursos INTEGER DEFAULT 1,
+                hito_titulo TEXT,
+                hito_fecha DATE,
+                recursos TEXT,
+                observaciones TEXT,
+                fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    except Exception:
+        pass
+
+    try:
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS programacion_cumplimiento (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ot_id INTEGER NOT NULL,
+                semana_inicio DATE NOT NULL,
+                pct_cumplido REAL DEFAULT 100,
+                desvio_codigo TEXT,
+                fecha_actualizacion DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    except Exception:
+        pass
+
+    try:
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS programacion_hitos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prog_id INTEGER NOT NULL,
+                titulo TEXT NOT NULL,
+                fecha DATE NOT NULL,
+                fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    except Exception:
+        pass
+
+    # Columnas criticas para consultas del modulo.
+    for _sql in [
+        "ALTER TABLE programacion ADD COLUMN orden INTEGER DEFAULT 0",
+        "ALTER TABLE programacion ADD COLUMN cantidad_recursos INTEGER DEFAULT 1",
+        "ALTER TABLE programacion ADD COLUMN hito_titulo TEXT",
+        "ALTER TABLE programacion ADD COLUMN hito_fecha DATE",
+        "ALTER TABLE ordenes_trabajo ADD COLUMN es_mantenimiento INTEGER DEFAULT 0",
+        "ALTER TABLE ordenes_trabajo ADD COLUMN estado_avance INTEGER DEFAULT 0",
+        "ALTER TABLE ordenes_trabajo ADD COLUMN hs_previstas REAL DEFAULT 0",
+        "ALTER TABLE ordenes_trabajo ADD COLUMN fecha_cierre DATETIME",
+    ]:
+        try:
+            db.execute(_sql)
+        except Exception:
+            pass
+
+    try:
+        db.execute("UPDATE programacion SET orden = id WHERE orden = 0 OR orden IS NULL")
+    except Exception:
+        pass
+
+    try:
+        db.execute("CREATE INDEX IF NOT EXISTS idx_programacion_hitos_prog_id ON programacion_hitos(prog_id)")
+    except Exception:
+        pass
+
+    try:
+        db.commit()
+    except Exception:
+        pass
+
+    _programacion_schema_ready = True
+
+
+@programacion_bp.before_request
+def _programacion_before_request_schema():
+    _asegurar_schema_programacion()
 
 
 def _es_usuario_obra():
