@@ -45,7 +45,7 @@ import csv
 import html as html_lib
 import json
 import sqlite3
-# import pandas as pd  # Importación lazy: se importa en generar_etiquetas_qr() cuando sea necesario
+    import pandas as pd  # Importación lazy: se importa en generar_etiquetas_qr() cuando sea necesario
 import qrcode
 import os
 import re
