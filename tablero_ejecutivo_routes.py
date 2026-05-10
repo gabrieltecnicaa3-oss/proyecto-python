@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta
 import html as html_lib
+import os
 from io import BytesIO
 from urllib.parse import urlencode
 
@@ -9,7 +10,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image as RLImage, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from db_utils import get_db
 
@@ -68,6 +69,10 @@ def _pct(numerator, denominator):
 
 def _fmt_kg(v):
     return f"{_to_float(v):,.0f}".replace(",", ".")
+
+
+def _fmt_tn(v):
+    return f"{_to_float(v) / 1000.0:,.2f}".replace(",", ".")
 
 
 def _fmt_hs(v):
@@ -157,8 +162,8 @@ def _build_weekly_trend_svg(points_real, points_programado):
       <rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#ffffff\"/>
       {''.join(y_ticks)}
       <line x1=\"{pad_left}\" y1=\"{pad_top+inner_h}\" x2=\"{width-pad_right}\" y2=\"{pad_top+inner_h}\" stroke=\"#cbd5e1\" stroke-width=\"1.2\"/>
-      <polyline fill=\"none\" stroke=\"#0ea5e9\" stroke-width=\"3\" points=\"{poly_prog}\"/>
-      <polyline fill=\"none\" stroke=\"#16a34a\" stroke-width=\"3\" points=\"{poly_real}\"/>
+    <polyline fill=\"none\" stroke=\"#f59e0b\" stroke-width=\"3\" points=\"{poly_prog}\"/>
+    <polyline fill=\"none\" stroke=\"#f97316\" stroke-width=\"3\" points=\"{poly_real}\"/>
       {''.join(labels)}
     </svg>
     """
@@ -168,6 +173,7 @@ def _build_pdf_report(data, obra, tipo):
     m = data.get("metrics", {})
     weekly = data.get("weekly_compare", [])
     nc_items = data.get("nc_por_proceso", [])
+    weekly_trend = data.get("weekly_trend", [])
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -180,83 +186,59 @@ def _build_pdf_report(data, obra, tipo):
     )
 
     styles = getSampleStyleSheet()
-    s_title = ParagraphStyle(
-        "te_title",
-        parent=styles["Heading1"],
-        fontSize=18,
-        leading=21,
-        textColor=colors.HexColor("#F8FAFC"),
-        spaceAfter=4,
-    )
-    s_sub = ParagraphStyle(
-        "te_sub",
-        parent=styles["Normal"],
-        fontSize=10,
-        leading=13,
-        textColor=colors.HexColor("#CBD5E1"),
-    )
-    s_h2 = ParagraphStyle(
-        "te_h2",
-        parent=styles["Heading2"],
-        fontSize=12,
-        leading=15,
-        textColor=colors.HexColor("#0F172A"),
-        spaceBefore=8,
-        spaceAfter=5,
-    )
-    s_norm = ParagraphStyle(
-        "te_norm",
-        parent=styles["Normal"],
-        fontSize=9.3,
-        leading=12,
-        textColor=colors.HexColor("#0F172A"),
-    )
+    s_title = ParagraphStyle("te_title", parent=styles["Heading1"], fontSize=17, leading=20, textColor=colors.HexColor("#7C2D12"))
+    s_sub = ParagraphStyle("te_sub", parent=styles["Normal"], fontSize=9.5, leading=12.5, textColor=colors.HexColor("#9A3412"))
+    s_h2 = ParagraphStyle("te_h2", parent=styles["Heading2"], fontSize=11.5, leading=14, textColor=colors.HexColor("#7C2D12"), spaceBefore=7, spaceAfter=4)
+    s_norm = ParagraphStyle("te_norm", parent=styles["Normal"], fontSize=9, leading=11.8, textColor=colors.HexColor("#0F172A"))
 
     filtro_obra = obra.strip() if obra else "Todas"
     filtro_tipo = tipo.strip() if tipo else "Todos"
     hoy_txt = date.today().strftime("%d/%m/%Y")
 
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    logo_path = os.path.join(app_dir, "LOGO.png")
+
     elements = []
+    logo_cell = ""
+    if os.path.isfile(logo_path):
+        try:
+            logo_cell = RLImage(logo_path, width=30 * mm, height=18 * mm)
+        except Exception:
+            logo_cell = ""
 
     hero = Table(
         [
-            [
-                Paragraph("Tablero Ejecutivo Integral", s_title),
-                Paragraph(f"Fecha: {hoy_txt}<br/>Obra: {html_lib.escape(filtro_obra)}<br/>Tipo: {html_lib.escape(filtro_tipo)}", s_sub),
-            ],
-            [
-                Paragraph("Diferenciacion operativa: PREVISTO (OT) vs PROGRAMADO (Planificacion) vs REAL (Ejecucion)", s_sub),
-                "",
-            ],
+            [logo_cell, Paragraph("Tablero Ejecutivo Integral", s_title), Paragraph(f"Fecha: {hoy_txt}<br/>Obra: {html_lib.escape(filtro_obra)}<br/>Tipo: {html_lib.escape(filtro_tipo)}", s_sub)],
+            ["", Paragraph("Reporte ejecutivo PREVISTO (OT) / PROGRAMADO (Planificacion) / REAL (Ejecucion)", s_sub), ""],
         ],
-        colWidths=[120 * mm, 62 * mm],
+        colWidths=[34 * mm, 98 * mm, 50 * mm],
     )
     hero.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#0F172A")),
-                ("SPAN", (0, 1), (1, 1)),
-                ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#0F172A")),
-                ("LEFTPADDING", (0, 0), (-1, -1), 10),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-                ("TOPPADDING", (0, 0), (-1, -1), 8),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFF7ED")),
+                ("SPAN", (1, 1), (2, 1)),
+                ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#FDBA74")),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ]
         )
     )
     elements.append(hero)
-    elements.append(Spacer(1, 4 * mm))
+    elements.append(Spacer(1, 3 * mm))
 
     alertas = m.get("alertas", [])
     if alertas:
         alert_txt = " | ".join(str(a) for a in alertas)
-        alert_table = Table([[Paragraph(f"Resumen ejecutivo: {html_lib.escape(alert_txt)}", s_norm)]], colWidths=[182 * mm])
+        alert_table = Table([[Paragraph(f"Alertas automaticas: {html_lib.escape(alert_txt)}", s_norm)]], colWidths=[182 * mm])
         alert_table.setStyle(
             TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFF7ED")),
-                    ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#FDBA74")),
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFEDD5")),
+                    ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#FB923C")),
                     ("LEFTPADDING", (0, 0), (-1, -1), 8),
                     ("RIGHTPADDING", (0, 0), (-1, -1), 8),
                     ("TOPPADDING", (0, 0), (-1, -1), 6),
@@ -265,159 +247,107 @@ def _build_pdf_report(data, obra, tipo):
             )
         )
         elements.append(alert_table)
-        elements.append(Spacer(1, 2.5 * mm))
+        elements.append(Spacer(1, 2 * mm))
 
-    elements.append(Paragraph("1. Avance y planificacion", s_h2))
-    avance_rows = [
-        ["Avance real", _fmt_pct(m.get("avance_real_pct", 0)), "kg fabricados / kg totales"],
-        ["Avance esperado", _fmt_pct(m.get("avance_programado_pct", 0)), "segun cronograma"],
-        ["Desvio real-esperado", _fmt_signed_pct(m.get("desvio_avance", 0)), "puntos porcentuales"],
-        ["OTs atrasadas", str(int(m.get("ots_atrasadas", 0))), "cantidad"],
+    elements.append(Paragraph("1. KPIs ejecutivos", s_h2))
+    resumen_rows = [
+        ["Avance global", _fmt_pct(m.get("avance_real_pct", 0)), "%"],
+        ["Desvio x obra (prom.)", _fmt_signed_pct(m.get("desvio_x_obra_prom_pct", 0)), "%"],
+        ["KG fabricados", _fmt_tn(m.get("kg_real_total", 0)), "tn"],
+        ["KG/HH", _fmt_ratio(m.get("kpi_kg_hh_real", 0)), "kg por hh"],
+        ["Eficiencia HH", _fmt_pct(m.get("eficiencia_prev_real_pct", 0)), "%"],
     ]
-    t_avance = Table([["Indicador", "Valor", "Formula/criterio"]] + avance_rows, colWidths=[54 * mm, 30 * mm, 98 * mm])
-    t_avance.setStyle(
+    t_resumen = Table([["KPI", "Valor", "Unidad"]] + resumen_rows, colWidths=[80 * mm, 50 * mm, 52 * mm])
+    t_resumen.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FDBA74")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD5E1")),
-                ("FONTNAME", (1, 1), (1, -1), "Helvetica-Bold"),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-            ]
-        )
-    )
-    elements.append(t_avance)
-
-    elements.append(Paragraph("2. Mano de obra (HS)", s_h2))
-    hs_rows = [
-        ["HS previstas", _fmt_hs(m.get("hs_prev_total", 0))],
-        ["HS programadas", _fmt_hs(m.get("hs_prog_total", 0))],
-        ["HS reales", _fmt_hs(m.get("hh_real_total", 0))],
-        ["Desvio HS (real-prev)", _fmt_hs(m.get("desvio_hs_real_prev", 0))],
-        ["% Eficiencia", _fmt_pct(m.get("eficiencia_prev_real_pct", 0))],
-        ["KPI KG/HH real", _fmt_ratio(m.get("kpi_kg_hh_real", 0))],
-    ]
-    t_hs = Table([["Indicador", "Valor"]] + hs_rows, colWidths=[92 * mm, 90 * mm])
-    t_hs.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD5E1")),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#FED7AA")),
                 ("FONTNAME", (1, 1), (1, -1), "Helvetica-Bold"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 6),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 6),
             ]
         )
     )
-    elements.append(t_hs)
+    elements.append(t_resumen)
 
-    elements.append(Paragraph("3. Produccion (KG)", s_h2))
-    kg_rows = [
-        ["KG totales obra", _fmt_kg(m.get("kg_total_prev", 0))],
-        ["KG fabricados", _fmt_kg(m.get("kg_real_total", 0))],
-        ["KG despachados", _fmt_kg(m.get("kg_desp_total", 0))],
-        ["KG pendientes", _fmt_kg(m.get("kg_pend_total", 0))],
-        ["Ritmo semanal", f"{_fmt_kg(m.get('ritmo_kg_semana', 0))} kg/semana"],
-    ]
-    t_kg = Table([["Indicador", "Valor"]] + kg_rows, colWidths=[92 * mm, 90 * mm])
-    t_kg.setStyle(
+    elements.append(Paragraph("2. Tendencias", s_h2))
+    trend_rows = [[r["semana"], _fmt_pct(r["avance_pct"]), _fmt_kg(r["kg"]), _fmt_hs(r["hh"]), _fmt_ratio(r["kg_hh"])] for r in weekly_trend[:10]]
+    if not trend_rows:
+        trend_rows = [["-", "0.0%", "0", "0", "0.00"]]
+    t_trend = Table([["Semana", "Avance semanal", "KG/semana", "HH/semana", "KG/HH"]] + trend_rows, colWidths=[30 * mm, 36 * mm, 35 * mm, 35 * mm, 46 * mm])
+    t_trend.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FDBA74")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD5E1")),
-                ("FONTNAME", (1, 1), (1, -1), "Helvetica-Bold"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#FED7AA")),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#FFF7ED")]),
             ]
         )
     )
-    elements.append(t_kg)
+    elements.append(t_trend)
+
+    elements.append(Paragraph("3. Produccion", s_h2))
+    criticas = data.get("ot_criticas", [])
+    bottlenecks = data.get("cuellos_botella", [])
+    ranking = data.get("ranking_productividad", [])
+    crit_rows = [[c["ot"], c["obra"], _fmt_signed_pct(c["desvio_pct"])] for c in criticas[:6]]
+    if not crit_rows:
+        crit_rows = [["-", "Sin OTs criticas", "0.0%"]]
+    t_crit = Table([["OT", "Obra", "Desvio"]] + crit_rows, colWidths=[22 * mm, 118 * mm, 42 * mm])
+    t_crit.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FDBA74")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#FED7AA")), ("ALIGN", (2, 1), (2, -1), "RIGHT")]))
+    elements.append(Paragraph("OT criticas", s_norm))
+    elements.append(t_crit)
+    elements.append(Spacer(1, 1.6 * mm))
+
+    if bottlenecks:
+        btxt = ", ".join([f"{b['proceso']} ({_fmt_pct(b['ratio_pct'])})" for b in bottlenecks[:2]])
+    else:
+        btxt = "Sin cuellos detectados"
+    elements.append(Paragraph(f"Cuellos de botella: {html_lib.escape(btxt)}", s_norm))
+    elements.append(Spacer(1, 1.2 * mm))
+
+    rank_rows = [[str(i + 1), r["obra"], _fmt_ratio(r["kg_hh"]) ] for i, r in enumerate(ranking[:8])]
+    if not rank_rows:
+        rank_rows = [["-", "Sin ranking", "0.00"]]
+    t_rank = Table([["#", "Obra", "KG/HH"]] + rank_rows, colWidths=[14 * mm, 128 * mm, 40 * mm])
+    t_rank.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FDBA74")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#FED7AA")), ("ALIGN", (0, 1), (0, -1), "CENTER"), ("ALIGN", (2, 1), (2, -1), "RIGHT")]))
+    elements.append(Paragraph("Ranking de productividad", s_norm))
+    elements.append(t_rank)
 
     elements.append(Paragraph("4. Calidad", s_h2))
     cal_rows = [
         ["NC abiertas", str(int(m.get("nc_abiertas", 0)))],
-        ["NC cerradas", str(int(m.get("nc_cerradas", 0)))],
         ["Retrabajos", str(int(m.get("retrabajos", 0)))],
-        ["HH perdidas", _fmt_hs(m.get("hh_perdidas", 0))],
+        ["Impacto HH", _fmt_hs(m.get("hh_perdidas", 0))],
         ["Indice de calidad", _fmt_pct(m.get("indice_calidad", 0))],
     ]
     t_cal = Table([["KPI", "Valor"]] + cal_rows, colWidths=[92 * mm, 90 * mm])
-    t_cal.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD5E1")),
-                ("FONTNAME", (1, 1), (1, -1), "Helvetica-Bold"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-            ]
-        )
-    )
+    t_cal.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FDBA74")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#FED7AA")), ("FONTNAME", (1, 1), (1, -1), "Helvetica-Bold")]))
     elements.append(t_cal)
 
-    elements.append(Paragraph("NC por proceso", s_h2))
-    if nc_items:
-        rows_nc = [[proc, str(int(cnt))] for proc, cnt in nc_items]
-    else:
-        rows_nc = [["Sin datos", "0"]]
-    t_nc = Table([["Proceso", "NC"]] + rows_nc, colWidths=[140 * mm, 42 * mm])
-    t_nc.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD5E1")),
-                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-            ]
-        )
-    )
-    elements.append(t_nc)
-
-    elements.append(Paragraph("KPI KG/HH por semana, obra y tipo", s_h2))
-    top_weekly = weekly[:35]
-    if top_weekly:
-        rows_weekly = [
-            [r["semana"], r["obra"], r["tipo"], _fmt_kg(r["kg"]), _fmt_hs(r["hh"]), _fmt_ratio(r["kg_hh"])]
-            for r in top_weekly
-        ]
-    else:
-        rows_weekly = [["-", "Sin datos", "-", "0", "0", "0.00"]]
-    t_weekly = Table(
-        [["Semana", "Obra", "Tipo", "KG", "HH", "KG/HH"]] + rows_weekly,
-        colWidths=[20 * mm, 48 * mm, 40 * mm, 24 * mm, 24 * mm, 26 * mm],
-    )
-    t_weekly.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#CBD5E1")),
-                ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
-                ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                ("FONTSIZE", (0, 0), (-1, -1), 8.3),
-            ]
-        )
-    )
-    elements.append(t_weekly)
-
     elements.append(Paragraph("5. Eficiencia economica (planteado)", s_h2))
-    elements.append(
-        Paragraph(
-            "Pendiente de integracion de costos (HH, retrabajos, desperdicio, logistica) para calcular impacto economico por OT y obra.",
-            s_norm,
-        )
-    )
+    elements.append(Paragraph("Pendiente de integracion de costos (HH, retrabajos, desperdicio y logistica) para calcular impacto economico por OT y obra.", s_norm))
+
+    if nc_items:
+        elements.append(Spacer(1, 1.5 * mm))
+        nc_rows = [[proc, str(int(cnt))] for proc, cnt in nc_items[:8]]
+        t_nc = Table([["NC por proceso", "Cantidad"]] + nc_rows, colWidths=[140 * mm, 42 * mm])
+        t_nc.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FDBA74")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#FED7AA")), ("ALIGN", (1, 1), (1, -1), "RIGHT")]))
+        elements.append(t_nc)
+
+    if weekly:
+        elements.append(Spacer(1, 1.5 * mm))
+        top_weekly = weekly[:25]
+        rows_weekly = [[r["semana"], r["obra"], r["tipo"], _fmt_kg(r["kg"]), _fmt_hs(r["hh"]), _fmt_ratio(r["kg_hh"])] for r in top_weekly]
+        t_weekly = Table([["Semana", "Obra", "Tipo", "KG", "HH", "KG/HH"]] + rows_weekly, colWidths=[20 * mm, 48 * mm, 40 * mm, 24 * mm, 24 * mm, 26 * mm])
+        t_weekly.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FDBA74")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#FED7AA")), ("ALIGN", (3, 1), (-1, -1), "RIGHT"), ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#FFF7ED")]), ("FONTSIZE", (0, 0), (-1, -1), 8.2)]))
+        elements.append(t_weekly)
 
     doc.build(elements)
     buffer.seek(0)
@@ -479,20 +409,25 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
             "ot_ids": [],
             "metrics": {},
             "weekly_compare": [],
+            "weekly_trend": [],
             "trend_real": [],
             "trend_programado": [],
             "nc_por_proceso": [],
+            "ot_criticas": [],
+            "cuellos_botella": [],
+            "ranking_productividad": [],
         }
 
     ph = ",".join("?" * len(ot_ids))
+    ok_tuple = tuple(_OK_ESTADOS)
+    ok_ph = ",".join("?" * len(ok_tuple))
 
     base_rows = db.execute(
         f"""
         SELECT ot_id,
                TRIM(COALESCE(posicion, '')) AS pos,
                MAX(COALESCE(cantidad, 1)) AS cant,
-               MAX(COALESCE(peso, 0)) AS peso,
-               MAX(TRIM(COALESCE(obra, ''))) AS obra_pos
+               MAX(COALESCE(peso, 0)) AS peso
         FROM procesos
         WHERE ot_id IN ({ph})
           AND eliminado = 0
@@ -503,19 +438,16 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
     ).fetchall()
 
     kg_total_by_ot = {}
-    for ot_id, _pos, cant, peso, _obra in base_rows:
-        kg_total_by_ot.setdefault(int(ot_id), 0.0)
-        kg_total_by_ot[int(ot_id)] += max(0.0, _to_float(cant, 1.0) * _to_float(peso, 0.0))
-
-    ok_tuple = tuple(_OK_ESTADOS)
-    ok_ph = ",".join("?" * len(ok_tuple))
+    total_piezas = 0
+    for ot_id, _pos, cant, peso in base_rows:
+        total_piezas += 1
+        oid = int(ot_id)
+        kg_total_by_ot.setdefault(oid, 0.0)
+        kg_total_by_ot[oid] += max(0.0, _to_float(cant, 1.0) * _to_float(peso, 0.0))
 
     kg_real_rows = db.execute(
         f"""
-        SELECT ot_id,
-               TRIM(COALESCE(posicion, '')) AS pos,
-               MAX(COALESCE(cantidad, 1)) AS cant,
-               MAX(COALESCE(peso, 0)) AS peso
+        SELECT ot_id, TRIM(COALESCE(posicion, '')), MAX(COALESCE(cantidad, 1)), MAX(COALESCE(peso, 0))
         FROM procesos
         WHERE ot_id IN ({ph})
           AND proceso = 'ARMADO'
@@ -529,15 +461,13 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
 
     kg_real_by_ot = {}
     for ot_id, _pos, cant, peso in kg_real_rows:
-        kg_real_by_ot.setdefault(int(ot_id), 0.0)
-        kg_real_by_ot[int(ot_id)] += max(0.0, _to_float(cant, 1.0) * _to_float(peso, 0.0))
+        oid = int(ot_id)
+        kg_real_by_ot.setdefault(oid, 0.0)
+        kg_real_by_ot[oid] += max(0.0, _to_float(cant, 1.0) * _to_float(peso, 0.0))
 
     kg_desp_rows = db.execute(
         f"""
-        SELECT ot_id,
-               TRIM(COALESCE(posicion, '')) AS pos,
-               MAX(COALESCE(cantidad, 1)) AS cant,
-               MAX(COALESCE(peso, 0)) AS peso
+        SELECT ot_id, TRIM(COALESCE(posicion, '')), MAX(COALESCE(cantidad, 1)), MAX(COALESCE(peso, 0))
         FROM procesos
         WHERE ot_id IN ({ph})
           AND proceso = 'DESPACHO'
@@ -551,16 +481,13 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
 
     kg_desp_by_ot = {}
     for ot_id, _pos, cant, peso in kg_desp_rows:
-        kg_desp_by_ot.setdefault(int(ot_id), 0.0)
-        kg_desp_by_ot[int(ot_id)] += max(0.0, _to_float(cant, 1.0) * _to_float(peso, 0.0))
+        oid = int(ot_id)
+        kg_desp_by_ot.setdefault(oid, 0.0)
+        kg_desp_by_ot[oid] += max(0.0, _to_float(cant, 1.0) * _to_float(peso, 0.0))
 
     prog_rows = db.execute(
         f"""
-        SELECT id,
-               ot_id,
-               COALESCE(fecha_inicio, ''),
-               COALESCE(fecha_fin, ''),
-               COALESCE(hs_programadas, 0)
+        SELECT id, ot_id, COALESCE(fecha_inicio, ''), COALESCE(fecha_fin, ''), COALESCE(hs_programadas, 0)
         FROM programacion
         WHERE ot_id IN ({ph})
         ORDER BY fecha_inicio ASC, id ASC
@@ -572,19 +499,12 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
     for prog_id, ot_id, f_ini, f_fin, hs_prog in prog_rows:
         oid = int(ot_id)
         prog_by_ot.setdefault(oid, []).append(
-            {
-                "id": int(prog_id or 0),
-                "ini": _to_date(f_ini),
-                "fin": _to_date(f_fin),
-                "hs": max(0.0, _to_float(hs_prog)),
-            }
+            {"id": int(prog_id or 0), "ini": _to_date(f_ini), "fin": _to_date(f_fin), "hs": max(0.0, _to_float(hs_prog))}
         )
 
     hh_real_rows = db.execute(
         f"""
-        SELECT ot_id,
-               COALESCE(fecha, ''),
-               COALESCE(horas, 0)
+        SELECT ot_id, COALESCE(fecha, ''), COALESCE(horas, 0)
         FROM partes_trabajo
         WHERE ot_id IN ({ph})
         """,
@@ -593,12 +513,14 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
 
     hh_real_total = 0.0
     hh_by_week_obra_tipo = {}
+    hh_by_ot = {}
     for ot_id, fecha_txt, horas in hh_real_rows:
         oid = int(ot_id or 0)
         if oid not in ots:
             continue
         horas_f = max(0.0, _to_float(horas))
         hh_real_total += horas_f
+        hh_by_ot[oid] = hh_by_ot.get(oid, 0.0) + horas_f
         d = _to_date(fecha_txt)
         if not d:
             continue
@@ -618,7 +540,6 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
 
     avance_real_pct = _pct(kg_real_total, kg_total_prev)
 
-    # Avance esperado del cronograma (PROGRAMADO), ponderado por hs_programadas.
     expected_num = 0.0
     expected_den = 0.0
     expected_by_ot = {}
@@ -642,23 +563,40 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
     avance_programado_pct = (expected_num / expected_den * 100.0) if expected_den > 0 else 0.0
     desvio_avance = avance_real_pct - avance_programado_pct
 
-    # Avance previsto (OT como baseline), usando estado_avance ya persistido en OT.
     avance_previsto_pct = 0.0
     if ot_ids:
         avance_previsto_pct = sum(max(0.0, min(100.0, ots[oid]["estado_avance"])) for oid in ot_ids) / len(ot_ids)
 
-    # OTs atrasadas
+    # Desvio por obra
+    obra_vals = {}
+    for oid in ot_ids:
+        obra_k = ots[oid]["obra"] or "SIN_OBRA"
+        real_ot = _pct(kg_real_by_ot.get(oid, 0.0), max(kg_total_by_ot.get(oid, 0.0), 1e-9))
+        exp_ot = expected_by_ot.get(oid, 0.0)
+        d_ot = real_ot - exp_ot
+        obra_vals.setdefault(obra_k, []).append(d_ot)
+    desvio_por_obra = []
+    for obra_k, vals in obra_vals.items():
+        prom = sum(vals) / len(vals) if vals else 0.0
+        desvio_por_obra.append({"obra": obra_k, "desvio_pct": prom})
+    desvio_por_obra.sort(key=lambda x: abs(x["desvio_pct"]), reverse=True)
+    desvio_x_obra_prom_pct = (sum(v["desvio_pct"] for v in desvio_por_obra) / len(desvio_por_obra)) if desvio_por_obra else 0.0
+
+    # OTs atrasadas y criticas
     ots_atrasadas = 0
+    ot_criticas = []
     for oid in ot_ids:
         real_ot = _pct(kg_real_by_ot.get(oid, 0.0), max(kg_total_by_ot.get(oid, 0.0), 1e-9))
         expected_ot = expected_by_ot.get(oid, 0.0)
+        desvio_ot = real_ot - expected_ot
         fecha_entrega = ots[oid].get("fecha_entrega")
         atrasada_por_fecha = bool(fecha_entrega and fecha_entrega < today_d and real_ot < 99.9)
         atrasada_por_desvio = expected_ot > 0 and (real_ot + 5.0) < expected_ot
         if atrasada_por_fecha or atrasada_por_desvio:
             ots_atrasadas += 1
+            ot_criticas.append({"ot": oid, "obra": ots[oid]["obra"], "titulo": ots[oid]["titulo"], "desvio_pct": desvio_ot})
+    ot_criticas.sort(key=lambda x: x["desvio_pct"])  # mas negativo primero
 
-    # Tendencia semanal (real vs programado en kg)
     week_starts = _iso_week_range(today_d, weeks_back=10)
     week_bounds = []
     for ws in week_starts:
@@ -667,13 +605,11 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
         week_bounds.append((ws, we, int(y), int(w), _semana_label(y, w)))
 
     real_kg_by_week = {(y, w): 0.0 for _, _, y, w, _ in week_bounds}
+    hh_by_week = {(y, w): 0.0 for _, _, y, w, _ in week_bounds}
+
     real_rows_by_date = db.execute(
         f"""
-        SELECT ot_id,
-               COALESCE(fecha, ''),
-               TRIM(COALESCE(posicion, '')) AS pos,
-               MAX(COALESCE(cantidad, 1)) AS cant,
-               MAX(COALESCE(peso, 0)) AS peso
+        SELECT ot_id, COALESCE(fecha, ''), TRIM(COALESCE(posicion, '')), MAX(COALESCE(cantidad, 1)), MAX(COALESCE(peso, 0))
         FROM procesos
         WHERE ot_id IN ({ph})
           AND proceso = 'ARMADO'
@@ -693,7 +629,16 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
         if key in real_kg_by_week:
             real_kg_by_week[key] += max(0.0, _to_float(cant, 1.0) * _to_float(peso, 0.0))
 
-    # Programado semanal en kg aproximado: prorrateo lineal de hs_programadas y conversión a kg por OT.
+    for _ot_id, fecha_txt, horas in hh_real_rows:
+        d = _to_date(fecha_txt)
+        if not d:
+            continue
+        y, w, _ = d.isocalendar()
+        key = (int(y), int(w))
+        if key in hh_by_week:
+            hh_by_week[key] += max(0.0, _to_float(horas))
+
+    # Programado semanal en kg aproximado
     prog_kg_by_week = {(y, w): 0.0 for _, _, y, w, _ in week_bounds}
     for oid in ot_ids:
         total_kg_ot = max(0.0, kg_total_by_ot.get(oid, 0.0))
@@ -703,7 +648,6 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
         total_hs_ot = sum(item["hs"] for item in plist)
         if total_hs_ot <= 0:
             total_hs_ot = float(len(plist))
-
         for item in plist:
             ini = item["ini"]
             fin = item["fin"]
@@ -717,7 +661,6 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
             weight = item["hs"] if item["hs"] > 0 else 1.0
             kg_task = total_kg_ot * (weight / total_hs_ot)
             kg_dia = kg_task / dur_total
-
             for ws, we, y, w, _lbl in week_bounds:
                 overlap_start = max(ini, ws)
                 overlap_end = min(fin, we)
@@ -728,11 +671,23 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
 
     trend_real = []
     trend_programado = []
+    weekly_trend = []
     for _ws, _we, y, w, lbl in week_bounds:
-        trend_real.append((lbl, real_kg_by_week.get((y, w), 0.0)))
+        kg_w = real_kg_by_week.get((y, w), 0.0)
+        hh_w = hh_by_week.get((y, w), 0.0)
+        trend_real.append((lbl, kg_w))
         trend_programado.append((lbl, prog_kg_by_week.get((y, w), 0.0)))
+        weekly_trend.append(
+            {
+                "semana": lbl,
+                "kg": kg_w,
+                "hh": hh_w,
+                "kg_hh": (kg_w / hh_w) if hh_w > 0 else 0.0,
+                "avance_pct": _pct(kg_w, kg_total_prev),
+            }
+        )
+    weekly_trend = list(reversed(weekly_trend))
 
-    # Tabla KPI KG/HH por semana, obra, tipo.
     kg_by_week_obra_tipo = {}
     for _ot_id, ftxt, _pos, cant, peso in real_rows_by_date:
         oid = int(_ot_id or 0)
@@ -753,26 +708,48 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
         kg = kg_by_week_obra_tipo.get((y, w, obra, tipo), 0.0)
         hh = hh_by_week_obra_tipo.get((y, w, obra, tipo), 0.0)
         ratio = (kg / hh) if hh > 0 else 0.0
-        weekly_compare.append(
-            {
-                "semana": _semana_label(y, w),
-                "obra": obra,
-                "tipo": tipo,
-                "kg": kg,
-                "hh": hh,
-                "kg_hh": ratio,
-            }
-        )
+        weekly_compare.append({"semana": _semana_label(y, w), "obra": obra, "tipo": tipo, "kg": kg, "hh": hh, "kg_hh": ratio})
     weekly_compare = weekly_compare[:120]
+
+    # Cuellos de botella por proceso
+    stage_map = ["ARMADO", "SOLDADURA", "PINTURA", "DESPACHO"]
+    stage_ratios = []
+    for stage in stage_map:
+        cnt = db.execute(
+            f"""
+            SELECT COUNT(DISTINCT CAST(ot_id AS TEXT) || '|' || TRIM(COALESCE(posicion, '')))
+            FROM procesos
+            WHERE ot_id IN ({ph})
+              AND UPPER(TRIM(COALESCE(proceso, ''))) = ?
+              AND UPPER(TRIM(COALESCE(estado, ''))) IN ({ok_ph})
+              AND eliminado = 0
+              AND TRIM(COALESCE(posicion, '')) != ''
+            """,
+            ot_ids + [stage] + list(ok_tuple),
+        ).fetchone()
+        value = int(cnt[0] or 0) if cnt else 0
+        stage_ratios.append({"proceso": stage, "ok": value, "ratio_pct": _pct(value, total_piezas)})
+    cuellos_botella = sorted(stage_ratios, key=lambda x: x["ratio_pct"])
+
+    # Ranking productividad por obra
+    prod_by_obra = {}
+    for oid in ot_ids:
+        obra_k = ots[oid]["obra"] or "SIN_OBRA"
+        prod_by_obra.setdefault(obra_k, {"kg": 0.0, "hh": 0.0})
+        prod_by_obra[obra_k]["kg"] += kg_real_by_ot.get(oid, 0.0)
+        prod_by_obra[obra_k]["hh"] += hh_by_ot.get(oid, 0.0)
+    ranking_productividad = []
+    for obra_k, vals in prod_by_obra.items():
+        hh = vals["hh"]
+        ratio = vals["kg"] / hh if hh > 0 else 0.0
+        ranking_productividad.append({"obra": obra_k, "kg": vals["kg"], "hh": hh, "kg_hh": ratio})
+    ranking_productividad.sort(key=lambda x: x["kg_hh"], reverse=True)
 
     # Calidad
     hall_rows = db.execute(
         """
-        SELECT COALESCE(proceso, ''),
-               UPPER(TRIM(COALESCE(tipo_hallazgo, ''))),
-               UPPER(TRIM(COALESCE(estado_tratamiento, ''))),
-               COALESCE(genero_retrabajo, 0),
-               COALESCE(retrabajo_hs, 0)
+        SELECT COALESCE(proceso, ''), UPPER(TRIM(COALESCE(tipo_hallazgo, ''))),
+               UPPER(TRIM(COALESCE(estado_tratamiento, ''))), COALESCE(genero_retrabajo, 0), COALESCE(retrabajo_hs, 0)
         FROM hallazgos_calidad
         """
     ).fetchall()
@@ -784,13 +761,11 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
     total_hallazgos = 0
     nc_total = 0
     nc_por_proceso = {}
-
     for proceso, tipo_h, estado_t, gen_retr, retr_hs in hall_rows:
         total_hallazgos += 1
         proceso_up = str(proceso or "").strip().upper() or "SIN_PROCESO"
         tipo_up = str(tipo_h or "").strip().upper()
         estado_up = str(estado_t or "").strip().upper()
-
         if tipo_up == "NC":
             nc_total += 1
             nc_por_proceso[proceso_up] = nc_por_proceso.get(proceso_up, 0) + 1
@@ -798,7 +773,6 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
                 nc_cerradas += 1
             elif estado_up in ("ABIERTO", "EN PROCESO", ""):
                 nc_abiertas += 1
-
         if int(_to_float(gen_retr, 0)) == 1:
             retrabajos += 1
             hh_perdidas += max(0.0, _to_float(retr_hs))
@@ -806,11 +780,9 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
     indice_calidad = 100.0
     if total_hallazgos > 0:
         indice_calidad = max(0.0, (1.0 - (nc_total / float(total_hallazgos))) * 100.0)
-
     nc_por_proceso_items = sorted(nc_por_proceso.items(), key=lambda x: x[1], reverse=True)
 
-    # Resumen de interpretación ejecutiva
-    # Condiciones solicitadas por el usuario.
+    # Alertas automaticas
     alertas = []
     if avance_real_pct > avance_programado_pct:
         alertas.append("REAL > PROGRAMADO - ATRASO OPERATIVO")
@@ -818,6 +790,21 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
         alertas.append("REAL > PREVISTO - PERDIDA ECONOMICA")
     if hs_prog_total > hs_prev_total:
         alertas.append("PROGRAMADO > PREVISTO - MALA PLANIFICACION")
+
+    # Productividad semanal: comparar última semana vs promedio 4 anteriores.
+    series_kg_hh = [w["kg_hh"] for w in weekly_trend if w["hh"] > 0]
+    if len(series_kg_hh) >= 5:
+        ult = series_kg_hh[-1]
+        prom_4 = sum(series_kg_hh[-5:-1]) / 4.0
+        if prom_4 > 0 and ult < prom_4:
+            caida = ((prom_4 - ult) / prom_4) * 100.0
+            if caida >= 10:
+                alertas.append(f"La productividad cayo {caida:.0f}% respecto a la media de las ultimas 4 semanas.")
+
+    if hh_real_total > 0 and hs_prev_total > 0 and hh_real_total > hs_prev_total * 1.15:
+        extra_hh = hh_real_total - hs_prev_total
+        alertas.append(f"Consumo de HH por encima del previsto (+{extra_hh:.1f} hh).")
+
     if not alertas:
         alertas.append("Sin desvíos críticos detectados en este corte")
 
@@ -826,6 +813,7 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
         "avance_programado_pct": avance_programado_pct,
         "avance_previsto_pct": avance_previsto_pct,
         "desvio_avance": desvio_avance,
+        "desvio_x_obra_prom_pct": desvio_x_obra_prom_pct,
         "ots_atrasadas": ots_atrasadas,
         "hs_prev_total": hs_prev_total,
         "hs_prog_total": hs_prog_total,
@@ -853,9 +841,14 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
         "ot_ids": ot_ids,
         "metrics": metrics,
         "weekly_compare": weekly_compare,
+        "weekly_trend": weekly_trend,
         "trend_real": trend_real,
         "trend_programado": trend_programado,
         "nc_por_proceso": nc_por_proceso_items,
+        "ot_criticas": ot_criticas,
+        "cuellos_botella": cuellos_botella,
+        "ranking_productividad": ranking_productividad,
+        "desvio_por_obra": desvio_por_obra,
     }
 
 
@@ -909,7 +902,71 @@ def tablero_ejecutivo_integral():
         )
 
     if not rows_kpi:
-        rows_kpi.append("<tr><td colspan='6' style='color:#64748b;'>Sin datos de productividad para el filtro actual</td></tr>")
+        rows_kpi.append("<tr><td colspan='6' style='color:#9a3412;'>Sin datos de productividad para el filtro actual</td></tr>")
+
+    trend_rows = []
+    for row in data.get("weekly_trend", []):
+        trend_rows.append(
+            "<tr>"
+            f"<td>{_e(row['semana'])}</td>"
+            f"<td style='text-align:right'>{_fmt_pct(row['avance_pct'])}</td>"
+            f"<td style='text-align:right'>{_fmt_kg(row['kg'])}</td>"
+            f"<td style='text-align:right'>{_fmt_hs(row['hh'])}</td>"
+            f"<td style='text-align:right;font-weight:800'>{_fmt_ratio(row['kg_hh'])}</td>"
+            "</tr>"
+        )
+    if not trend_rows:
+        trend_rows.append("<tr><td colspan='5' style='color:#9a3412;'>Sin tendencia semanal disponible</td></tr>")
+
+    desvio_rows = []
+    for row in data.get("desvio_por_obra", [])[:8]:
+        desvio_rows.append(
+            "<tr>"
+            f"<td>{_e(row['obra'])}</td>"
+            f"<td style='text-align:right;font-weight:800'>{_fmt_signed_pct(row['desvio_pct'])}</td>"
+            "</tr>"
+        )
+    if not desvio_rows:
+        desvio_rows.append("<tr><td colspan='2' style='color:#9a3412;'>Sin desvíos por obra</td></tr>")
+
+    crit_rows = []
+    for row in data.get("ot_criticas", [])[:8]:
+        crit_rows.append(
+            "<tr>"
+            f"<td>{int(row['ot'])}</td>"
+            f"<td>{_e(row['obra'])}</td>"
+            f"<td>{_e(row['titulo'])}</td>"
+            f"<td style='text-align:right;font-weight:800'>{_fmt_signed_pct(row['desvio_pct'])}</td>"
+            "</tr>"
+        )
+    if not crit_rows:
+        crit_rows.append("<tr><td colspan='4' style='color:#9a3412;'>Sin OTs críticas detectadas</td></tr>")
+
+    cuello_rows = []
+    for row in data.get("cuellos_botella", [])[:4]:
+        cuello_rows.append(
+            "<tr>"
+            f"<td>{_e(row['proceso'])}</td>"
+            f"<td style='text-align:right'>{int(row['ok'])}</td>"
+            f"<td style='text-align:right;font-weight:800'>{_fmt_pct(row['ratio_pct'])}</td>"
+            "</tr>"
+        )
+    if not cuello_rows:
+        cuello_rows.append("<tr><td colspan='3' style='color:#9a3412;'>Sin información de procesos</td></tr>")
+
+    ranking_rows = []
+    for i, row in enumerate(data.get("ranking_productividad", [])[:8], start=1):
+        ranking_rows.append(
+            "<tr>"
+            f"<td>{i}</td>"
+            f"<td>{_e(row['obra'])}</td>"
+            f"<td style='text-align:right'>{_fmt_kg(row['kg'])}</td>"
+            f"<td style='text-align:right'>{_fmt_hs(row['hh'])}</td>"
+            f"<td style='text-align:right;font-weight:800'>{_fmt_ratio(row['kg_hh'])}</td>"
+            "</tr>"
+        )
+    if not ranking_rows:
+        ranking_rows.append("<tr><td colspan='5' style='color:#9a3412;'>Sin ranking de productividad</td></tr>")
 
     alertas_html = "".join(
         f"<span class='alert-chip'>{_e(msg)}</span>" for msg in m.get("alertas", [])
@@ -929,24 +986,24 @@ def tablero_ejecutivo_integral():
           margin: 0;
           font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
           background:
-            radial-gradient(circle at 12% 5%, rgba(34,197,94,0.14), transparent 34%),
-            radial-gradient(circle at 88% 12%, rgba(14,165,233,0.16), transparent 36%),
-            linear-gradient(160deg, #f8fafc 0%, #edf2f7 48%, #e2e8f0 100%);
-          color: #0f172a;
+            radial-gradient(circle at 12% 8%, rgba(251,146,60,0.22), transparent 34%),
+            radial-gradient(circle at 88% 12%, rgba(245,158,11,0.20), transparent 36%),
+            linear-gradient(160deg, #fffaf5 0%, #ffedd5 48%, #fed7aa 100%);
+          color: #7c2d12;
           padding: 16px;
         }}
         .wrap {{ max-width: 1360px; margin: 0 auto; }}
         .hero {{
-          border: 1px solid #0f172a;
-          background: linear-gradient(135deg, #111827 0%, #0f172a 55%, #1e293b 100%);
-          color: #f8fafc;
+          border: 1px solid #fb923c;
+          background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 55%, #fed7aa 100%);
+          color: #7c2d12;
           border-radius: 16px;
           padding: 18px;
-          box-shadow: 0 16px 36px rgba(15,23,42,0.25);
+          box-shadow: 0 14px 28px rgba(154,52,18,0.16);
           margin-bottom: 16px;
         }}
         .hero h1 {{ margin: 0 0 8px 0; font-size: 1.65rem; }}
-        .hero p {{ margin: 0; color: #cbd5e1; }}
+        .hero p {{ margin: 0; color: #9a3412; }}
         .legend {{
           display: grid;
           grid-template-columns: repeat(3, minmax(180px, 1fr));
@@ -956,16 +1013,17 @@ def tablero_ejecutivo_integral():
         .legend .box {{
           border-radius: 10px;
           padding: 10px;
-          border: 1px solid rgba(148,163,184,0.45);
+          border: 1px solid #fed7aa;
           font-size: 0.88rem;
+          background: #ffffffc8;
         }}
-        .previsto {{ background: rgba(14,116,144,0.25); }}
-        .programado {{ background: rgba(245,158,11,0.24); }}
-        .real {{ background: rgba(22,163,74,0.26); }}
+        .previsto {{ background: #fff7ed; }}
+        .programado {{ background: #ffedd5; }}
+        .real {{ background: #fed7aa; }}
 
         .toolbar {{
           background: #ffffff;
-          border: 1px solid #cbd5e1;
+          border: 1px solid #fed7aa;
           border-radius: 12px;
           padding: 12px;
           display: grid;
@@ -974,12 +1032,12 @@ def tablero_ejecutivo_integral():
           align-items: end;
           margin-bottom: 14px;
         }}
-        .toolbar label {{ font-size: 0.82rem; font-weight: 700; color: #334155; display: block; margin-bottom: 4px; }}
-        .toolbar select {{ width: 100%; padding: 9px; border: 1px solid #94a3b8; border-radius: 8px; }}
+        .toolbar label {{ font-size: 0.82rem; font-weight: 700; color: #9a3412; display: block; margin-bottom: 4px; }}
+        .toolbar select {{ width: 100%; padding: 9px; border: 1px solid #fed7aa; border-radius: 8px; color: #7c2d12; }}
         .btn {{ padding: 10px 14px; border: 0; border-radius: 8px; cursor: pointer; font-weight: 700; }}
-        .btn.primary {{ background: #0f766e; color: #fff; }}
-        .btn.back {{ background: #334155; color: #fff; text-decoration: none; display: inline-flex; align-items: center; }}
-        .btn.pdf {{ background: #1d4ed8; color: #fff; text-decoration: none; display: inline-flex; align-items: center; }}
+        .btn.primary {{ background: #f97316; color: #fff; }}
+        .btn.back {{ background: #9a3412; color: #fff; text-decoration: none; display: inline-flex; align-items: center; }}
+        .btn.pdf {{ background: #f59e0b; color: #fff; text-decoration: none; display: inline-flex; align-items: center; }}
 
         .kpis {{
           display: grid;
@@ -989,11 +1047,11 @@ def tablero_ejecutivo_integral():
         }}
         .kpi {{
           background: #fff;
-          border: 1px solid #cbd5e1;
+          border: 1px solid #fed7aa;
           border-radius: 12px;
           padding: 12px;
         }}
-        .kpi small {{ color: #475569; display: block; margin-bottom: 6px; }}
+        .kpi small {{ color: #9a3412; display: block; margin-bottom: 6px; }}
         .kpi b {{ font-size: 1.35rem; }}
 
         .grid {{
@@ -1002,12 +1060,12 @@ def tablero_ejecutivo_integral():
           grid-template-columns: 1.25fr 1fr;
           margin-bottom: 12px;
         }}
-        .card {{ background: #fff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 12px; }}
+        .card {{ background: #fff; border: 1px solid #fed7aa; border-radius: 12px; padding: 12px; }}
         .card h3 {{ margin: 0 0 10px 0; font-size: 1.03rem; }}
 
         table {{ width: 100%; border-collapse: collapse; }}
-        th, td {{ padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: left; font-size: 0.9rem; }}
-        th {{ background: #f8fafc; color: #334155; }}
+        th, td {{ padding: 8px; border-bottom: 1px solid #fed7aa; text-align: left; font-size: 0.9rem; }}
+        th {{ background: #fff7ed; color: #9a3412; }}
 
         .alerts {{ display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }}
         .alert-chip {{
@@ -1021,7 +1079,7 @@ def tablero_ejecutivo_integral():
           font-weight: 700;
         }}
 
-        .section-title {{ margin: 16px 0 8px 0; color: #0f172a; font-size: 1.05rem; }}
+        .section-title {{ margin: 16px 0 8px 0; color: #7c2d12; font-size: 1.05rem; }}
 
         @media (max-width: 1060px) {{
           .toolbar {{ grid-template-columns: 1fr 1fr; }}
@@ -1069,14 +1127,15 @@ def tablero_ejecutivo_integral():
           <div class=\"kpi\"><small>Avance REAL</small><b>{_fmt_pct(m.get('avance_real_pct', 0))}</b><div>kg fabricados / kg totales</div></div>
           <div class=\"kpi\"><small>Avance ESPERADO (cronograma)</small><b>{_fmt_pct(m.get('avance_programado_pct', 0))}</b><div>según programación</div></div>
           <div class=\"kpi\"><small>Desvío avance (REAL - ESPERADO)</small><b>{_fmt_signed_pct(m.get('desvio_avance', 0))}</b><div>puntos porcentuales</div></div>
+          <div class=\"kpi\"><small>Desvio x obra (prom.)</small><b>{_fmt_signed_pct(m.get('desvio_x_obra_prom_pct', 0))}</b><div>promedio de obras</div></div>
           <div class=\"kpi\"><small>OTs atrasadas</small><b>{int(m.get('ots_atrasadas', 0))}</b><div>cantidad</div></div>
         </div>
 
         <div class=\"card\">
           <h3>Tendencia temporal (kg/semana)</h3>
-          <div style=\"display:flex;gap:12px;align-items:center;margin-bottom:6px;font-size:0.86rem;\">
-            <span style=\"display:inline-flex;align-items:center;gap:6px;\"><span style=\"width:20px;height:3px;background:#0ea5e9;display:inline-block;\"></span>Programado</span>
-            <span style=\"display:inline-flex;align-items:center;gap:6px;\"><span style=\"width:20px;height:3px;background:#16a34a;display:inline-block;\"></span>Real</span>
+                    <div style=\"display:flex;gap:12px;align-items:center;margin-bottom:6px;font-size:0.86rem;color:#9a3412;\">
+                        <span style=\"display:inline-flex;align-items:center;gap:6px;\"><span style=\"width:20px;height:3px;background:#f59e0b;display:inline-block;\"></span>Programado</span>
+                        <span style=\"display:inline-flex;align-items:center;gap:6px;\"><span style=\"width:20px;height:3px;background:#f97316;display:inline-block;\"></span>Real</span>
           </div>
           {trend_svg}
         </div>
@@ -1119,7 +1178,55 @@ def tablero_ejecutivo_integral():
           <div class=\"kpi\"><small>Ritmo semanal</small><b>{_fmt_kg(m.get('ritmo_kg_semana', 0))} kg/semana</b></div>
         </div>
 
-        <h3 class=\"section-title\">4. Calidad</h3>
+                <div class=\"grid\" style=\"margin-top:12px;\">
+                    <div class=\"card\">
+                        <h3>Avance semanal, KG/semana, HH/semana y KG/HH</h3>
+                        <table>
+                            <tr>
+                                <th>Semana</th>
+                                <th style=\"text-align:right;\">Avance</th>
+                                <th style=\"text-align:right;\">KG/semana</th>
+                                <th style=\"text-align:right;\">HH/semana</th>
+                                <th style=\"text-align:right;\">KG/HH</th>
+                            </tr>
+                            {''.join(trend_rows)}
+                        </table>
+                    </div>
+                    <div class=\"card\">
+                        <h3>Desvío por obra</h3>
+                        <table>
+                            <tr><th>Obra</th><th style=\"text-align:right;\">Desvío</th></tr>
+                            {''.join(desvio_rows)}
+                        </table>
+                    </div>
+                </div>
+
+                <div class=\"grid\" style=\"margin-top:12px;\">
+                    <div class=\"card\">
+                        <h3>OTs críticas</h3>
+                        <table>
+                            <tr><th>OT</th><th>Obra</th><th>Título</th><th style=\"text-align:right;\">Desvío</th></tr>
+                            {''.join(crit_rows)}
+                        </table>
+                    </div>
+                    <div class=\"card\">
+                        <h3>Cuellos de botella</h3>
+                        <table>
+                            <tr><th>Proceso</th><th style=\"text-align:right;\">Posiciones OK</th><th style=\"text-align:right;\">Ratio</th></tr>
+                            {''.join(cuello_rows)}
+                        </table>
+                    </div>
+                </div>
+
+                <div class=\"card\" style=\"margin-top:12px;\">
+                    <h3>Ranking de productividad por obra</h3>
+                    <table>
+                        <tr><th>#</th><th>Obra</th><th style=\"text-align:right;\">KG</th><th style=\"text-align:right;\">HH</th><th style=\"text-align:right;\">KG/HH</th></tr>
+                        {''.join(ranking_rows)}
+                    </table>
+                </div>
+
+                <h3 class=\"section-title\">4. Calidad</h3>
         <div class=\"grid\">
           <div class=\"card\">
             <div class=\"kpis\" style=\"grid-template-columns:repeat(2,minmax(150px,1fr));\">
@@ -1140,8 +1247,8 @@ def tablero_ejecutivo_integral():
         </div>
 
         <h3 class=\"section-title\">5. Eficiencia económica</h3>
-        <div class=\"card\" style=\"border-left:4px solid #0ea5e9;\">
-          <p style=\"margin:0;color:#0f172a;\"><b>Planteado para siguiente etapa:</b> integrar costos de HH, retrabajos, desperdicio y logística para calcular margen operativo real por OT/obra.</p>
+                <div class=\"card\" style=\"border-left:4px solid #f97316;\">
+                    <p style=\"margin:0;color:#7c2d12;\"><b>Planteado para siguiente etapa:</b> integrar costos de HH, retrabajos, desperdicio y logística para calcular margen operativo real por OT/obra.</p>
         </div>
       </div>
     </body>
