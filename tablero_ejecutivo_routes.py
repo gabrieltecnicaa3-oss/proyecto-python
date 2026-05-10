@@ -711,13 +711,13 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
         weekly_compare.append({"semana": _semana_label(y, w), "obra": obra, "tipo": tipo, "kg": kg, "hh": hh, "kg_hh": ratio})
     weekly_compare = weekly_compare[:120]
 
-    # Cuellos de botella por proceso
+    # Cuellos de botella por proceso (cross-db: contar distinct en Python)
     stage_map = ["ARMADO", "SOLDADURA", "PINTURA", "DESPACHO"]
     stage_ratios = []
     for stage in stage_map:
-        cnt = db.execute(
+        stage_rows = db.execute(
             f"""
-            SELECT COUNT(DISTINCT CAST(ot_id AS TEXT) || '|' || TRIM(COALESCE(posicion, '')))
+            SELECT ot_id, TRIM(COALESCE(posicion, ''))
             FROM procesos
             WHERE ot_id IN ({ph})
               AND UPPER(TRIM(COALESCE(proceso, ''))) = ?
@@ -726,8 +726,9 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
               AND TRIM(COALESCE(posicion, '')) != ''
             """,
             ot_ids + [stage] + list(ok_tuple),
-        ).fetchone()
-        value = int(cnt[0] or 0) if cnt else 0
+        ).fetchall()
+        uniques = {(int(r[0] or 0), str(r[1] or "").strip()) for r in stage_rows if str(r[1] or "").strip()}
+        value = len(uniques)
         stage_ratios.append({"proceso": stage, "ok": value, "ratio_pct": _pct(value, total_piezas)})
     cuellos_botella = sorted(stage_ratios, key=lambda x: x["ratio_pct"])
 
