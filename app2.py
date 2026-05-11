@@ -2469,6 +2469,7 @@ def home(page=1):
         nc_pendientes = 0
         nc_cerradas = 0
         ciclos_total = 0
+        tiene_reinspeccion = False
 
         despachado = {"estado": "-", "fecha": "-", "detalle": "Sin remito"}
 
@@ -2476,6 +2477,8 @@ def home(page=1):
             proceso_norm = 'DESPACHO' if proceso in ('DESPACHO', 'P/DESPACHO') else proceso
             if not firma.strip():
                 firmas_faltantes += 1
+            if str(reinspeccion or '').strip() or str(estado or '').strip().upper() == 'RE-INSPECCIÓN':
+                tiene_reinspeccion = True
             if proceso_norm not in latest:
                 latest[proceso_norm] = {
                     'estado': estado,
@@ -2546,6 +2549,8 @@ def home(page=1):
             etapa = _etapa_pintura(repro_u, proc_u)
             if not etapa or etapas.get(etapa) is not None:
                 continue
+            if str(reins_u or '').strip() or str(est_u or '').strip().upper() == 'RE-INSPECCIÓN':
+                tiene_reinspeccion = True
             res = _resolver_estado_pintura(est_u, fecha_u, firma_u, reins_u)
             etapas[etapa] = res
             ciclos_total += int(res.get('ciclos') or 0)
@@ -2614,6 +2619,7 @@ def home(page=1):
             'nc_pendientes': nc_pendientes,
             'nc_cerradas': nc_cerradas,
             'ciclos_total': ciclos_total,
+            'tiene_reinspeccion': tiene_reinspeccion,
             'despachado': despachado,
         }
 
@@ -2628,7 +2634,7 @@ def home(page=1):
             piezas_aprobadas += 1
         elif stats_proc['estado_general'] == 'NO_APROBADA':
             piezas_no_aprobadas += 1
-        if stats_proc['ciclos_total'] > 0:
+        if stats_proc.get('tiene_reinspeccion') or stats_proc['ciclos_total'] > 0:
             piezas_con_reinspeccion += 1
 
     mensaje_html = f'<div class="mensaje-ok">{html_lib.escape(mensaje)}</div>' if mensaje else ''
