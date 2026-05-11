@@ -3063,6 +3063,25 @@ def home(page=1):
     else:
         html += f"<div class='info-paginacion'>Mostrando {inicio + 1}-{min(fin, total_piezas)} de {total_piezas} piezas</div>"
         html += "<div class='table-note'>La tabla muestra un resumen por etapa. Pasá el cursor sobre cada estado para ver el detalle.</div>"
+
+        def _norm_estado_panel(estado_txt):
+            s = str(estado_txt or '').strip().upper()
+            return (
+                s.replace('Á', 'A')
+                 .replace('É', 'E')
+                 .replace('Í', 'I')
+                 .replace('Ó', 'O')
+                 .replace('Ú', 'U')
+            )
+
+        def _es_estado_nc_panel(estado_txt):
+            e = _norm_estado_panel(estado_txt)
+            return e in ('NC', 'NO CONFORME', 'NO CONFORMIDAD') or e.startswith('NC ')
+
+        def _es_estado_reins_panel(estado_txt):
+            e = _norm_estado_panel(estado_txt)
+            return e in ('RE-INSPECCION', 'RE INSPECCION') or ('RE-INSPE' in e)
+
         html += """
         <table>
             <tr>
@@ -3106,7 +3125,9 @@ def home(page=1):
 
             obra_link = obra_key if obra_key else (obra if obra != '---' else '')
 
-            if stats_proc.get('nc_total', 0) == 0:
+            if stats_proc.get('nc_total', 0) == 0 and (stats_proc.get('tiene_reinspeccion') or int(stats_proc.get('ciclos_total', 0) or 0) > 0):
+                resumen_iso = f'<span class="chip chip-warn">RE-INSPECCION</span><div class="audit-text">Ciclos: {stats_proc.get("ciclos_total", 0)}</div>'
+            elif stats_proc.get('nc_total', 0) == 0:
                 resumen_iso = '<span class="chip chip-ok">SIN NC</span><div class="audit-text">Trazabilidad al día</div>'
             elif stats_proc.get('nc_pendientes', 0) > 0:
                 resumen_iso = f'<span class="chip chip-nc">NC PENDIENTE</span><div class="audit-text">Pendientes: {stats_proc.get("nc_pendientes", 0)}</div>'
@@ -3156,11 +3177,11 @@ def home(page=1):
                         if fecha_aprobada == '-':
                             fecha_aprobada = fecha_proc
 
-                    if proceso == 'PINTURA' and estado_proc == 'OK':
+                    if proceso == 'PINTURA' and _estado_control_aprueba(estado_proc):
                         badge = '<span class="chip chip-ok">OK</span>'
                         hallazgo = 'OK'
                         detalle = fecha_aprobada
-                    elif proceso == 'PINTURA' and estado_proc in ('NO CONFORME', 'RE-INSPECCIÓN'):
+                    elif proceso == 'PINTURA' and (_es_estado_nc_panel(estado_proc) or _es_estado_reins_panel(estado_proc)):
                         badge = '<span class="chip chip-nc">NO CONFORME</span>'
                         hallazgo = 'No conforme'
                         detalle = fecha_proc
@@ -3168,7 +3189,7 @@ def home(page=1):
                         badge = '<span class="chip chip-ok">OK</span>'
                         hallazgo = 'OK' if estado_proc in ('OK', 'APROBADO') else f'Hallazgo {estado_proc}'
                         detalle = fecha_aprobada
-                    elif estado_proc in ('NC', 'NO CONFORME', 'NO CONFORMIDAD'):
+                    elif _es_estado_nc_panel(estado_proc):
                         if ciclos_proc and isinstance(ciclos_proc[-1], dict) and _estado_control_aprueba(ciclos_proc[-1].get('estado')):
                             badge = '<span class="chip chip-ok">OK</span>'
                             hallazgo = 'NC cerrada'
