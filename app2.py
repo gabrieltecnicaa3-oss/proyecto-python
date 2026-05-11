@@ -2574,6 +2574,27 @@ def home(page=1):
                 'ciclos_count': sum(int((etapas.get(k) or {}).get('ciclos') or 0) for k in ('SUPERFICIE', 'FONDO', 'TERMINACION')),
             }
 
+        # Integrar NC de pintura al resumen ISO por pieza (1 hallazgo por pieza si hubo NC en pintura).
+        pintura_tuvo_nc = False
+        pintura_nc_pendiente = False
+        for etapa_data in (etapas.get('SUPERFICIE'), etapas.get('FONDO'), etapas.get('TERMINACION')):
+            if not etapa_data:
+                continue
+            est_etapa = str(etapa_data.get('estado') or '').strip().upper()
+            ciclos_etapa = int(etapa_data.get('ciclos') or 0)
+            if est_etapa in ('NO CONFORME', 'RE-INSPECCIÓN'):
+                pintura_tuvo_nc = True
+                pintura_nc_pendiente = True
+            elif est_etapa == 'OK' and ciclos_etapa > 0:
+                pintura_tuvo_nc = True
+
+        if pintura_tuvo_nc:
+            nc_total += 1
+            if pintura_nc_pendiente:
+                nc_pendientes += 1
+            else:
+                nc_cerradas += 1
+
         estado_general = 'SIN_CONTROL'
         if any(v.get('estado_pieza') == 'NO_APROBADA' for v in latest.values()):
             estado_general = 'NO_APROBADA'
