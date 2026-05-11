@@ -2424,6 +2424,13 @@ def home(page=1):
                 return 'FONDO'
             if 'ETAPA:TERMINACION' in ru:
                 return 'TERMINACION'
+            # Fallback para datos legacy: detectar etapa por palabra clave.
+            if 'SUPERFICIE' in ru:
+                return 'SUPERFICIE'
+            if 'FONDO' in ru:
+                return 'FONDO'
+            if 'TERMINACION' in ru or 'TERMINACIÓN' in ru:
+                return 'TERMINACION'
             if (proceso_u or '').upper() == 'PINTURA_FONDO':
                 return 'FONDO'
             return None
@@ -2581,15 +2588,27 @@ def home(page=1):
         ).fetchall()
 
         etapas = {'SUPERFICIE': None, 'FONDO': None, 'TERMINACION': None}
+        paint_sin_etapa = []
         for proc_u, est_u, reins_u, firma_u, fecha_u, repro_u in paint_rows:
-            etapa = _etapa_pintura(repro_u, proc_u)
-            if not etapa or etapas.get(etapa) is not None:
-                continue
             if str(reins_u or '').strip() or _es_estado_reins(est_u):
                 tiene_reinspeccion = True
             res = _resolver_estado_pintura(est_u, fecha_u, firma_u, reins_u)
+            etapa = _etapa_pintura(repro_u, proc_u)
+            if not etapa:
+                paint_sin_etapa.append(res)
+                continue
+            if etapas.get(etapa) is not None:
+                continue
             etapas[etapa] = res
             ciclos_total += int(res.get('ciclos') or 0)
+
+        # Fallback para piezas que cargan 3 controles de pintura sin etiqueta de etapa.
+        # Se asignan por recencia a TERMINACION, FONDO y SUPERFICIE (en ese orden).
+        if paint_sin_etapa:
+            for etapa_k, res in zip(('TERMINACION', 'FONDO', 'SUPERFICIE'), paint_sin_etapa):
+                if etapas.get(etapa_k) is None:
+                    etapas[etapa_k] = res
+                    ciclos_total += int(res.get('ciclos') or 0)
 
         estados_pint = [
             (etapas['SUPERFICIE'] or {}).get('estado') or '-',
