@@ -2440,7 +2440,10 @@ def home(page=1):
             FROM procesos
             WHERE posicion=?
               AND COALESCE(obra, '') = COALESCE(?, '')
-                            AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                            AND (
+                                COALESCE(ot_id, -1) = COALESCE(?, -1)
+                                OR (ot_id IS NULL AND ? IS NOT NULL)
+                            )
               AND eliminado=0
                               AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('ARMADO','SOLDADURA','DESPACHO','P/DESPACHO')
                     AND (
@@ -2457,7 +2460,7 @@ def home(page=1):
                     )
             ORDER BY id DESC
             """,
-            (pos_sel, obra_sel or '', ot_id_sel)
+            (pos_sel, obra_sel or '', ot_id_sel, ot_id_sel)
         ).fetchall()
 
         latest = {}
@@ -2515,7 +2518,10 @@ def home(page=1):
             FROM procesos
             WHERE posicion=?
               AND COALESCE(obra, '') = COALESCE(?, '')
-                            AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                                                        AND (
+                                                                COALESCE(ot_id, -1) = COALESCE(?, -1)
+                                                                OR (ot_id IS NULL AND ? IS NOT NULL)
+                                                        )
               AND eliminado=0
               AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('PINTURA','PINTURA_FONDO')
               AND (
@@ -2532,7 +2538,7 @@ def home(page=1):
               )
                         ORDER BY id DESC
             """,
-            (pos_sel, obra_sel or '', ot_id_sel)
+                        (pos_sel, obra_sel or '', ot_id_sel, ot_id_sel)
         ).fetchall()
 
         etapas = {'SUPERFICIE': None, 'FONDO': None, 'TERMINACION': None}
