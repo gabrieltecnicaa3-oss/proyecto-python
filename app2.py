@@ -2318,8 +2318,19 @@ def home(page=1):
     if busqueda_ot is None and ots_activas:
         busqueda_ot = int(ots_activas[0][0])
 
-    # Obtener piezas de la OT seleccionada (solo piezas vinculadas explícitamente a esa OT)
+    # Obtener piezas de la OT seleccionada.
+    # Incluye filas legacy con ot_id NULL cuando pertenecen a la misma obra de la OT elegida.
     if busqueda_ot is not None:
+        ot_sel = db.execute(
+            """
+            SELECT TRIM(COALESCE(obra, ''))
+            FROM ordenes_trabajo
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (busqueda_ot,),
+        ).fetchone()
+        obra_ot_sel = str(ot_sel[0] or '').strip() if ot_sel else ''
         all_rows = db.execute(
             """
             SELECT p.id,
@@ -2330,10 +2341,17 @@ def home(page=1):
             FROM procesos p
             WHERE p.eliminado = 0
               AND TRIM(COALESCE(p.posicion, '')) <> ''
-              AND COALESCE(p.ot_id, -1) = COALESCE(?, -1)
+              AND (
+                    COALESCE(p.ot_id, -1) = COALESCE(?, -1)
+                    OR (
+                        p.ot_id IS NULL
+                        AND TRIM(COALESCE(p.obra, '')) = TRIM(COALESCE(?, ''))
+                        AND TRIM(COALESCE(?, '')) <> ''
+                    )
+                  )
             ORDER BY posicion ASC
             """,
-            (busqueda_ot,),
+            (busqueda_ot, obra_ot_sel, obra_ot_sel),
         ).fetchall()
     else:
         all_rows = []
@@ -2410,23 +2428,41 @@ def home(page=1):
                 return 'FONDO'
             return None
 
+        def _norm_estado(estado_txt):
+            s = str(estado_txt or '').strip().upper()
+            return (
+                s.replace('Á', 'A')
+                 .replace('É', 'E')
+                 .replace('Í', 'I')
+                 .replace('Ó', 'O')
+                 .replace('Ú', 'U')
+            )
+
+        def _es_estado_nc(estado_txt):
+            e = _norm_estado(estado_txt)
+            return e in ('NC', 'NO CONFORME', 'NO CONFORMIDAD') or e.startswith('NC ')
+
+        def _es_estado_reins(estado_txt):
+            e = _norm_estado(estado_txt)
+            return e in ('RE-INSPECCION', 'RE INSPECCION') or ('RE-INSPE' in e)
+
         def _resolver_estado_pintura(estado_u, fecha_txt, firma_txt, re_inspeccion_txt):
-            estado_base = (estado_u or '').strip().upper()
+            estado_base = _norm_estado(estado_u)
             fecha_final = (fecha_txt or '').strip() or '-'
             firma_final = (firma_txt or '').strip()
             ciclos = _extraer_ciclos_reinspeccion(re_inspeccion_txt or '')
 
-            if estado_base in ('NC', 'NO CONFORME', 'NO CONFORMIDAD'):
+            if _es_estado_nc(estado_base):
                 if ciclos:
                     ultimo = ciclos[-1] or {}
-                    estado_ultimo = str(ultimo.get('estado') or '').strip().upper()
+                    estado_ultimo = _norm_estado(ultimo.get('estado'))
                     fecha_final = str(ultimo.get('fecha') or '').strip() or fecha_final
                     firma_final = str(ultimo.get('firma') or '').strip() or firma_final
                     if _estado_control_aprueba(estado_ultimo):
                         return {'estado': 'OK', 'fecha': fecha_final, 'firma': firma_final, 'ciclos': len(ciclos)}
-                    if estado_ultimo in ('NC', 'NO CONFORME', 'NO CONFORMIDAD'):
+                    if _es_estado_nc(estado_ultimo):
                         return {'estado': 'NO CONFORME', 'fecha': fecha_final, 'firma': firma_final, 'ciclos': len(ciclos)}
-                    return {'estado': 'RE-INSPECCIÓN', 'fecha': fecha_final, 'firma': firma_final, 'ciclos': len(ciclos)}
+                    return {'estado': 'RE-INSPECCION', 'fecha': fecha_final, 'firma': firma_final, 'ciclos': len(ciclos)}
                 return {'estado': 'NO CONFORME', 'fecha': fecha_final, 'firma': firma_final, 'ciclos': 0}
 
             if _estado_control_aprueba(estado_base):
@@ -2477,7 +2513,7 @@ def home(page=1):
             proceso_norm = 'DESPACHO' if proceso in ('DESPACHO', 'P/DESPACHO') else proceso
             if not firma.strip():
                 firmas_faltantes += 1
-            if str(reinspeccion or '').strip() or str(estado or '').strip().upper() == 'RE-INSPECCIÓN':
+            if str(reinspeccion or '').strip() or _es_estado_reins(estado):
                 tiene_reinspeccion = True
             if proceso_norm not in latest:
                 latest[proceso_norm] = {
@@ -2501,7 +2537,7 @@ def home(page=1):
                         "detalle": detalle_texto,
                     }
 
-            if estado in ('NC', 'NO CONFORME', 'NO CONFORMIDAD'):
+            if _es_estado_nc(estado):
                 nc_total += 1
                 ciclos = _extraer_ciclos_reinspeccion(reinspeccion)
                 ciclos_total += len(ciclos)
@@ -2549,7 +2585,7 @@ def home(page=1):
             etapa = _etapa_pintura(repro_u, proc_u)
             if not etapa or etapas.get(etapa) is not None:
                 continue
-            if str(reins_u or '').strip() or str(est_u or '').strip().upper() == 'RE-INSPECCIÓN':
+            if str(reins_u or '').strip() or _es_estado_reins(est_u):
                 tiene_reinspeccion = True
             res = _resolver_estado_pintura(est_u, fecha_u, firma_u, reins_u)
             etapas[etapa] = res
@@ -2562,7 +2598,7 @@ def home(page=1):
         ]
         estados_pint_ctl = [e for e in estados_pint if e != '-']
         estado_pintura = '-'
-        if any(e in ('NO CONFORME', 'RE-INSPECCIÓN') for e in estados_pint_ctl):
+        if any(_es_estado_nc(e) or _es_estado_reins(e) for e in estados_pint_ctl):
             estado_pintura = 'NO CONFORME'
         elif estados_pint_ctl:
             estado_pintura = 'OK'
@@ -2593,7 +2629,7 @@ def home(page=1):
                 continue
             est_etapa = str(etapa_data.get('estado') or '').strip().upper()
             ciclos_etapa = int(etapa_data.get('ciclos') or 0)
-            if est_etapa in ('NO CONFORME', 'RE-INSPECCIÓN'):
+            if _es_estado_nc(est_etapa) or _es_estado_reins(est_etapa):
                 pintura_tuvo_nc = True
                 pintura_nc_pendiente = True
             elif est_etapa == 'OK' and ciclos_etapa > 0:
