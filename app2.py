@@ -2351,8 +2351,9 @@ def home(page=1):
         key = (pos, obra, ot_id_row)
         if key not in piezas:
             piezas[key] = r
-            if desc:
-                desc_por_pieza[key] = desc
+        # Guardar descripción desde CUALQUIER fila que la tenga, no solo la primera
+        if desc and key not in desc_por_pieza:
+            desc_por_pieza[key] = desc
 
     piezas_unicas = sorted(piezas.keys(), key=lambda x: (x[0], x[1]))
 

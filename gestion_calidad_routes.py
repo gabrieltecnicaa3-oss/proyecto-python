@@ -508,6 +508,57 @@ def gestion_calidad_dashboard():
         </tr>
         """
 
+    # --- Piezas actuales con estado NC (sin ciclo de re-inspección aprobado) ---
+    piezas_nc_rows = db.execute(
+        """
+        SELECT
+            p.posicion,
+            COALESCE(p.obra, ''),
+            UPPER(TRIM(COALESCE(p.proceso, ''))),
+            COALESCE(p.fecha, ''),
+            UPPER(TRIM(COALESCE(p.estado, ''))),
+            COALESCE(p.operario, ''),
+            COALESCE(p.re_inspeccion, ''),
+            ot.titulo
+        FROM procesos p
+        LEFT JOIN ordenes_trabajo ot ON ot.id = p.ot_id
+        WHERE UPPER(TRIM(COALESCE(p.estado, ''))) IN ('NC', 'NO CONFORME', 'NO CONFORMIDAD')
+          AND COALESCE(p.eliminado, 0) = 0
+          AND UPPER(TRIM(COALESCE(p.proceso, ''))) IN ('ARMADO','SOLDADURA','PINTURA','DESPACHO')
+        ORDER BY p.fecha DESC, p.posicion ASC
+        LIMIT 200
+        """
+    ).fetchall()
+
+    # Filtrar las que YA tienen re-inspección con estado aprobado (OK)
+    estados_aprobados = {"OK", "APROBADO", "CONFORME"}
+    def _tiene_reaprobacion(re_insp_txt):
+        import re as _re
+        txt = str(re_insp_txt or '')
+        for m in _re.finditer(r'ESTADO_RI\s*:\s*([^\|;\n]+)', txt, flags=_re.IGNORECASE):
+            if m.group(1).strip().upper() in estados_aprobados:
+                return True
+        return False
+
+    piezas_nc_html = ""
+    for pos_nc, obra_nc, proc_nc, fecha_nc, estado_nc, oper_nc, re_nc, titulo_ot in piezas_nc_rows:
+        if _tiene_reaprobacion(re_nc):
+            continue
+        link_pieza = f"/pieza/{pos_nc}?obra={obra_nc}" if obra_nc else f"/pieza/{pos_nc}"
+        piezas_nc_html += f"""
+        <tr>
+            <td><a href="{link_pieza}" style="color:#991b1b;font-weight:bold;">{html_lib.escape(str(pos_nc or ''))}</a></td>
+            <td>{html_lib.escape(str(obra_nc or '-'))}</td>
+            <td>{html_lib.escape(str(titulo_ot or '-'))}</td>
+            <td>{html_lib.escape(str(proc_nc or '-'))}</td>
+            <td>{html_lib.escape(str(fecha_nc or '-'))}</td>
+            <td>{html_lib.escape(str(oper_nc or '-'))}</td>
+        </tr>
+        """
+
+    if not piezas_nc_html:
+        piezas_nc_html = '<tr><td colspan="6" style="text-align:center;color:#166534;">Sin piezas NC activas</td></tr>'
+
     selected_mensual = "selected" if periodo == "mensual" else ""
     selected_trimestral = "selected" if periodo == "trimestral" else ""
     selected_semestral = "selected" if periodo == "semestral" else ""
@@ -807,6 +858,27 @@ def gestion_calidad_dashboard():
             {tratamientos_rows_html}
         </table>
     </div>
+    <div class="tratamiento-form" style="margin-top:18px;">
+        <h3 style="color:#991b1b;">⚠️ Piezas con NC activo (sin re-inspección aprobada)</h3>
+        <p style="font-size:13px;color:#6b7280;margin:0 0 10px 0;">
+            Piezas que tienen estado NC en algún proceso y aún no fueron re-inspeccionadas como aprobadas.
+            Hacé clic en la posición para ir a la ficha de la pieza.
+        </p>
+        <div style="overflow-x:auto;">
+        <table>
+            <tr>
+                <th style="background:#fee2e2;color:#991b1b;">Posición</th>
+                <th style="background:#fee2e2;color:#991b1b;">Obra</th>
+                <th style="background:#fee2e2;color:#991b1b;">OT</th>
+                <th style="background:#fee2e2;color:#991b1b;">Proceso</th>
+                <th style="background:#fee2e2;color:#991b1b;">Fecha</th>
+                <th style="background:#fee2e2;color:#991b1b;">Operario</th>
+            </tr>
+            {piezas_nc_html}
+        </table>
+        </div>
+    </div>
+
     <script>
     (function () {{
         const chkCausa = document.getElementById('chk_causa_raiz');
