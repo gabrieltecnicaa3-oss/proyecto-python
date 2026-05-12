@@ -248,28 +248,9 @@ def calidad_recepcion():
         responsable = (request.form.get("responsable") or "").strip()
         firma_form = (request.form.get("firma_digital") or "").strip()
         fecha = (request.form.get("fecha") or "").strip()
-        ot_id_txt = (request.form.get("ot_id") or "").strip()
 
-        if not all([obra, proveedor, remito_asociado, responsable, fecha, ot_id_txt]):
+        if not all([obra, proveedor, remito_asociado, responsable, fecha]):
             return "Faltan datos requeridos", 400
-
-        if not ot_id_txt.isdigit():
-            return "Seleccioná una OT válida", 400
-
-        ot_id_doc = int(ot_id_txt)
-        ot_valida = db.execute(
-            """
-            SELECT id FROM ordenes_trabajo
-            WHERE id = ?
-              AND TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, ''))
-              AND fecha_cierre IS NULL
-              AND (es_mantenimiento IS NULL OR es_mantenimiento = 0)
-            LIMIT 1
-            """,
-            (ot_id_doc, obra),
-        ).fetchone()
-        if not ot_valida:
-            return "La OT seleccionada no corresponde a la obra", 400
 
         if responsable not in firmas_responsables:
             return "Seleccioná un responsable válido", 400
@@ -513,11 +494,6 @@ def calidad_recepcion():
     html += """
         </select>
 
-        <label>OT:</label>
-        <select name="ot_id" id="ot_id_recepcion" required>
-            <option value="">Seleccionar OT...</option>
-        </select>
-
         <label>Proveedor:</label>
         <input type="text" name="proveedor" placeholder="Nombre del proveedor" required>
 
@@ -604,32 +580,14 @@ def calidad_recepcion():
     })();
 
     (function() {
-        const mapaObraOtsRec = {mapa_obra_ots_recepcion_json};
         const obraRecSel = document.getElementById('obra_recepcion');
-        const otRecSel = document.getElementById('ot_id_recepcion');
-        function cargarOTsRecepcion() {
-            const obra = obraRecSel ? obraRecSel.value : '';
-            const ots = (mapaObraOtsRec[obra] || []);
-            if (!otRecSel) return;
-            otRecSel.innerHTML = '<option value="">Seleccionar OT...</option>';
-            ots.forEach(function(ot) {
-                const opt = document.createElement('option');
-                opt.value = ot.id;
-                opt.textContent = 'OT ' + ot.id + (ot.titulo ? ' - ' + ot.titulo : '');
-                otRecSel.appendChild(opt);
-            });
-            if (ots.length === 1) otRecSel.value = ots[0].id;
-        }
-        window.cargarOTsRecepcion = cargarOTsRecepcion;
-        if (obraRecSel) obraRecSel.addEventListener('change', cargarOTsRecepcion);
-        cargarOTsRecepcion();
+    
     })();
     </script>
     </body>
     </html>
     """
     html = html.replace("{opciones_responsables}", opciones_responsables)
-    html = html.replace("{mapa_obra_ots_recepcion_json}", json.dumps(mapa_obra_ots, ensure_ascii=False))
     html = html.replace("{json.dumps(firmas_responsables, ensure_ascii=False)}", json.dumps(firmas_responsables, ensure_ascii=False))
     html = html.replace("{json.dumps(imagenes_responsables, ensure_ascii=False)}", json.dumps(imagenes_responsables, ensure_ascii=False))
     return html
