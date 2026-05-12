@@ -4513,13 +4513,22 @@ def control_pintura_nuevo():
                     piezas_filtradas.append(p)
             
             if etapa_sel:
+                estados_aprobados = ("OK", "APROBADO", "CONFORME", "OBS", "OM")
                 aprobadas = []
                 pendientes = []
                 for p in piezas_filtradas:
+                    if etapa_sel in ("FONDO", "TERMINACION"):
+                        etapa_previa = "SUPERFICIE" if etapa_sel == "FONDO" else "FONDO"
+                        info_previa = ultimo_por_pieza_etapa.get((p, etapa_previa), {})
+                        estado_previa = (info_previa.get("estado") or "").upper()
+                        estado_pieza_previa = (info_previa.get("estado_pieza") or "").upper()
+                        if estado_previa not in estados_aprobados or estado_pieza_previa == "RE-INSPECCION":
+                            continue
+
                     info = ultimo_por_pieza_etapa.get((p, etapa_sel), {})
                     estado = (info.get("estado") or "").upper()
                     estado_pieza = (info.get("estado_pieza") or "").upper()
-                    if estado in ("OK", "OBS", "OM") and estado_pieza != "RE-INSPECCION":
+                    if estado in estados_aprobados and estado_pieza != "RE-INSPECCION":
                         continue
                     if estado == "NC" or estado_pieza == "RE-INSPECCION":
                         pendientes.append(p)
@@ -4547,42 +4556,15 @@ def control_pintura_nuevo():
         opciones_responsables = "".join(f'<option value="{r}">{r}</option>' for r in responsables_list)
         opciones_operarios = "".join(f'<option value="{o}">{o}</option>' for o in operarios_list)
         
-        # Paginación de piezas para checkboxes (10 por página)
-        piezas_per_page = 10
-        total_piezas_list = len(piezas_list)
-        total_pages_piezas = max(1, (total_piezas_list + piezas_per_page - 1) // piezas_per_page)
-        page_piezas = 1  # Página inicial
-        
-        # Dividir piezas en páginas
-        piezas_pages = {}
-        for i in range(0, total_piezas_list, piezas_per_page):
-            page_num = (i // piezas_per_page) + 1
-            piezas_pages[page_num] = piezas_list[i:i + piezas_per_page]
-        
-        # Generar checkboxes simples (primera página)
+        # Generar checkboxes de todas las piezas (sin paginación)
         piezas_checkboxes_superficie = ""
         piezas_checkboxes_fondo = ""
         piezas_checkboxes_terminacion = ""
-        
-        if piezas_pages.get(1):
-            for p in piezas_pages[1]:
-                checkbox_html = f'<label style="display: block; margin: 8px 0;"><input type="checkbox" name="piezas_superficie" value="{p}"> {p}</label>'
-                piezas_checkboxes_superficie += checkbox_html
-                piezas_checkboxes_fondo += f'<label style="display: block; margin: 8px 0;"><input type="checkbox" name="piezas_fondo" value="{p}"> {p}</label>'
-                piezas_checkboxes_terminacion += f'<label style="display: block; margin: 8px 0;"><input type="checkbox" name="piezas_terminacion" value="{p}"> {p}</label>'
-        
-        # Generar HTML de paginación (igual para todas las etapas)
-        pagination_html = ""
-        if total_pages_piezas > 1:
-            pagination_html = '<div style="display:flex;justify-content:center;gap:6px;flex-wrap:wrap;margin-top:12px;border-top:1px solid #ddd;padding-top:8px;font-size:12px;">'
-            pagination_html += '<button type="button" id="btn-prev-piezas" style="padding:6px 10px;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;cursor:pointer;" onclick="cambiarPaginaPiezas(-1); return false;">← Anterior</button>'
-            pagination_html += '<div style="display:flex;gap:4px;">'
-            for page_num in range(1, total_pages_piezas + 1):
-                pagination_html += f'<button type="button" onclick="irAPaginaPiezas({page_num}); return false;" style="padding:6px 10px;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;cursor:pointer;" class="btn-page-piezas" data-page="{page_num}">{page_num}</button>'
-            pagination_html += '</div>'
-            pagination_html += '<button type="button" id="btn-next-piezas" style="padding:6px 10px;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;cursor:pointer;" onclick="cambiarPaginaPiezas(1); return false;">Siguiente →</button>'
-            pagination_html += '<span style="color:#666;margin-left:10px;">Página <span id="current-page-piezas">1</span> / ' + str(total_pages_piezas) + '</span>'
-            pagination_html += '</div>'
+        for p in piezas_list:
+            checkbox_html = f'<label style="display: block; margin: 8px 0;"><input type="checkbox" name="piezas_superficie" value="{p}"> {p}</label>'
+            piezas_checkboxes_superficie += checkbox_html
+            piezas_checkboxes_fondo += f'<label style="display: block; margin: 8px 0;"><input type="checkbox" name="piezas_fondo" value="{p}"> {p}</label>'
+            piezas_checkboxes_terminacion += f'<label style="display: block; margin: 8px 0;"><input type="checkbox" name="piezas_terminacion" value="{p}"> {p}</label>'
         
         html_carga = f"""
         <html>
@@ -4639,62 +4621,10 @@ def control_pintura_nuevo():
             group.style.display = estado === 'NC' ? 'block' : 'none';
         }}
 
-        // Variables globales para paginación de piezas
-        const piezasPageData = {json.dumps(piezas_pages, ensure_ascii=False)};
-        const totalPagesPiezas = {total_pages_piezas};
-        let currentPagePiezas = 1;
-
-        function cambiarPaginaPiezas(dir) {{
-            const newPage = currentPagePiezas + dir;
-            if (newPage >= 1 && newPage <= totalPagesPiezas) {{
-                irAPaginaPiezas(newPage);
-            }}
-        }}
-
-        function irAPaginaPiezas(pageNum) {{
-            currentPagePiezas = pageNum;
-            const piezasData = piezasPageData[pageNum] || [];
-            
-            // Actualizar checkboxes para todas las etapas
-            ['superficie', 'fondo', 'terminacion'].forEach(etapa => {{
-                const container = document.getElementById('piezas-container-' + etapa);
-                if (!container) return;
-
-                // Generar HTML de checkboxes para la página
-                let html = '';
-                piezasData.forEach(p => {{
-                    html += '<label style="display: block; margin: 8px 0;"><input type="checkbox" name="piezas_' + etapa + '" value="' + p + '"> ' + p + '</label>';
-                }});
-
-                if (!html) {{
-                    html = '<p style="grid-column: 1/-1; text-align: center; color: #999;">No hay piezas en esta página</p>';
-                }}
-
-                container.innerHTML = html;
-            }});
-
-            // Actualizar estado de botones de paginación
-            const prevBtn = document.getElementById('btn-prev-piezas');
-            const nextBtn = document.getElementById('btn-next-piezas');
-            const currentPageSpan = document.getElementById('current-page-piezas');
-            
-            if (prevBtn) prevBtn.disabled = pageNum === 1;
-            if (nextBtn) nextBtn.disabled = pageNum === totalPagesPiezas;
-            if (currentPageSpan) currentPageSpan.textContent = pageNum;
-
-            // Resaltar botón de página actual
-            document.querySelectorAll('.btn-page-piezas').forEach(btn => {{
-                const btnPage = parseInt(btn.getAttribute('data-page') || '1', 10);
-                if (btnPage === pageNum) {{
-                    btn.style.background = '#f97316';
-                    btn.style.color = '#fff';
-                    btn.style.fontWeight = 'bold';
-                }} else {{
-                    btn.style.background = '#fff';
-                    btn.style.color = '#333';
-                    btn.style.fontWeight = 'normal';
-                }}
-            }});
+        function marcarTodas(etapa, checked) {{
+            const checks = document.querySelectorAll('input[name="piezas_' + etapa + '"]');
+            checks.forEach(ch => {{ ch.checked = !!checked; }});
+            actualizarPreview();
         }}
         
         function syncOtMeta() {{
@@ -4746,10 +4676,6 @@ def control_pintura_nuevo():
             mostrarEtapa();
             toggleMotivoNC();
             actualizarEstadoBotonPdf();
-            // Inicializar paginación de piezas
-            if (totalPagesPiezas > 0) {{
-                irAPaginaPiezas(1);
-            }}
         }});
         </script>
         </head>
@@ -4839,23 +4765,29 @@ def control_pintura_nuevo():
                 
                 <div id="etapa-superficie" class="etapa-container">
                     <h3>A) Si elige SUPERFICIE</h3>
+                    <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+                        <button type="button" class="btn-cancel" style="background:#475569;" onclick="marcarTodas('superficie', true)">Seleccionar todas</button>
+                        <button type="button" class="btn-cancel" style="background:#94a3b8;" onclick="marcarTodas('superficie', false)">Limpiar selección</button>
+                    </div>
                     <div class="piezas-grid">
                         <div id="piezas-container-superficie">
                             {piezas_checkboxes_superficie if piezas_list else '<p style="text-align: center; color: #999;">No hay piezas disponibles (debe estar OK en Soldadura)</p>'}
                         </div>
                     </div>
-                    {pagination_html}
                     <div style="margin-top: 10px; color: #666; font-size: 13px;">El estado general (OK/NC/OBS/OM) se define arriba y aplica a esta carga.</div>
                 </div>
                 
                 <div id="etapa-fondo" class="etapa-container">
                     <h3>B) Si elige FONDO / IMPRIMACIÓN</h3>
+                    <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+                        <button type="button" class="btn-cancel" style="background:#475569;" onclick="marcarTodas('fondo', true)">Seleccionar todas</button>
+                        <button type="button" class="btn-cancel" style="background:#94a3b8;" onclick="marcarTodas('fondo', false)">Limpiar selección</button>
+                    </div>
                     <div class="piezas-grid">
                         <div id="piezas-container-fondo">
                             {piezas_checkboxes_fondo if piezas_list else '<p style="text-align: center; color: #999;">No hay piezas disponibles (debe estar OK en Soldadura)</p>'}
                         </div>
                     </div>
-                    {pagination_html}
                     <div class="form-group">
                         <label for="fondo_espesor">Espesor Promedio (μm)</label>
                         <input type="number" id="fondo_espesor" name="fondo_espesor" step="0.1" placeholder="Ej: 120.5">
@@ -4864,12 +4796,15 @@ def control_pintura_nuevo():
                 
                 <div id="etapa-terminacion" class="etapa-container">
                     <h3>C) Si elige TERMINACIÓN</h3>
+                    <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+                        <button type="button" class="btn-cancel" style="background:#475569;" onclick="marcarTodas('terminacion', true)">Seleccionar todas</button>
+                        <button type="button" class="btn-cancel" style="background:#94a3b8;" onclick="marcarTodas('terminacion', false)">Limpiar selección</button>
+                    </div>
                     <div class="piezas-grid">
                         <div id="piezas-container-terminacion">
                             {piezas_checkboxes_terminacion if piezas_list else '<p style="text-align: center; color: #999;">No hay piezas disponibles (debe estar OK en Soldadura)</p>'}
                         </div>
                     </div>
-                    {pagination_html}
                     <div class="form-group">
                         <label for="term_espesor">Espesor Final (μm)</label>
                         <input type="number" id="term_espesor" name="term_espesor" step="0.1" placeholder="Ej: 300.5">
@@ -5179,6 +5114,7 @@ def control_pintura_nuevo():
             responsable = (request.form.get("responsable") or "").strip()
             operario = (request.form.get("operario") or "").strip()
             etapa = (request.form.get("etapa") or "").strip()
+            etapa = etapa.upper()
 
             ot_id = None
             if ot_id_txt.isdigit():
@@ -5260,6 +5196,92 @@ def control_pintura_nuevo():
                 ).fetchone()
                 if row_req:
                     espesor_req_val = _to_float_local(row_req[0])
+
+            def _etapa_previa_aprobada(posicion, etapa_destino):
+                etapa_previa = None
+                if etapa_destino == "FONDO":
+                    etapa_previa = "SUPERFICIE"
+                elif etapa_destino == "TERMINACION":
+                    etapa_previa = "FONDO"
+
+                if not etapa_previa:
+                    return True
+
+                if etapa_previa == "SUPERFICIE":
+                    condicion_etapa = "(UPPER(TRIM(COALESCE(proceso, ''))) = 'PINTURA' AND UPPER(COALESCE(reproceso, '')) LIKE '%ETAPA:SUPERFICIE%')"
+                else:
+                    condicion_etapa = "(UPPER(TRIM(COALESCE(proceso, ''))) = 'PINTURA_FONDO' OR UPPER(COALESCE(reproceso, '')) LIKE '%ETAPA:FONDO%')"
+
+                row_prev = db.execute(
+                    f"""
+                    SELECT COALESCE(estado, ''), COALESCE(re_inspeccion, '')
+                    FROM procesos
+                    WHERE TRIM(COALESCE(posicion, '')) = TRIM(?)
+                      AND eliminado = 0
+                      AND {condicion_etapa}
+                      AND (
+                          (? IS NOT NULL AND COALESCE(ot_id, -1) = COALESCE(?, -1))
+                          OR
+                          (? IS NULL AND TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, '')))
+                      )
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (posicion, ot_id, ot_id, ot_id, obra),
+                ).fetchone()
+
+                if not row_prev:
+                    return False
+
+                estado_prev, re_insp_prev = row_prev
+                return _estado_pieza_persistente(estado_prev, re_insp_prev) == "APROBADA"
+
+            def _fecha_no_anterior_a_etapa_previa(posicion, etapa_destino, fecha_actual_txt):
+                etapa_previa = None
+                if etapa_destino == "FONDO":
+                    etapa_previa = "SUPERFICIE"
+                elif etapa_destino == "TERMINACION":
+                    etapa_previa = "FONDO"
+
+                if not etapa_previa:
+                    return True, ""
+
+                if etapa_previa == "SUPERFICIE":
+                    condicion_etapa = "(UPPER(TRIM(COALESCE(proceso, ''))) = 'PINTURA' AND UPPER(COALESCE(reproceso, '')) LIKE '%ETAPA:SUPERFICIE%')"
+                else:
+                    condicion_etapa = "(UPPER(TRIM(COALESCE(proceso, ''))) = 'PINTURA_FONDO' OR UPPER(COALESCE(reproceso, '')) LIKE '%ETAPA:FONDO%')"
+
+                row_prev_fecha = db.execute(
+                    f"""
+                    SELECT COALESCE(fecha, '')
+                    FROM procesos
+                    WHERE TRIM(COALESCE(posicion, '')) = TRIM(?)
+                      AND eliminado = 0
+                      AND {condicion_etapa}
+                      AND (
+                          (? IS NOT NULL AND COALESCE(ot_id, -1) = COALESCE(?, -1))
+                          OR
+                          (? IS NULL AND TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, '')))
+                      )
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (posicion, ot_id, ot_id, ot_id, obra),
+                ).fetchone()
+
+                fecha_previa_txt = str(row_prev_fecha[0] or "").strip() if row_prev_fecha else ""
+                if not fecha_previa_txt:
+                    return True, ""
+
+                try:
+                    fecha_actual_dt = datetime.strptime(str(fecha_actual_txt or "").strip(), "%Y-%m-%d").date()
+                    fecha_previa_dt = datetime.strptime(fecha_previa_txt, "%Y-%m-%d").date()
+                except Exception:
+                    return True, ""
+
+                if fecha_actual_dt < fecha_previa_dt:
+                    return False, fecha_previa_txt
+                return True, ""
             
             if etapa == "SUPERFICIE":
                 piezas = request.form.getlist("piezas_superficie")
@@ -5279,6 +5301,19 @@ def control_pintura_nuevo():
                 espesor = (request.form.get("fondo_espesor") or "").strip()
                 if not piezas:
                     return "Debes seleccionar al menos una pieza", 400
+
+                piezas_bloqueadas = [p for p in piezas if not _etapa_previa_aprobada(p, "FONDO")]
+                if piezas_bloqueadas:
+                    piezas_unicas = sorted(set(piezas_bloqueadas))
+                    vista = ", ".join(piezas_unicas[:8])
+                    sufijo = "..." if len(piezas_unicas) > 8 else ""
+                    return f"No se puede cargar FONDO sin SUPERFICIE aprobada. Piezas bloqueadas: {vista}{sufijo}", 400
+
+                for p in piezas:
+                    ok_fecha, fecha_previa = _fecha_no_anterior_a_etapa_previa(p, "FONDO", fecha)
+                    if not ok_fecha:
+                        return f"La fecha de FONDO no puede ser anterior a SUPERFICIE en la pieza {p} (superficie: {fecha_previa}).", 400
+
                 for p in piezas:
                     detalle_fondo = "ETAPA:FONDO"
                     if espesor:
@@ -5295,6 +5330,19 @@ def control_pintura_nuevo():
                 espesor = (request.form.get("term_espesor") or "").strip()
                 if not piezas:
                     return "Debes seleccionar al menos una pieza", 400
+
+                piezas_bloqueadas = [p for p in piezas if not _etapa_previa_aprobada(p, "TERMINACION")]
+                if piezas_bloqueadas:
+                    piezas_unicas = sorted(set(piezas_bloqueadas))
+                    vista = ", ".join(piezas_unicas[:8])
+                    sufijo = "..." if len(piezas_unicas) > 8 else ""
+                    return f"No se puede cargar TERMINACION sin FONDO aprobado. Piezas bloqueadas: {vista}{sufijo}", 400
+
+                for p in piezas:
+                    ok_fecha, fecha_previa = _fecha_no_anterior_a_etapa_previa(p, "TERMINACION", fecha)
+                    if not ok_fecha:
+                        return f"La fecha de TERMINACION no puede ser anterior a FONDO en la pieza {p} (fondo: {fecha_previa}).", 400
+
                 for p in piezas:
                     espesor_term_val = _to_float_local(espesor)
                     row_fondo = db.execute(
