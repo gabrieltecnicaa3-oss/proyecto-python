@@ -3634,6 +3634,28 @@ def generar_pdf_control(control_id):
     operario_control = str(mediciones.get("operario") or "-")
     reinspecciones = mediciones.get("reinspeccion") if isinstance(mediciones.get("reinspeccion"), list) else []
 
+    # Intentar resolver la OT para guardar el PDF en la subcarpeta correcta.
+    ot_id_doc = None
+    try:
+        piezas_pos = []
+        for _fila in filas_pintura:
+            pos_txt = str((_fila or {}).get("pieza") or "").strip()
+            if pos_txt:
+                piezas_pos.append(pos_txt)
+
+        for pos_txt in piezas_pos:
+            ot_pos = _obtener_ot_id_pieza(db, pos_txt, obra)
+            if ot_pos is not None:
+                ot_id_doc = int(ot_pos)
+                break
+
+        if ot_id_doc is None:
+            ots_obra = _obtener_ots_para_obra(db, obra)
+            if len(ots_obra) == 1:
+                ot_id_doc = int(ots_obra[0][0])
+    except Exception:
+        ot_id_doc = None
+
     def _to_float(value):
         txt = str(value or "").strip().replace(",", ".")
         if not txt or txt == "-":
@@ -3855,7 +3877,7 @@ def generar_pdf_control(control_id):
     doc.build(elements)
     pdf_buffer.seek(0)
     filename = f"Control_Pintura_{obra}_ID{control_id}_{date.today().isoformat()}.pdf".replace(" ", "_")
-    _guardar_pdf_databook(obra, "calidad_pintura", filename, pdf_buffer.getvalue(), ot_id=None)
+    _guardar_pdf_databook(obra, "calidad_pintura", filename, pdf_buffer.getvalue(), ot_id=ot_id_doc)
     pdf_buffer.seek(0)
     return send_file(pdf_buffer, mimetype='application/pdf', as_attachment=True, download_name=filename)
 
@@ -6742,26 +6764,26 @@ def generar_pdf_pintura():
             imagen_por_firma[_nombre_idx.strip().lower()] = _url_idx
 
         rows = db.execute(
-            """
-            SELECT id,
-                   TRIM(COALESCE(posicion, '')) AS posicion,
-                   COALESCE(cantidad, 0),
-                   COALESCE(perfil, ''),
-                   COALESCE(descripcion, ''),
-                   UPPER(TRIM(COALESCE(proceso, ''))) AS proceso,
-                   UPPER(TRIM(COALESCE(estado, ''))) AS estado,
-                   COALESCE(fecha, ''),
-                   COALESCE(reproceso, ''),
-                   COALESCE(re_inspeccion, ''),
-                   COALESCE(firma_digital, ''),
-                   COALESCE(estado_pieza, '')
-            FROM procesos
-            WHERE ot_id = ?
-              AND eliminado = 0
-              AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('PINTURA', 'PINTURA_FONDO')
-            ORDER BY posicion ASC, id DESC
-            """,
-            (ot_id,),
+                """
+                SELECT id,
+                             TRIM(COALESCE(posicion, '')) AS posicion,
+                             COALESCE(cantidad, 0),
+                             COALESCE(perfil, ''),
+                             COALESCE(descripcion, ''),
+                             UPPER(TRIM(COALESCE(proceso, ''))) AS proceso,
+                             UPPER(TRIM(COALESCE(estado, ''))) AS estado,
+                             COALESCE(fecha, ''),
+                             COALESCE(reproceso, ''),
+                             COALESCE(re_inspeccion, ''),
+                             COALESCE(firma_digital, ''),
+                             COALESCE(estado_pieza, '')
+                FROM procesos
+                WHERE ot_id = ?
+                    AND eliminado = 0
+                    AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('PINTURA', 'PINTURA_FONDO')
+                ORDER BY posicion ASC, id DESC
+                """,
+                (ot_id,),
         ).fetchall()
 
         espesor_total_requerido = str(row_ot[4] or "")
@@ -7471,7 +7493,7 @@ def resumen_control_pintura(control_id):
             </table>
             
             <div class="buttons">
-                {'' if _es_usuario_obra() else '<button class="btn-primary" onclick="window.print()">🖨️ Imprimir</button>'}
+                {'' if _es_usuario_obra() else f'<a class="btn-primary" href="/modulo/calidad/escaneo/generar-pdf-control/{control_id}">🖨️ Imprimir PDF</a>'}
                 <a href="/modulo/calidad/escaneo/control-pintura?obra={urllib.parse.quote(obra)}" class="btn-secondary">← Volver a Formulario</a>
                 <a href="/modulo/calidad/escaneo/controles-pintura" class="btn-secondary">📋 Listar Controles</a>
             </div>
