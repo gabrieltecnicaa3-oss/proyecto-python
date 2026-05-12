@@ -1987,7 +1987,7 @@ def dashboard():
     ]
 
     ADMIN_ONLY_HREFS = {"/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo"}
-    OBRA_HIDDEN_HREFS = {"/modulo/estado", "/modulo/generador"}
+    OBRA_HIDDEN_HREFS = {"/modulo/estado", "/modulo/generador", "/modulo/parte"}
     is_admin = _is_admin_session()
     cards_html = "".join(
         f'''

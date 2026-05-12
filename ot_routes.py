@@ -7,7 +7,7 @@ import os
 from datetime import datetime
 import uuid
 
-from flask import Blueprint, redirect, request
+from flask import Blueprint, redirect, request, session
 from db_utils import get_db, _asegurar_estructura_databook_si_valida as _db_asegurar_estructura_databook_si_valida
 from qr_utils import load_clean_excel, find_col, clean_xls
 
@@ -256,6 +256,7 @@ ot_bp = Blueprint("ot", __name__)
 def ot_lista():
     db = get_db()
     filtro_obra = (request.args.get("obra") or "").strip()
+    es_obra = str(session.get("user_role") or "").strip().lower() == "obra"
     ots_all = db.execute("SELECT * FROM ordenes_trabajo WHERE fecha_cierre IS NULL AND (es_mantenimiento IS NULL OR es_mantenimiento = 0) ORDER BY id DESC").fetchall()
     obras_disponibles = sorted({str(o[2] or "").strip() for o in ots_all if (o[2] or "").strip()})
     ots = [o for o in ots_all if not filtro_obra or str(o[2] or "").strip() == filtro_obra]
@@ -359,7 +360,14 @@ def ot_lista():
                 <th>Fecha Entrega</th>
                 <th>Estado</th>
                 <th>Creación</th>
+        """
+        if not es_obra:
+            html += """
                 <th>Acciones</th>
+            </tr>
+            """
+        else:
+            html += """
             </tr>
         """
         for ot in ots:
@@ -382,6 +390,9 @@ def ot_lista():
                 <td>{ot[4]}</td>
                 <td>{ot[5]}</td>
                 <td>{ot[7]}</td>
+        """
+            if not es_obra:
+                html += f"""
                 <td>
                     <a href="/modulo/ot/editar/{ot[0]}" class="btn" style="background: #ea580c;">Editar</a>
                     <a href="/modulo/ot/eliminar/{ot[0]}" class="btn" style="background: #c2410c;" onclick="return confirm('¿Eliminar?')">Eliminar</a>
@@ -389,6 +400,8 @@ def ot_lista():
                         <button type="submit" class="btn" style="background:#fb923c;color:#fff;" onclick="return confirm('¿Cerrar esta OT? Se moverá a Historial y se quitarán sus piezas del estado de piezas por proceso.')">Cerrar OT</button>
                     </form>
                 </td>
+                """
+            html += """
             </tr>
             """
         html += "</table></div>"
