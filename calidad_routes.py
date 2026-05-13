@@ -404,8 +404,8 @@ def calidad_recepcion():
         doc.build(elements)
         pdf_buffer.seek(0)
 
-        filename = f"Recepcion_OT_{ot_id_doc}_{obra}_{fecha}.pdf".replace(" ", "_").replace("/", "-")
-        _guardar_pdf_databook(obra, "calidad_recepcion", filename, pdf_buffer.getvalue(), ot_id=ot_id_doc)
+        filename = f"Recepcion_{proveedor}_{remito_asociado}_{fecha}.pdf".replace(" ", "_").replace("/", "-")
+        _guardar_pdf_databook(obra, "calidad_recepcion", filename, pdf_buffer.getvalue(), ot_id=None)
         pdf_buffer.seek(0)
         return send_file(
             pdf_buffer,
