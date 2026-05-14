@@ -64,14 +64,14 @@ def _collect(db, obra, year, week, week_start, week_end):
     # OTs de una obra puntual o de todas las obras
     if obra:
       ots = db.execute(
-        "SELECT id, titulo, tipo_estructura, fecha_entrega, cliente, hs_previstas, estado_avance "
+        "SELECT id, titulo, tipo_estructura, fecha_entrega, cliente, hs_previstas "
         "FROM ordenes_trabajo WHERE obra=? AND estado != 'INACTIVO' "
         "ORDER BY fecha_entrega ASC, id ASC",
         (obra,)
       ).fetchall()
     else:
       ots = db.execute(
-        "SELECT id, titulo, tipo_estructura, fecha_entrega, cliente, hs_previstas, estado_avance "
+        "SELECT id, titulo, tipo_estructura, fecha_entrega, cliente, hs_previstas "
         "FROM ordenes_trabajo "
         "WHERE TRIM(COALESCE(obra,'')) != '' AND estado != 'INACTIVO' "
         "ORDER BY fecha_entrega ASC, id ASC"
@@ -242,7 +242,7 @@ def _collect(db, obra, year, week, week_start, week_end):
       try:
         avance_live = int(round(calcular_avance_ot(db, ot_id)))
       except Exception:
-        avance_live = int(ot[6] or 0)
+        avance_live = 0
       avance_by_ot[ot_id] = max(0, min(100, avance_live))
 
     # KG totales estimados por OT (base para referencia de la vista por KG)
