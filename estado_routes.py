@@ -1890,23 +1890,7 @@ def api_dashboard_estado():
             "hs_segun_avance": round(hs_segun_avance_suma, 1)
         })
 
-    tendencia = {"habilitado": False, "motivo": "Sin OTs activas", "tipo_estructura": (tipo_obra or "GENERAL")}
-    prog_rows = []
-    ot_ids_act = [int(row[0]) for row in ots if row and row[0] is not None]
-    if ot_ids_act:
-        ph = ",".join(["?"] * len(ot_ids_act))
-        prog_rows = db.execute(
-            f"""
-            SELECT p.ot_id, p.fecha_inicio, p.fecha_fin
-            FROM programacion p
-            WHERE p.ot_id IN ({ph})
-            ORDER BY p.ot_id, p.fecha_inicio
-            """,
-            tuple(ot_ids_act),
-        ).fetchall()
-        tendencia = _calcular_tendencia_programacion(ots, prog_rows, tipo_obra, avance_por_ot)
-    resumen_tipos = _resumen_tipos_estructura(ots, prog_rows, avance_por_ot, kg_source_rows)
-
+    # Calcular kg_source_rows ANTES de usarla
     if periodo == "actual":
         ot_ids = [int(row[0]) for row in ots]
         if ot_ids:
@@ -1958,6 +1942,23 @@ def api_dashboard_estado():
             """,
             (fecha_desde_str,) + tuple(params_proc) + (tipo_obra, tipo_obra, obra, obra),
         ).fetchall()
+
+    tendencia = {"habilitado": False, "motivo": "Sin OTs activas", "tipo_estructura": (tipo_obra or "GENERAL")}
+    prog_rows = []
+    ot_ids_act = [int(row[0]) for row in ots if row and row[0] is not None]
+    if ot_ids_act:
+        ph = ",".join(["?"] * len(ot_ids_act))
+        prog_rows = db.execute(
+            f"""
+            SELECT p.ot_id, p.fecha_inicio, p.fecha_fin
+            FROM programacion p
+            WHERE p.ot_id IN ({ph})
+            ORDER BY p.ot_id, p.fecha_inicio
+            """,
+            tuple(ot_ids_act),
+        ).fetchall()
+        tendencia = _calcular_tendencia_programacion(ots, prog_rows, tipo_obra, avance_por_ot)
+    resumen_tipos = _resumen_tipos_estructura(ots, prog_rows, avance_por_ot, kg_source_rows)
 
     kg_por_estacion, kg_despachados = _calcular_kg_por_estacion_y_despachados(kg_source_rows)
 
