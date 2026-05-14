@@ -126,24 +126,24 @@ def _reglas_tipo_estructura(tipo_estructura):
     tipo = str(tipo_estructura or "").strip().upper()
     reglas = {
         "TIPO I": {
-            "desvio_ok_min": -4.0,
-            "desvio_alerta_min": -8.0,
-            "proy_ok_min": 100.0,
-            "proy_alerta_min": 96.0,
+            "desvio_ok_min": -5.0,
+            "desvio_alerta_min": -10.0,
+            "proy_ok_min": 98.0,
+            "proy_alerta_min": 93.0,
             "descripcion": "Ritmo alto esperado. Control estricto del desvio.",
         },
         "TIPO II": {
-            "desvio_ok_min": -7.0,
-            "desvio_alerta_min": -12.0,
-            "proy_ok_min": 98.0,
-            "proy_alerta_min": 90.0,
+            "desvio_ok_min": -8.0,
+            "desvio_alerta_min": -14.0,
+            "proy_ok_min": 96.0,
+            "proy_alerta_min": 88.0,
             "descripcion": "Ritmo intermedio. Tolerancia moderada de desvio.",
         },
         "TIPO III": {
-            "desvio_ok_min": -10.0,
-            "desvio_alerta_min": -16.0,
-            "proy_ok_min": 95.0,
-            "proy_alerta_min": 85.0,
+            "desvio_ok_min": -12.0,
+            "desvio_alerta_min": -18.0,
+            "proy_ok_min": 93.0,
+            "proy_alerta_min": 82.0,
             "descripcion": "Ritmo variable por series. Mayor ventana de tolerancia.",
         },
     }
@@ -151,10 +151,10 @@ def _reglas_tipo_estructura(tipo_estructura):
     if base is None:
         return {
             "tipo": "GENERAL",
-            "desvio_ok_min": -6.0,
-            "desvio_alerta_min": -12.0,
-            "proy_ok_min": 98.0,
-            "proy_alerta_min": 90.0,
+            "desvio_ok_min": -8.0,
+            "desvio_alerta_min": -14.0,
+            "proy_ok_min": 96.0,
+            "proy_alerta_min": 88.0,
             "descripcion": "Regla general sin filtro de tipo.",
         }
     return {"tipo": tipo, **base}
@@ -193,9 +193,10 @@ def _clasificar_tendencia(tipo_estructura, desvio_hoy, proj_fin):
     }
 
 
-def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura="", avance_by_ot=None):
+def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura="", avance_by_ot=None, kg_prev_by_ot=None):
     reglas = _reglas_tipo_estructura(tipo_estructura)
     avance_by_ot = avance_by_ot or {}
+    kg_prev_by_ot = kg_prev_by_ot or {}
 
     if not ots or not prog_rows:
         return {
@@ -244,13 +245,25 @@ def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura="", avance_
     if date_end <= date_start:
         date_end = date_start + timedelta(days=1)
 
-    weight_sum = sum(hs_prev_by_ot.get(oid, 0.0) for oid in ot_ids_prog)
-    use_equal = weight_sum <= 0
-    if use_equal:
+    # Prioridad de ponderacion: KG previstos (igual criterio de Produccion),
+    # luego HS previstas, y finalmente ponderacion uniforme si no hay base.
+    kg_weight_sum = sum(max(0.0, _safe_float(kg_prev_by_ot.get(oid, 0.0), 0.0)) for oid in ot_ids_prog)
+    hs_weight_sum = sum(max(0.0, _safe_float(hs_prev_by_ot.get(oid, 0.0), 0.0)) for oid in ot_ids_prog)
+    use_kg = kg_weight_sum > 0
+    use_hs = (not use_kg) and hs_weight_sum > 0
+    if use_kg:
+        weight_sum = kg_weight_sum
+    elif use_hs:
+        weight_sum = hs_weight_sum
+    else:
         weight_sum = float(max(len(ot_ids_prog), 1))
 
     def _w(oid):
-        return 1.0 if use_equal else hs_prev_by_ot.get(oid, 0.0)
+        if use_kg:
+            return max(0.0, _safe_float(kg_prev_by_ot.get(oid, 0.0), 0.0))
+        if use_hs:
+            return max(0.0, _safe_float(hs_prev_by_ot.get(oid, 0.0), 0.0))
+        return 1.0
 
     def _plan_pct(day_ref):
         acc = 0.0
@@ -1973,7 +1986,7 @@ def api_dashboard_estado():
             """,
             tuple(ot_ids_act),
         ).fetchall()
-        tendencia = _calcular_tendencia_programacion(ots, prog_rows, tipo_obra, avance_por_ot)
+        tendencia = _calcular_tendencia_programacion(ots, prog_rows, tipo_obra, avance_por_ot, kg_prev_by_ot)
     resumen_tipos = _resumen_tipos_estructura(
         ots,
         prog_rows,
