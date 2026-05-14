@@ -11,7 +11,6 @@ from reportlab.graphics.shapes import Drawing, String
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics.charts.piecharts import Pie
 from db_utils import get_db, _guardar_pdf_databook as _db_guardar_pdf_databook
-from produccion_routes import calcular_avance_ot
 from proceso_utils import _proceso_aprobado
 
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -209,7 +208,7 @@ def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura=""):
     for row in ots:
         ot_id = int(row[0] or 0)
         hs_prev_by_ot[ot_id] = max(0.0, _safe_float(row[3], 0.0))
-        avance_by_ot[ot_id] = max(0.0, min(100.0, float(calcular_avance_ot(db, ot_id))))
+        avance_by_ot[ot_id] = max(0.0, min(100.0, _safe_float(row[5], 0.0)))
 
     prog_by_ot = {}
     for pr in prog_rows:
@@ -1697,7 +1696,7 @@ def api_dashboard_estado():
         nombre = str(row[1] or '')[:22]
         obra_nombre = str(row[2] or 'SIN OBRA')
         hs_previstas = round(float(row[3] or 0), 1)
-        avance_pct = int(round(calcular_avance_ot(db, row[0])))
+        avance_pct = int(row[5] or 0)
         hs_segun_avance = round((avance_pct / 100.0) * hs_previstas, 1)
         hs_por_ot.append({
             "ot_id": row[0],

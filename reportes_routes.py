@@ -1,6 +1,5 @@
 from flask import Blueprint, request, Response, redirect, url_for
 from db_utils import get_db
-from produccion_routes import calcular_avance_ot
 from datetime import date, timedelta, datetime
 
 reportes_bp = Blueprint("reportes", __name__)
@@ -235,11 +234,11 @@ def _collect(db, obra, year, week, week_start, week_end):
         else:
             n_en_termino += 1
 
-    # Avance por OT alineado con Producción: siempre calculado por KG.
+    # Avance por OT (alineado con Estado de Producción: estado_avance persistido)
     avance_by_ot = {}
     for ot in ots:
       ot_id = int(ot[0])
-      avance_by_ot[ot_id] = max(0, min(100, int(round(calcular_avance_ot(db, ot_id)))))
+      avance_by_ot[ot_id] = max(0, min(100, int(ot[6] or 0)))
 
     # KG totales estimados por OT (base para referencia de la vista por KG)
     kg_total_by_ot = {}
@@ -1028,7 +1027,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
   <div class="bar-legend">{leg_items}</div>
   <div class="axis-labels"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
   {bar_rows}
-  <div class="legend-row">La barra de fondo muestra la composición total por etapa en color claro. La barra superpuesta muestra el <b>% real</b> calculado por KG en color más oscuro.</div>
+  <div class="legend-row">La barra de fondo muestra la composición total por etapa en color claro. La barra superpuesta muestra el <b>% real</b> (campo <b>estado_avance</b>) en color más oscuro.</div>
 </div>"""
 
     # Sección Producción semanal (solo INTERNO)
