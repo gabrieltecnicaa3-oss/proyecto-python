@@ -193,8 +193,9 @@ def _clasificar_tendencia(tipo_estructura, desvio_hoy, proj_fin):
     }
 
 
-def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura=""):
+def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura="", avance_by_ot=None):
     reglas = _reglas_tipo_estructura(tipo_estructura)
+    avance_by_ot = avance_by_ot or {}
 
     if not ots or not prog_rows:
         return {
@@ -204,12 +205,12 @@ def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura=""):
             "reglas": reglas,
         }
 
-    avance_by_ot = {}
+    avance_by_ot_calc = {}
     hs_prev_by_ot = {}
     for row in ots:
         ot_id = int(row[0] or 0)
         hs_prev_by_ot[ot_id] = max(0.0, _safe_float(row[3], 0.0))
-        avance_by_ot[ot_id] = max(0.0, min(100.0, _safe_float(row[5], 0.0)))
+        avance_by_ot_calc[ot_id] = max(0.0, min(100.0, _safe_float(avance_by_ot.get(ot_id, row[5]), 0.0)))
 
     prog_by_ot = {}
     for pr in prog_rows:
@@ -261,7 +262,7 @@ def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura=""):
         return round(acc / weight_sum, 1) if weight_sum > 0 else 0.0
 
     real_now = round(
-        sum(_w(oid) * avance_by_ot.get(oid, 0.0) for oid in ot_ids_prog) / weight_sum,
+        sum(_w(oid) * avance_by_ot_calc.get(oid, 0.0) for oid in ot_ids_prog) / weight_sum,
         1,
     ) if weight_sum > 0 else 0.0
 
@@ -302,18 +303,42 @@ def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura=""):
     }
 
 
-def _resumen_tipos_estructura(ots, prog_rows):
+def _resumen_tipos_estructura(ots, prog_rows, avance_by_ot=None, kg_source_rows=None):
+    avance_by_ot = avance_by_ot or {}
+    kg_source_rows = kg_source_rows or []
     tipos = ["TIPO I", "TIPO II", "TIPO III"]
     salida = []
     for tipo in tipos:
         ots_tipo = [row for row in ots if str(row[6] or "").strip().upper() == tipo]
         ot_ids_tipo = {int(row[0]) for row in ots_tipo if row and row[0] is not None}
         prog_tipo = [pr for pr in prog_rows if int(pr[0] or 0) in ot_ids_tipo]
-        tendencia = _calcular_tendencia_programacion(ots_tipo, prog_tipo, tipo)
+        avance_pesado = 0.0
+        peso_total = 0.0
+        for row in ots_tipo:
+            ot_id = int(row[0] or 0)
+            peso = _safe_float(row[3], 0.0)
+            avance = max(0.0, min(100.0, _safe_float(avance_by_ot.get(ot_id, row[5]), 0.0)))
+            avance_pesado += peso * avance
+            peso_total += peso
+
+        if peso_total <= 0:
+            peso_total = float(max(len(ots_tipo), 1))
+            avance_pesado = sum(max(0.0, min(100.0, _safe_float(avance_by_ot.get(int(row[0] or 0), row[5]), 0.0))) for row in ots_tipo)
+
+        avance_acumulado = round(avance_pesado / peso_total, 1) if peso_total > 0 else 0.0
+        tendencia = _calcular_tendencia_programacion(ots_tipo, prog_tipo, tipo, avance_by_ot)
 
         hs_previstas = round(sum(_safe_float(r[3], 0.0) for r in ots_tipo), 1)
         hs_cargadas = round(sum(_safe_float(r[4], 0.0) for r in ots_tipo), 1)
         eficiencia = round((hs_cargadas / hs_previstas * 100.0), 1) if hs_previstas > 0 else 0.0
+        hs_segun_avance = round((avance_acumulado / 100.0) * hs_previstas, 1) if hs_previstas > 0 else 0.0
+
+        # Calcular KGs para este tipo
+        kg_tipo_rows = [r for r in kg_source_rows if int(r[2] or 0) in ot_ids_tipo]
+        kg_por_estacion_tipo, kg_despacho_tipo = _calcular_kg_por_estacion_y_despachados(kg_tipo_rows)
+        kg_total_tipo = sum(kg_por_estacion_tipo.values())
+        kg_pintura = kg_por_estacion_tipo.get("PINTURA", 0.0)
+        kg_despacho = kg_por_estacion_tipo.get("P/DESPACHO", 0.0)
 
         salida.append({
             "tipo": tipo,
@@ -322,7 +347,12 @@ def _resumen_tipos_estructura(ots, prog_rows):
             "hs_previstas": hs_previstas,
             "hs_cargadas": hs_cargadas,
             "eficiencia_hs": eficiencia,
+            "avance_acumulado": avance_acumulado,
+            "hs_segun_avance": hs_segun_avance,
             "tendencia": tendencia,
+            "kg_total": kg_total_tipo,
+            "kg_previstos": kg_pintura,
+            "kg_despacho": kg_despacho,
         })
     return salida
 
@@ -538,8 +568,19 @@ body {
 .tipo-card {
     border: 1px solid #e2e8f0;
     border-radius: 12px;
-    padding: 12px;
     background: #f8fafc;
+    overflow: hidden;
+}
+.tipo-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px;
+}
+.tipo-summary-main {
+    flex: 1;
+    min-width: 0;
 }
 .tipo-head {
     display: flex;
@@ -586,6 +627,50 @@ body {
     color: #0f172a;
 }
 .tipo-kpi .l {
+    margin-top: 2px;
+    font-size: 0.68em;
+    color: #64748b;
+    text-transform: uppercase;
+}
+.tipo-acc-btn {
+    border: none;
+    background: #fff7ed;
+    color: #9a3412;
+    font-size: 1.2em;
+    font-weight: 900;
+    min-width: 40px;
+    border-left: 1px solid #e2e8f0;
+    cursor: pointer;
+}
+.tipo-acc-btn:hover {
+    background: #ffedd5;
+}
+.tipo-detalle {
+    display: none;
+    padding: 0 12px 12px 12px;
+    border-top: 1px dashed #e2e8f0;
+}
+.tipo-detalle.abierto {
+    display: block;
+}
+.tipo-detalle-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 10px;
+}
+.tipo-detalle-item {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 8px;
+}
+.tipo-detalle-item .v {
+    font-size: 1.02em;
+    font-weight: 800;
+    color: #0f172a;
+}
+.tipo-detalle-item .l {
     margin-top: 2px;
     font-size: 0.68em;
     color: #64748b;
@@ -876,7 +961,7 @@ body {
     </div>
         <div class="kpi-card">
             <div class="kpi-valor" id="kpi-kg-desp">—</div>
-            <div class="kpi-label">KG despachados</div>
+            <div class="kpi-label">KG P/DESPACHO</div>
         </div>
         <div class="kpi-card">
             <div class="kpi-valor" id="kpi-kg-hs">—</div>
@@ -961,6 +1046,16 @@ function _semaforoClase(codigo) {
     return 'critico';
 }
 
+function toggleTipoDetalle(btn) {
+    const card = btn.closest('.tipo-card');
+    if (!card) return;
+    const detalle = card.querySelector('.tipo-detalle');
+    if (!detalle) return;
+    const abierto = detalle.classList.toggle('abierto');
+    btn.textContent = abierto ? '−' : '+';
+    btn.setAttribute('aria-expanded', abierto ? 'true' : 'false');
+}
+
 function _renderTarjetasTipo(resumenTipos) {
     const host = document.getElementById('tipos-grid');
     if (!host) return;
@@ -977,6 +1072,11 @@ function _renderTarjetasTipo(resumenTipos) {
         const hsPrev = Number(row.hs_previstas || 0).toFixed(1);
         const hsCarg = Number(row.hs_cargadas || 0).toFixed(1);
         const efic = Number(row.eficiencia_hs || 0).toFixed(1);
+        const avance = Number(row.avance_acumulado || 0).toFixed(1);
+        const hsSegun = Number(row.hs_segun_avance || 0).toFixed(1);
+        const kgTotal = Number(row.kg_total || 0).toFixed(2);
+        const kgPrev = Number(row.kg_previstos || 0).toFixed(2);
+        const kgDesp = Number(row.kg_despacho || 0).toFixed(2);
         const tend = row.tendencia || {};
         const sem = tend.semaforo || {};
         const regs = sem.reglas || tend.reglas || {};
@@ -990,20 +1090,36 @@ function _renderTarjetasTipo(resumenTipos) {
 
         return `
             <div class="tipo-card">
-                <div class="tipo-head">
-                    <div class="tipo-title">${tipo}</div>
-                    <span class="tipo-badge ${badgeClass}">${badgeLabel}</span>
+                <div class="tipo-summary">
+                    <div class="tipo-summary-main">
+                        <div class="tipo-head">
+                            <div>
+                                <div class="tipo-title">${tipo}</div>
+                                <div class="tipo-desc">${desc}</div>
+                            </div>
+                            <span class="tipo-badge ${badgeClass}">${badgeLabel}</span>
+                        </div>
+                        <div class="tipo-kpis">
+                            <div class="tipo-kpi"><div class="v">${ots}</div><div class="l">OTs activas</div></div>
+                            <div class="tipo-kpi"><div class="v">${efic}%</div><div class="l">Eficiencia HS</div></div>
+                            <div class="tipo-kpi"><div class="v">${hsPrev} hs</div><div class="l">HS previstas</div></div>
+                            <div class="tipo-kpi"><div class="v">${hsCarg} hs</div><div class="l">HS consumidas</div></div>
+                        </div>
+                    </div>
+                    <button type="button" class="tipo-acc-btn" aria-expanded="false" onclick="toggleTipoDetalle(this)">+</button>
                 </div>
-                <div class="tipo-desc">${desc}</div>
-                <div class="tipo-kpis">
-                    <div class="tipo-kpi"><div class="v">${ots}</div><div class="l">OTs activas</div></div>
-                    <div class="tipo-kpi"><div class="v">${efic}%</div><div class="l">Eficiencia HS</div></div>
-                    <div class="tipo-kpi"><div class="v">${hsPrev} hs</div><div class="l">HS previstas</div></div>
-                    <div class="tipo-kpi"><div class="v">${hsCarg} hs</div><div class="l">HS consumidas</div></div>
-                    <div class="tipo-kpi"><div class="v">${desvio}%</div><div class="l">Desvio hoy</div></div>
-                    <div class="tipo-kpi"><div class="v">${proy}%</div><div class="l">Proyeccion fin</div></div>
+                <div class="tipo-detalle">
+                    <div class="tipo-detalle-grid">
+                        <div class="tipo-detalle-item"><div class="v">${avance}%</div><div class="l">Avance acumulado</div></div>
+                        <div class="tipo-detalle-item"><div class="v">${hsSegun} hs</div><div class="l">HS según avance</div></div>
+                        <div class="tipo-detalle-item"><div class="v">${desvio}%</div><div class="l">Desvío hoy</div></div>
+                        <div class="tipo-detalle-item"><div class="v">${proy}%</div><div class="l">Proyección fin</div></div>
+                        <div class="tipo-detalle-item"><div class="v">${kgTotal} kg</div><div class="l">KG producidos</div></div>
+                        <div class="tipo-detalle-item"><div class="v">${kgPrev} kg</div><div class="l">KG previstos</div></div>
+                        <div class="tipo-detalle-item"><div class="v">${kgDesp} kg</div><div class="l">KG P/DESPACHO</div></div>
+                    </div>
+                    <div class="tipo-umbrales">${semLabel}<br>${umbralTxt}<br>${alertaTxt}</div>
                 </div>
-                <div class="tipo-umbrales">${semLabel}<br>${umbralTxt}<br>${alertaTxt}</div>
             </div>
         `;
     }).join('');
@@ -1693,11 +1809,13 @@ def api_dashboard_estado():
         """, tuple(fecha_query_params) + tipo_params + obra_params).fetchall()
 
     hs_por_ot = []
+    avance_por_ot = {}
     for row in ots:
         nombre = str(row[1] or '')[:22]
         obra_nombre = str(row[2] or 'SIN OBRA')
         hs_previstas = round(float(row[3] or 0), 1)
         avance_pct = int(round(calcular_avance_ot(db, row[0])))
+        avance_por_ot[int(row[0] or 0)] = avance_pct
         hs_segun_avance = round((avance_pct / 100.0) * hs_previstas, 1)
         hs_por_ot.append({
             "ot_id": row[0],
@@ -1786,9 +1904,8 @@ def api_dashboard_estado():
             """,
             tuple(ot_ids_act),
         ).fetchall()
-        tendencia = _calcular_tendencia_programacion(ots, prog_rows, tipo_obra)
-
-    resumen_tipos = _resumen_tipos_estructura(ots, prog_rows)
+        tendencia = _calcular_tendencia_programacion(ots, prog_rows, tipo_obra, avance_por_ot)
+    resumen_tipos = _resumen_tipos_estructura(ots, prog_rows, avance_por_ot, kg_source_rows)
 
     if periodo == "actual":
         ot_ids = [int(row[0]) for row in ots]
