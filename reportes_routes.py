@@ -1032,7 +1032,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
   <div class="bar-legend">{leg_items}</div>
   <div class="axis-labels"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
   {bar_rows}
-  <div class="legend-row">La barra de fondo muestra la composición total por etapa en color claro. La barra superpuesta muestra el <b>% real</b> (campo <b>estado_avance</b>) en color más oscuro.</div>
+  <div class="legend-row">La barra de fondo muestra la composición total por etapa en color claro. La barra superpuesta muestra el <b>% real</b> calculado en vivo desde <b>Producción</b> en color más oscuro.</div>
 </div>"""
 
     # Sección Producción semanal (solo INTERNO)

@@ -1747,9 +1747,7 @@ def api_dashboard_estado():
     db = get_db()
 
     tiene_hs_previstas = _ot_has_column(db, "hs_previstas")
-    tiene_estado_avance = _ot_has_column(db, "estado_avance")
     hs_prev_expr = "COALESCE(ot.hs_previstas, 0)" if tiene_hs_previstas else "0"
-    estado_av_expr = "COALESCE(ot.estado_avance, 0)" if tiene_estado_avance else "0"
 
     # Construir filtros dinámicos
     fecha_filter_sql_pt = ""
@@ -1781,7 +1779,7 @@ def api_dashboard_estado():
                    COALESCE(NULLIF(TRIM(ot.obra),''), 'SIN OBRA') AS obra_nombre,
                    {hs_prev_expr} AS hs_previstas,
                    0 AS hs_cargadas,
-                   {estado_av_expr} AS estado_avance,
+                   0 AS estado_avance,
                    UPPER(TRIM(COALESCE(ot.tipo_estructura, ''))) AS tipo_estructura
             FROM ordenes_trabajo ot
             WHERE ot.fecha_cierre IS NULL {tipo_filter_sql}{obra_filter_sql}
@@ -1795,7 +1793,7 @@ def api_dashboard_estado():
                        COALESCE(NULLIF(TRIM(ot.obra),''), 'SIN OBRA') AS obra_nombre,
                        {hs_prev_expr} AS hs_previstas,
                        COALESCE(SUM(CASE WHEN pt.fecha >= ? {fecha_filter_sql_pt} THEN pt.horas ELSE 0 END), 0) AS hs_cargadas,
-                       {estado_av_expr} AS estado_avance,
+                      0 AS estado_avance,
                        UPPER(TRIM(COALESCE(ot.tipo_estructura, ''))) AS tipo_estructura
                 FROM ordenes_trabajo ot
                 LEFT JOIN partes_trabajo pt ON pt.ot_id = ot.id

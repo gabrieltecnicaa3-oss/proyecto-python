@@ -6,6 +6,7 @@ from calendar import monthrange
 from urllib.parse import quote
 from flask import Blueprint, request, redirect, session
 from db_utils import get_db
+from produccion_routes import calcular_avance_ot
 
 programacion_bp = Blueprint("programacion", __name__)
 _programacion_schema_ready = False
@@ -1036,11 +1037,25 @@ def programacion_index():
                COALESCE(p.hito_titulo, ''), COALESCE(p.hito_fecha, ''),
                COALESCE(ot.obra, ''), COALESCE(ot.titulo, ''),
                COALESCE(ot.cliente, ''), COALESCE(ot.estado, ''), COALESCE(ot.fecha_entrega, ''),
-               COALESCE(ot.estado_avance, 0), COALESCE(ot.hs_previstas, 0)
+               COALESCE(ot.hs_previstas, 0)
         FROM programacion p
         LEFT JOIN ordenes_trabajo ot ON ot.id = p.ot_id
         ORDER BY COALESCE(p.orden, p.id) ASC, p.id ASC
     """).fetchall()
+
+    # Usar avance vivo (Produccion) para toda visualizacion del modulo.
+    avance_live_by_ot = {}
+    for r in rows:
+        try:
+            ot_id_row = int(r[1] or 0)
+        except Exception:
+            continue
+        if ot_id_row <= 0 or ot_id_row in avance_live_by_ot:
+            continue
+        try:
+            avance_live_by_ot[ot_id_row] = max(0, min(100, int(round(calcular_avance_ot(db, ot_id_row)))))
+        except Exception:
+            avance_live_by_ot[ot_id_row] = 0
 
     prog_ids = [int(r[0]) for r in rows]
     hitos_map = {pid: [] for pid in prog_ids}
@@ -1065,8 +1080,8 @@ def programacion_index():
             "hito_titulo": r[7], "hito_fecha": r[8],
             "hitos": (hitos_map.get(int(r[0])) or ([{"titulo": str(r[7] or ""), "fecha": str(r[8] or "")}] if (str(r[7] or "").strip() and str(r[8] or "").strip()) else [])),
             "obra": r[9], "titulo": r[10], "cliente": r[11], "estado_ot": r[12], "fecha_entrega": r[13],
-            "avance": int(r[14] or 0),
-            "es_subcontrato": float(r[15] or 0) == 0 or int(r[5] or 0) == 0,
+            "avance": int(avance_live_by_ot.get(int(r[1] or 0), 0)),
+            "es_subcontrato": float(r[14] or 0) == 0 or int(r[5] or 0) == 0,
         }
         for r in rows
     ]
@@ -1113,11 +1128,23 @@ def programacion_index():
 
     # Cumplimiento: mostrar OTs con actividad en la semana seleccionada O con avance registrado.
     ots_activas_cumpl = db.execute("""
-        SELECT id, COALESCE(obra, ''), COALESCE(titulo, ''), COALESCE(fecha_entrega, ''), COALESCE(estado_avance, 0)
+        SELECT id, COALESCE(obra, ''), COALESCE(titulo, ''), COALESCE(fecha_entrega, '')
         FROM ordenes_trabajo
         WHERE fecha_cierre IS NULL AND (es_mantenimiento IS NULL OR es_mantenimiento = 0)
         ORDER BY id ASC
     """).fetchall()
+
+    for r in ots_activas_cumpl:
+        try:
+            oid = int(r[0] or 0)
+        except Exception:
+            continue
+        if oid <= 0 or oid in avance_live_by_ot:
+            continue
+        try:
+            avance_live_by_ot[oid] = max(0, min(100, int(round(calcular_avance_ot(db, oid)))))
+        except Exception:
+            avance_live_by_ot[oid] = 0
 
     ot_ids_con_actividad_semana = set()
     for e in entradas:
@@ -1142,7 +1169,7 @@ def programacion_index():
     entradas_semana = [
         {"ot_id": r[0], "obra": r[1], "titulo": r[2], "fecha_entrega": r[3]}
         for r in ots_activas_cumpl
-        if int(r[0] or 0) in ot_ids_con_actividad_semana or int(r[4] or 0) > 0
+        if int(r[0] or 0) in ot_ids_con_actividad_semana or int(avance_live_by_ot.get(int(r[0] or 0), 0)) > 0
     ]
     if obra_fil:
         entradas_semana = [e for e in entradas_semana if obra_fil.lower() in (e.get("obra") or "").lower()]
