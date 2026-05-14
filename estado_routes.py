@@ -210,7 +210,7 @@ def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura="", avance_
     for row in ots:
         ot_id = int(row[0] or 0)
         hs_prev_by_ot[ot_id] = max(0.0, _safe_float(row[3], 0.0))
-        avance_by_ot_calc[ot_id] = max(0.0, min(100.0, _safe_float(avance_by_ot.get(ot_id, row[5]), 0.0)))
+        avance_by_ot_calc[ot_id] = max(0.0, min(100.0, _safe_float(avance_by_ot.get(ot_id, 0.0), 0.0)))
 
     prog_by_ot = {}
     for pr in prog_rows:
@@ -317,13 +317,13 @@ def _resumen_tipos_estructura(ots, prog_rows, avance_by_ot=None, kg_source_rows=
         for row in ots_tipo:
             ot_id = int(row[0] or 0)
             peso = _safe_float(row[3], 0.0)
-            avance = max(0.0, min(100.0, _safe_float(avance_by_ot.get(ot_id, row[5]), 0.0)))
+            avance = max(0.0, min(100.0, _safe_float(avance_by_ot.get(ot_id, 0.0), 0.0)))
             avance_pesado += peso * avance
             peso_total += peso
 
         if peso_total <= 0:
             peso_total = float(max(len(ots_tipo), 1))
-            avance_pesado = sum(max(0.0, min(100.0, _safe_float(avance_by_ot.get(int(row[0] or 0), row[5]), 0.0))) for row in ots_tipo)
+            avance_pesado = sum(max(0.0, min(100.0, _safe_float(avance_by_ot.get(int(row[0] or 0), 0.0), 0.0))) for row in ots_tipo)
 
         avance_acumulado = round(avance_pesado / peso_total, 1) if peso_total > 0 else 0.0
         tendencia = _calcular_tendencia_programacion(ots_tipo, prog_tipo, tipo, avance_by_ot)
@@ -1100,19 +1100,19 @@ function _renderTarjetasTipo(resumenTipos) {
                             <span class="tipo-badge ${badgeClass}">${badgeLabel}</span>
                         </div>
                         <div class="tipo-kpis">
-                            <div class="tipo-kpi"><div class="v">${ots}</div><div class="l">OTs activas</div></div>
-                            <div class="tipo-kpi"><div class="v">${efic}%</div><div class="l">Eficiencia HS</div></div>
-                            <div class="tipo-kpi"><div class="v">${hsPrev} hs</div><div class="l">HS previstas</div></div>
-                            <div class="tipo-kpi"><div class="v">${hsCarg} hs</div><div class="l">HS consumidas</div></div>
+                            <div class="tipo-kpi"><div class="v">${avance}%</div><div class="l">Avance acumulado</div></div>
+                            <div class="tipo-kpi"><div class="v">${desvio}%</div><div class="l">Desvío hoy</div></div>
                         </div>
                     </div>
                     <button type="button" class="tipo-acc-btn" aria-expanded="false" onclick="toggleTipoDetalle(this)">+</button>
                 </div>
                 <div class="tipo-detalle">
                     <div class="tipo-detalle-grid">
-                        <div class="tipo-detalle-item"><div class="v">${avance}%</div><div class="l">Avance acumulado</div></div>
+                        <div class="tipo-detalle-item"><div class="v">${ots}</div><div class="l">OTs activas</div></div>
+                        <div class="tipo-detalle-item"><div class="v">${efic}%</div><div class="l">Eficiencia HS</div></div>
+                        <div class="tipo-detalle-item"><div class="v">${hsPrev} hs</div><div class="l">HS previstas</div></div>
+                        <div class="tipo-detalle-item"><div class="v">${hsCarg} hs</div><div class="l">HS consumidas</div></div>
                         <div class="tipo-detalle-item"><div class="v">${hsSegun} hs</div><div class="l">HS según avance</div></div>
-                        <div class="tipo-detalle-item"><div class="v">${desvio}%</div><div class="l">Desvío hoy</div></div>
                         <div class="tipo-detalle-item"><div class="v">${proy}%</div><div class="l">Proyección fin</div></div>
                         <div class="tipo-detalle-item"><div class="v">${kgTotal} kg</div><div class="l">KG producidos</div></div>
                         <div class="tipo-detalle-item"><div class="v">${kgPrev} kg</div><div class="l">KG previstos</div></div>

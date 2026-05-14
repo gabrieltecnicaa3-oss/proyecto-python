@@ -1,6 +1,7 @@
 from flask import Blueprint, request, Response, redirect, url_for
 from db_utils import get_db
 from datetime import date, timedelta, datetime
+from produccion_routes import calcular_avance_ot
 
 reportes_bp = Blueprint("reportes", __name__)
 
@@ -234,11 +235,15 @@ def _collect(db, obra, year, week, week_start, week_end):
         else:
             n_en_termino += 1
 
-    # Avance por OT (alineado con Estado de Producción: estado_avance persistido)
+    # Avance por OT usando calculo vivo para mantener consistencia con Produccion/Estado.
     avance_by_ot = {}
     for ot in ots:
       ot_id = int(ot[0])
-      avance_by_ot[ot_id] = max(0, min(100, int(ot[6] or 0)))
+      try:
+        avance_live = int(round(calcular_avance_ot(db, ot_id)))
+      except Exception:
+        avance_live = int(ot[6] or 0)
+      avance_by_ot[ot_id] = max(0, min(100, avance_live))
 
     # KG totales estimados por OT (base para referencia de la vista por KG)
     kg_total_by_ot = {}
