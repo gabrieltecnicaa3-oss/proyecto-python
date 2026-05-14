@@ -11,7 +11,7 @@ from reportlab.graphics.shapes import Drawing, String
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics.charts.piecharts import Pie
 from db_utils import get_db, _guardar_pdf_databook as _db_guardar_pdf_databook
-from produccion_routes import calcular_avance_ot
+from produccion_routes import calcular_avance_ot, _avance_y_desglose_ot
 from proceso_utils import _proceso_aprobado
 
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -303,9 +303,11 @@ def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura="", avance_
     }
 
 
-def _resumen_tipos_estructura(ots, prog_rows, avance_by_ot=None, kg_source_rows=None):
+def _resumen_tipos_estructura(ots, prog_rows, avance_by_ot=None, kg_source_rows=None, kg_prev_by_ot=None, kg_prod_by_ot=None):
     avance_by_ot = avance_by_ot or {}
     kg_source_rows = kg_source_rows or []
+    kg_prev_by_ot = kg_prev_by_ot or {}
+    kg_prod_by_ot = kg_prod_by_ot or {}
     tipos = ["TIPO I", "TIPO II", "TIPO III"]
     salida = []
     for tipo in tipos:
@@ -336,7 +338,10 @@ def _resumen_tipos_estructura(ots, prog_rows, avance_by_ot=None, kg_source_rows=
         # Calcular KGs para este tipo
         kg_tipo_rows = [r for r in kg_source_rows if int(r[2] or 0) in ot_ids_tipo]
         kg_por_estacion_tipo, kg_despacho_tipo = _calcular_kg_por_estacion_y_despachados(kg_tipo_rows)
-        kg_total_tipo = sum(kg_por_estacion_tipo.values())
+        kg_previstos_tipo = sum(_safe_float(kg_prev_by_ot.get(oid, 0.0), 0.0) for oid in ot_ids_tipo)
+        kg_producidos_tipo = sum(_safe_float(kg_prod_by_ot.get(oid, 0.0), 0.0) for oid in ot_ids_tipo)
+        if kg_previstos_tipo > 0:
+            kg_producidos_tipo = min(kg_previstos_tipo, kg_producidos_tipo)
         kg_pintura = kg_por_estacion_tipo.get("PINTURA", 0.0)
         kg_despacho = kg_por_estacion_tipo.get("P/DESPACHO", 0.0)
 
@@ -350,8 +355,8 @@ def _resumen_tipos_estructura(ots, prog_rows, avance_by_ot=None, kg_source_rows=
             "avance_acumulado": avance_acumulado,
             "hs_segun_avance": hs_segun_avance,
             "tendencia": tendencia,
-            "kg_total": kg_total_tipo,
-            "kg_previstos": kg_pintura,
+            "kg_total": round(_safe_float(kg_producidos_tipo, 0.0), 2),
+            "kg_previstos": round(_safe_float(kg_previstos_tipo, 0.0), 2),
             "kg_despacho": kg_despacho,
         })
     return salida
@@ -1087,6 +1092,7 @@ function _renderTarjetasTipo(resumenTipos) {
         const semLabel = String(sem.label || 'Sin tendencia');
         const umbralTxt = 'OK: desvio >= ' + Number(regs.desvio_ok_min || 0).toFixed(1) + '% | proy >= ' + Number(regs.proy_ok_min || 0).toFixed(1) + '%';
         const alertaTxt = 'Alerta: desvio >= ' + Number(regs.desvio_alerta_min || 0).toFixed(1) + '% | proy >= ' + Number(regs.proy_alerta_min || 0).toFixed(1) + '%';
+        const criterioCritico = 'Critico si desvio < ' + Number(regs.desvio_alerta_min || 0).toFixed(1) + '% o proy < ' + Number(regs.proy_alerta_min || 0).toFixed(1) + '%';
 
         return `
             <div class="tipo-card">
@@ -1119,6 +1125,7 @@ function _renderTarjetasTipo(resumenTipos) {
                         <div class="tipo-detalle-item"><div class="v">${kgDesp} kg</div><div class="l">KG P/DESPACHO</div></div>
                     </div>
                     <div class="tipo-umbrales">${semLabel}<br>${umbralTxt}<br>${alertaTxt}</div>
+                    <div class="tipo-umbrales" style="margin-top:4px;">${criterioCritico}</div>
                 </div>
             </div>
         `;
@@ -1808,17 +1815,28 @@ def api_dashboard_estado():
 
     hs_por_ot = []
     avance_por_ot = {}
+    kg_prev_by_ot = {}
+    kg_prod_by_ot = {}
     for row in ots:
+        ot_id = int(row[0] or 0)
         nombre = str(row[1] or '')[:22]
         obra_nombre = str(row[2] or 'SIN OBRA')
         hs_previstas = round(float(row[3] or 0), 1)
-        avance_pct = int(round(calcular_avance_ot(db, row[0])))
-        avance_por_ot[int(row[0] or 0)] = avance_pct
+        try:
+            avance_pct, _, _, kg_prev_ot, kg_prod_ot = _avance_y_desglose_ot(db, ot_id)
+            avance_pct = int(max(0, min(100, int(round(avance_pct)))))
+            kg_prev_by_ot[ot_id] = round(_safe_float(kg_prev_ot, 0.0), 2)
+            kg_prod_by_ot[ot_id] = round(_safe_float(kg_prod_ot, 0.0), 2)
+        except Exception:
+            avance_pct = int(round(calcular_avance_ot(db, ot_id)))
+            kg_prev_by_ot[ot_id] = 0.0
+            kg_prod_by_ot[ot_id] = 0.0
+        avance_por_ot[ot_id] = avance_pct
         hs_segun_avance = round((avance_pct / 100.0) * hs_previstas, 1)
         hs_por_ot.append({
-            "ot_id": row[0],
+            "ot_id": ot_id,
             "obra": obra_nombre,
-            "label": f"OT {row[0]} · {nombre}",
+            "label": f"OT {ot_id} · {nombre}",
             "hs_previstas": hs_previstas,
             "hs_cargadas":  round(float(row[4] or 0), 1),
             "hs_segun_avance": hs_segun_avance,
@@ -1956,7 +1974,14 @@ def api_dashboard_estado():
             tuple(ot_ids_act),
         ).fetchall()
         tendencia = _calcular_tendencia_programacion(ots, prog_rows, tipo_obra, avance_por_ot)
-    resumen_tipos = _resumen_tipos_estructura(ots, prog_rows, avance_por_ot, kg_source_rows)
+    resumen_tipos = _resumen_tipos_estructura(
+        ots,
+        prog_rows,
+        avance_por_ot,
+        kg_source_rows,
+        kg_prev_by_ot,
+        kg_prod_by_ot,
+    )
 
     kg_por_estacion, kg_despachados = _calcular_kg_por_estacion_y_despachados(kg_source_rows)
 
