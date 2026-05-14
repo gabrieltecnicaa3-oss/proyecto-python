@@ -627,6 +627,18 @@ def produccion():
             continue
         filas_filtradas.append(fila)
 
+    avance_visible_pct = 0
+    avance_visible_kg_total = sum(max(0.0, float(f["total_kg"] or 0.0)) for f in filas_filtradas)
+    if avance_visible_kg_total > 0:
+        avance_visible_kg = sum(
+            max(0.0, float(f["avance_kg"] or 0.0))
+            for f in filas_filtradas
+        )
+        avance_visible_pct = round((avance_visible_kg / avance_visible_kg_total) * 100)
+    elif filas_filtradas:
+        avance_visible_pct = round(sum(float(f["progreso"] or 0) for f in filas_filtradas) / len(filas_filtradas))
+    avance_visible_pct = max(0, min(100, avance_visible_pct))
+
     resumen_obra = {}
     for fila in filas_filtradas:
         obra_key = fila["obra"] or "Sin obra"
@@ -722,7 +734,7 @@ def produccion():
         <div class="kpis">
             <div class="kpi"><div class="t">OT visibles</div><div class="v">{len(filas_filtradas)}</div></div>
             <div class="kpi"><div class="t">Obras visibles</div><div class="v">{len(resumen_obra)}</div></div>
-            <div class="kpi"><div class="t">Suma avance OT (visible)</div><div class="v">{sum([f['progreso'] for f in filas_filtradas])}%</div></div>
+            <div class="kpi"><div class="t">Avance OT visible</div><div class="v">{avance_visible_pct}%</div><div style="font-size:12px;color:#7c2d12;">Ponderado por KG</div></div>
         </div>
     </div>
     """

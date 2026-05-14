@@ -13,6 +13,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Image as RLImage, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from db_utils import get_db
+from produccion_routes import calcular_avance_ot
 
 
 tablero_ejecutivo_bp = Blueprint("tablero_ejecutivo", __name__)
@@ -365,7 +366,6 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
                COALESCE(fecha_entrega, ''),
                COALESCE(fecha_creacion, ''),
                COALESCE(estado, ''),
-               COALESCE(estado_avance, 0),
                COALESCE(hs_previstas, 0),
                COALESCE(tipo_estructura, '')
         FROM ordenes_trabajo
@@ -396,8 +396,8 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
             "fecha_entrega": _to_date(row[3]),
             "fecha_creacion": _to_date(row[4]),
             "estado": str(row[5] or ""),
-            "estado_avance": _to_float(row[6]),
-            "hs_previstas": _to_float(row[7]),
+            "estado_avance": max(0.0, min(100.0, float(calcular_avance_ot(db, ot_id)))),
+            "hs_previstas": _to_float(row[6]),
             "tipo_estructura": tipo,
         }
 
