@@ -382,7 +382,7 @@ def _fetch_dashboard_data(db, obra_filter, tipo_filter):
     for row in ots_rows:
         ot_id = int(row[0] or 0)
         obra = str(row[1] or "").strip()
-        tipo = str(row[8] or "").strip()
+        tipo = str(row[7] or "").strip()
         if obra_filter and obra.lower() != obra_filter.lower():
             continue
         if tipo_filter and tipo.lower() != tipo_filter.lower():
