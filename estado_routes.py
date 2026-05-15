@@ -193,7 +193,7 @@ def _clasificar_tendencia(tipo_estructura, desvio_hoy, proj_fin):
     }
 
 
-def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura="", avance_by_ot=None, kg_prev_by_ot=None):
+def _calcular_tendencia_programacion(db, ots, prog_rows, tipo_estructura="", avance_by_ot=None, kg_prev_by_ot=None):
     reglas = _reglas_tipo_estructura(tipo_estructura)
     avance_by_ot = avance_by_ot or {}
     kg_prev_by_ot = kg_prev_by_ot or {}
@@ -274,24 +274,25 @@ def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura="", avance_
             acc += _w(oid) * (elapsed / den * 100.0)
         return round(acc / weight_sum, 1) if weight_sum > 0 else 0.0
 
-    # real_now: usa TODOS los OTs activos (igual criterio que Produccion),
-    # no solo los programados, para garantizar consistencia de porcentajes.
+    # real_now: calcula en tiempo real con calcular_avance_ot (igual a Produccion)
+    # ponderado por KG previsto. Garantiza 100% consistencia con Produccion.
     all_ot_ids = list(avance_by_ot_calc.keys())
+    
+    real_avances = {}
+    for oid in all_ot_ids:
+        try:
+            real_avances[oid] = max(0.0, min(100.0, float(calcular_avance_ot(db, oid))))
+        except Exception:
+            real_avances[oid] = avance_by_ot_calc.get(oid, 0.0)
+    
     kg_all_sum = sum(max(0.0, _safe_float(kg_prev_by_ot.get(oid, 0.0), 0.0)) for oid in all_ot_ids)
-    hs_all_sum = sum(max(0.0, _safe_float(hs_prev_by_ot.get(oid, 0.0), 0.0)) for oid in all_ot_ids)
-    use_kg_real = kg_all_sum > 0
-    use_hs_real = (not use_kg_real) and hs_all_sum > 0
-    def _w_real(oid):
-        if use_kg_real:
-            return max(0.0, _safe_float(kg_prev_by_ot.get(oid, 0.0), 0.0))
-        if use_hs_real:
-            return max(0.0, _safe_float(hs_prev_by_ot.get(oid, 0.0), 0.0))
-        return 1.0
-    real_weight_sum = kg_all_sum if use_kg_real else (hs_all_sum if use_hs_real else float(max(len(all_ot_ids), 1)))
-    real_now = round(
-        sum(_w_real(oid) * avance_by_ot_calc.get(oid, 0.0) for oid in all_ot_ids) / real_weight_sum,
-        1,
-    ) if real_weight_sum > 0 else 0.0
+    if kg_all_sum > 0:
+        real_now = round(
+            sum(real_avances.get(oid, 0.0) * max(0.0, _safe_float(kg_prev_by_ot.get(oid, 0.0), 0.0)) for oid in all_ot_ids) / kg_all_sum,
+            1,
+        )
+    else:
+        real_now = round(sum(real_avances.values()) / max(len(all_ot_ids), 1), 1) if all_ot_ids else 0.0
 
     today_d = date.today()
     today_clamped = min(max(today_d, date_start), date_end)
@@ -330,7 +331,7 @@ def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura="", avance_
     }
 
 
-def _resumen_tipos_estructura(ots, prog_rows, avance_by_ot=None, kg_source_rows=None, kg_prev_by_ot=None, kg_prod_by_ot=None):
+def _resumen_tipos_estructura(db, ots, prog_rows, avance_by_ot=None, kg_source_rows=None, kg_prev_by_ot=None, kg_prod_by_ot=None):
     avance_by_ot = avance_by_ot or {}
     kg_source_rows = kg_source_rows or []
     kg_prev_by_ot = kg_prev_by_ot or {}
@@ -355,7 +356,7 @@ def _resumen_tipos_estructura(ots, prog_rows, avance_by_ot=None, kg_source_rows=
             avance_pesado = sum(max(0.0, min(100.0, _safe_float(avance_by_ot.get(int(row[0] or 0), 0.0), 0.0))) for row in ots_tipo)
 
         avance_acumulado = round(avance_pesado / peso_total, 1) if peso_total > 0 else 0.0
-        tendencia = _calcular_tendencia_programacion(ots_tipo, prog_tipo, tipo, avance_by_ot)
+        tendencia = _calcular_tendencia_programacion(db, ots_tipo, prog_tipo, tipo, avance_by_ot)
 
         hs_previstas = round(sum(_safe_float(r[3], 0.0) for r in ots_tipo), 1)
         hs_cargadas = round(sum(_safe_float(r[4], 0.0) for r in ots_tipo), 1)
@@ -2000,8 +2001,9 @@ def api_dashboard_estado():
             """,
             tuple(ot_ids_act),
         ).fetchall()
-        tendencia = _calcular_tendencia_programacion(ots, prog_rows, tipo_obra, avance_por_ot, kg_prev_by_ot)
+        tendencia = _calcular_tendencia_programacion(db, ots, prog_rows, tipo_obra, avance_por_ot, kg_prev_by_ot)
     resumen_tipos = _resumen_tipos_estructura(
+        db,
         ots,
         prog_rows,
         avance_por_ot,

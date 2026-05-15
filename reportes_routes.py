@@ -907,7 +907,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 
     table_rows = ""
     for ot in ots:
-        ot_id, titulo, tipo_est, fe, _, _, _ = ot
+        ot_id, titulo, tipo_est, fe, _, _ = ot
         obra_ot = _e(ot_obra_by_id.get(int(ot_id), ""))
         titulo_mostrar = f"[{obra_ot}] {_e(titulo)}" if all_obras and obra_ot else _e(titulo)
         total = total_by_ot.get(ot_id, 0)
@@ -981,7 +981,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     )
     bar_rows = ""
     for ot in ots:
-        ot_id, titulo, tipo_est, fe, _, _, _ = ot
+        ot_id, titulo, tipo_est, fe, _, _ = ot
         obra_ot = _e(ot_obra_by_id.get(int(ot_id), ""))
         titulo_mostrar = f"[{obra_ot}] {_e(titulo)}" if all_obras and obra_ot else _e(titulo)
         total = total_by_ot.get(ot_id, 0)
@@ -1212,7 +1212,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     desvio_rank = []
     desvio_vals = []
     for ot in ots_sorted:
-        ot_id, titulo, tipo_est, fe, _, _, _ = ot
+        ot_id, titulo, tipo_est, fe, _, _ = ot
         obra_ot = _e(ot_obra_by_id.get(int(ot_id), ""))
         titulo_mostrar = f"[{obra_ot}] {_e(titulo)}" if all_obras and obra_ot else _e(titulo)
         total   = total_by_ot.get(ot_id, 0)
