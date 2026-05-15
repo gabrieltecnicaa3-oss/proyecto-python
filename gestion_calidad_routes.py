@@ -434,6 +434,47 @@ def gestion_calidad_dashboard():
         </div>
         """
 
+    # Piezas con NC por proceso
+    piezas_nc_rows = db.execute(
+        """
+        SELECT
+            UPPER(TRIM(proceso)) AS proceso,
+            TRIM(COALESCE(posicion, '')) AS pieza,
+            COUNT(*) AS cant_nc
+        FROM procesos
+        WHERE fecha IS NOT NULL
+            AND TRIM(fecha) <> ''
+            AND fecha >= ?
+            AND fecha <= ?
+            AND UPPER(TRIM(proceso)) IN ('ARMADO','SOLDADURA','PINTURA','DESPACHO')
+            AND estado IS NOT NULL
+            AND TRIM(estado) <> ''
+            AND UPPER(TRIM(estado)) IN ('NC', 'NO CONFORME', 'NO CONFORMIDAD')
+            AND eliminado = 0
+            AND TRIM(COALESCE(posicion, '')) <> ''
+        GROUP BY UPPER(TRIM(proceso)), TRIM(COALESCE(posicion, ''))
+        ORDER BY UPPER(TRIM(proceso)), TRIM(COALESCE(posicion, ''))
+        """,
+        (fecha_desde.isoformat(), fecha_hasta.isoformat())
+    ).fetchall()
+
+    piezas_nc_html = ""
+    for proceso, pieza, cant in piezas_nc_rows:
+        piezas_nc_html += f"""
+        <tr>
+            <td>{html_lib.escape(str(proceso or ''))}</td>
+            <td>{html_lib.escape(str(pieza or ''))}</td>
+            <td><b>{int(cant or 0)}</b></td>
+        </tr>
+        """
+    
+    if not piezas_nc_html:
+        piezas_nc_html = """
+        <tr>
+            <td colspan="3" style="text-align:center; color:#6b7280;">Sin piezas con NC registradas en el período</td>
+        </tr>
+        """
+
     tratamientos = db.execute(
         """
                 SELECT
@@ -633,6 +674,17 @@ def gestion_calidad_dashboard():
                     <th>Cantidad</th>
                 </tr>
                 {causas_rows_html}
+            </table>
+        </div>
+        <div class="card">
+            <h3>🔴 Piezas con NC</h3>
+            <table>
+                <tr>
+                    <th>Proceso</th>
+                    <th>Pieza</th>
+                    <th>Cantidad NC</th>
+                </tr>
+                {piezas_nc_html}
             </table>
         </div>
     </div>

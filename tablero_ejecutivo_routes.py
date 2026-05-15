@@ -866,7 +866,13 @@ def tablero_ejecutivo_integral():
     tipo = (request.args.get("tipo") or "").strip()
 
     db = get_db()
-    data = _fetch_dashboard_data(db, obra, tipo)
+    try:
+        data = _fetch_dashboard_data(db, obra, tipo)
+    except Exception as e:
+        return (
+            f"<h3 style='font-family:Arial;padding:16px;color:#991b1b;'>Error al cargar dashboard: {str(e)}</h3>",
+            500,
+        )
     m = data.get("metrics", {})
 
     obras_opts = ['<option value="">Todas</option>']
