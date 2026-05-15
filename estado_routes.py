@@ -1817,7 +1817,10 @@ def api_dashboard_estado():
                    0 AS estado_avance,
                    UPPER(TRIM(COALESCE(ot.tipo_estructura, ''))) AS tipo_estructura
             FROM ordenes_trabajo ot
-            WHERE ot.fecha_cierre IS NULL {tipo_filter_sql}{obra_filter_sql}
+            WHERE ot.fecha_cierre IS NULL
+              AND (ot.estado IS NULL OR ot.estado != 'Finalizada')
+              AND (ot.es_mantenimiento IS NULL OR ot.es_mantenimiento = 0)
+              {tipo_filter_sql}{obra_filter_sql}
             ORDER BY ot.id DESC
         """, tipo_params + obra_params).fetchall()
     else:
@@ -1832,12 +1835,14 @@ def api_dashboard_estado():
                        UPPER(TRIM(COALESCE(ot.tipo_estructura, ''))) AS tipo_estructura
                 FROM ordenes_trabajo ot
                 LEFT JOIN partes_trabajo pt ON pt.ot_id = ot.id
-                WHERE ot.fecha_cierre IS NULL {tipo_filter_sql}{obra_filter_sql}
+                                WHERE ot.fecha_cierre IS NULL
+                                    AND (ot.estado IS NULL OR ot.estado != 'Finalizada')
+                                    AND (ot.es_mantenimiento IS NULL OR ot.es_mantenimiento = 0)
+                                    {tipo_filter_sql}{obra_filter_sql}
                 GROUP BY ot.id
             )
             SELECT id, nombre, obra_nombre, hs_previstas, hs_cargadas, estado_avance, tipo_estructura
-            FROM hs_ot
-            WHERE hs_previstas > 0 OR hs_cargadas > 0
+                        FROM hs_ot
             ORDER BY id DESC
         """, tuple(fecha_query_params) + tipo_params + obra_params).fetchall()
 
