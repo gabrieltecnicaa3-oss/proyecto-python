@@ -216,7 +216,7 @@ def _collect(db, obra, year, week, week_start, week_end):
     n_en_termino = 0
     n_atrasado = 0
     for ot in ots:
-        ot_id, _, _, fe, _, _, _ = ot
+        ot_id, _, _, fe, _, _ = ot
         total = total_by_ot.get(ot_id, 0)
         n_des = appr[ot_id]["DESPACHO"]
         # Cumplido: todas las piezas despachadas

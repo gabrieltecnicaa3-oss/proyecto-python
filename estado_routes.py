@@ -274,10 +274,24 @@ def _calcular_tendencia_programacion(ots, prog_rows, tipo_estructura="", avance_
             acc += _w(oid) * (elapsed / den * 100.0)
         return round(acc / weight_sum, 1) if weight_sum > 0 else 0.0
 
+    # real_now: usa TODOS los OTs activos (igual criterio que Produccion),
+    # no solo los programados, para garantizar consistencia de porcentajes.
+    all_ot_ids = list(avance_by_ot_calc.keys())
+    kg_all_sum = sum(max(0.0, _safe_float(kg_prev_by_ot.get(oid, 0.0), 0.0)) for oid in all_ot_ids)
+    hs_all_sum = sum(max(0.0, _safe_float(hs_prev_by_ot.get(oid, 0.0), 0.0)) for oid in all_ot_ids)
+    use_kg_real = kg_all_sum > 0
+    use_hs_real = (not use_kg_real) and hs_all_sum > 0
+    def _w_real(oid):
+        if use_kg_real:
+            return max(0.0, _safe_float(kg_prev_by_ot.get(oid, 0.0), 0.0))
+        if use_hs_real:
+            return max(0.0, _safe_float(hs_prev_by_ot.get(oid, 0.0), 0.0))
+        return 1.0
+    real_weight_sum = kg_all_sum if use_kg_real else (hs_all_sum if use_hs_real else float(max(len(all_ot_ids), 1)))
     real_now = round(
-        sum(_w(oid) * avance_by_ot_calc.get(oid, 0.0) for oid in ot_ids_prog) / weight_sum,
+        sum(_w_real(oid) * avance_by_ot_calc.get(oid, 0.0) for oid in all_ot_ids) / real_weight_sum,
         1,
-    ) if weight_sum > 0 else 0.0
+    ) if real_weight_sum > 0 else 0.0
 
     today_d = date.today()
     today_clamped = min(max(today_d, date_start), date_end)
