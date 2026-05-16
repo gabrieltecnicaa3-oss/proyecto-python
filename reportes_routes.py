@@ -1576,7 +1576,7 @@ def reportes_index():
 
     week_opts = ""
     cur_y, cur_w = iso[0], iso[1]
-    for i in range(11, -1, -1):
+    for i in range(0, 12):
         wd = today - timedelta(weeks=i)
         y, w, _ = wd.isocalendar()
         mon, sun = _week_range(y, w)

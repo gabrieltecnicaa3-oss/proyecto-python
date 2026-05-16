@@ -1,4 +1,5 @@
 import os
+from time import perf_counter
 from io import BytesIO
 from flask import Blueprint, request, jsonify, send_file, session
 from datetime import date, timedelta, datetime
@@ -1774,6 +1775,19 @@ actualizarDescripcionTipo(tipoObraActivo);
 
 @estado_bp.route("/api/dashboard-estado")
 def api_dashboard_estado():
+    perf_enabled = (request.args.get("debug_perf", "") == "1") or (str(os.environ.get("ESTADO_PERF_LOG", "0")) == "1")
+    t_start = perf_counter()
+    t_prev = t_start
+    perf_marks = []
+
+    def _perf_mark(label):
+        nonlocal t_prev
+        if not perf_enabled:
+            return
+        now = perf_counter()
+        perf_marks.append((label, (now - t_prev) * 1000.0))
+        t_prev = now
+
     periodo = request.args.get("periodo", "mes")
     tipo_obra_raw = (request.args.get("tipo_obra") or "").strip().upper()
     tipo_obra = tipo_obra_raw if tipo_obra_raw and tipo_obra_raw != "TODAS" else ""
@@ -1869,6 +1883,7 @@ def api_dashboard_estado():
                         FROM hs_ot
             ORDER BY id DESC
         """, tuple(fecha_query_params) + tipo_params + obra_params).fetchall()
+    _perf_mark("query_ots")
 
     hs_por_ot = []
     avance_por_ot = {}
@@ -1900,6 +1915,7 @@ def api_dashboard_estado():
             "avance_pct": avance_pct,
             "tipo_estructura": str(row[6] or '').strip().upper(),
         })
+    _perf_mark("calculo_avance_por_ot")
 
     if periodo == "actual":
         obras = db.execute(f"""
@@ -1962,6 +1978,7 @@ def api_dashboard_estado():
             "hs_cargadas": round(float(row[2] or 0), 1),
             "hs_segun_avance": round(hs_segun_avance_suma, 1)
         })
+    _perf_mark("obras_y_hs")
 
     # Calcular kg_source_rows ANTES de usarla
     if periodo == "actual":
@@ -2015,6 +2032,7 @@ def api_dashboard_estado():
             """,
             (fecha_desde_str,) + tuple(params_proc) + (tipo_obra, tipo_obra, obra, obra),
         ).fetchall()
+    _perf_mark("query_kg_source")
 
     tendencia = {"habilitado": False, "motivo": "Sin OTs activas", "tipo_estructura": (tipo_obra or "GENERAL")}
     prog_rows = []
@@ -2048,8 +2066,10 @@ def api_dashboard_estado():
         kg_prev_by_ot,
         kg_prod_by_ot,
     )
+    _perf_mark("tendencia_y_resumen_tipos")
 
     kg_por_estacion, kg_despachados = _calcular_kg_por_estacion_y_despachados(kg_source_rows)
+    _perf_mark("kg_por_estacion")
 
     # Evitar enviar None en fechas para el frontend
     fecha_desde_resp = fecha_desde_str if fecha_desde_str else ""
@@ -2057,6 +2077,16 @@ def api_dashboard_estado():
     if periodo == "actual":
         fecha_desde_resp = str(date.today())
         fecha_hasta_resp = ""
+
+    if perf_enabled:
+        total_ms = (perf_counter() - t_start) * 1000.0
+        parts = ", ".join([f"{name}={ms:.1f}ms" for name, ms in perf_marks])
+        print(
+            "[estado_perf] "
+            f"periodo={periodo} tipo={tipo_obra or 'TODAS'} obra={obra or 'TODAS'} "
+            f"ots={len(ots)} hs_ot={len(hs_por_ot)} kg_rows={len(kg_source_rows)} total={total_ms:.1f}ms | {parts}"
+        )
+
     return jsonify({
         "periodo": periodo,
         "fecha_desde": fecha_desde_resp,

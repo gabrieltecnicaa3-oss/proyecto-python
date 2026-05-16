@@ -1499,6 +1499,17 @@ def parte_carga_empleados():
 def parte_semanal_reportes():
     db = get_db()
 
+    def _semana_iso_label(fecha_txt):
+        f = str(fecha_txt or "").strip()
+        if not f:
+            return "Sin fecha"
+        try:
+            d = datetime.strptime(f[:10], "%Y-%m-%d").date()
+            iso = d.isocalendar()
+            return f"Semana {iso[1]:02d} ({iso[0]})"
+        except Exception:
+            return f"Semana - ({f})"
+
     filtro_obra = request.args.get("obra", "").strip()
     filtro_empleado = request.args.get("empleado", "").strip()
     filtro_semana = request.args.get("semana", "").strip()
@@ -1605,7 +1616,8 @@ def parte_semanal_reportes():
     for semana in semanas:
         semana_val = str(semana[0] or '').strip()
         selected = 'selected' if semana_val == filtro_semana else ''
-        opciones_semanas += f'<option value="{semana_val}" {selected}>{semana_val}</option>'
+        semana_lbl = _semana_iso_label(semana_val)
+        opciones_semanas += f'<option value="{semana_val}" {selected}>{semana_lbl} - {semana_val}</option>'
 
     meses = db.execute("""
         SELECT DISTINCT substr(fecha, 1, 7) AS mes
@@ -1638,6 +1650,11 @@ def parte_semanal_reportes():
     for fecha in sorted(reportes_por_semana.keys(), reverse=True):
         reps_semana = reportes_por_semana[fecha]
         total_empleados = len(reps_semana)
+        semana_id = "wk_" + "".join(ch for ch in str(fecha) if ch.isalnum())
+        semana_lbl = _semana_iso_label(fecha)
+        expanded = (filtro_semana == str(fecha))
+        btn_txt = "Ocultar" if expanded else "Desplegar"
+        btn_aria = "true" if expanded else "false"
 
         horas_semana = sum(float(r[7] or 0) for row_list in reps_semana.values() for r in row_list)
         registros_semana = sum(len(row_list) for row_list in reps_semana.values())
@@ -1647,8 +1664,11 @@ def parte_semanal_reportes():
         <tr style="background: #eef8fd; font-weight: bold;">
             <td colspan="8" style="background: #a8d8ea; color: #1f4e5f; padding: 12px; font-size: 16px;">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-                    <span>📅 Semana del {fecha} | {total_empleados} empleados | {registros_semana} registros | {horas_semana:.1f} HS</span>
-                    <a href="{editar_semana_url}" style="display:inline-block;padding:6px 10px;border-radius:6px;background:#2563eb;color:#fff;text-decoration:none;font-size:12px;">✏️ Editar semana</a>
+                    <span>📅 {semana_lbl} · del {fecha} | {total_empleados} empleados | {registros_semana} registros | {horas_semana:.1f} HS</span>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <button type="button" class="btn-toggle-week" aria-expanded="{btn_aria}" onclick="toggleWeekDetails('{semana_id}', this)">{btn_txt}</button>
+                        <a href="{editar_semana_url}" style="display:inline-block;padding:6px 10px;border-radius:6px;background:#2563eb;color:#fff;text-decoration:none;font-size:12px;">✏️ Editar semana</a>
+                    </div>
                 </div>
             </td>
         </tr>
@@ -1666,9 +1686,10 @@ def parte_semanal_reportes():
                 horas = float(rep[7] or 0)
 
                 horas_cell = f"<b>{horas:.1f}</b>" if idx == len(rows_emp) - 1 else f"{horas:.1f}"
+                detail_class = "week-detail-row show" if expanded else "week-detail-row"
 
                 filas += f"""
-        <tr>
+            <tr class="{detail_class}" data-week="{semana_id}">
             <td><b>{html_lib.escape(operario_label)}</b></td>
             <td>{obra}</td>
             <td><b>{ot_id}</b></td>
@@ -1707,6 +1728,10 @@ def parte_semanal_reportes():
     .btn-clear {{ background: #9e9e9e; }}
     .btn-clear:hover {{ background: #757575; }}
     .summary {{ background: #e8f5e9; border-left: 5px solid #43a047; padding: 14px; border-radius: 5px; margin-bottom: 16px; color: #1b5e20; font-size: 16px; }}
+    .btn-toggle-week {{ background: #0f766e; color: #fff; border: none; border-radius: 6px; font-size: 12px; font-weight: bold; padding: 6px 10px; cursor: pointer; }}
+    .btn-toggle-week:hover {{ background: #0d5f59; }}
+    .week-detail-row {{ display: none; }}
+    .week-detail-row.show {{ display: table-row; }}
     table {{ width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.08); font-size: 13px; }}
     th, td {{ padding: 10px; border-bottom: 1px solid #ddd; text-align: left; }}
     th {{ background: #43a047; color: white; font-weight: bold; font-size: 12px; }}
@@ -1782,6 +1807,20 @@ def parte_semanal_reportes():
         </tr>
         {filas}
     </table>
+    <script>
+    function toggleWeekDetails(weekId, btn) {{
+        const rows = document.querySelectorAll('tr[data-week="' + weekId + '"]');
+        if (!rows.length) return;
+        const isShown = rows[0].classList.contains('show');
+        rows.forEach((row) => {{
+            row.classList.toggle('show', !isShown);
+        }});
+        if (btn) {{
+            btn.textContent = isShown ? 'Desplegar' : 'Ocultar';
+            btn.setAttribute('aria-expanded', isShown ? 'false' : 'true');
+        }}
+    }}
+    </script>
     </body>
     </html>
     """
