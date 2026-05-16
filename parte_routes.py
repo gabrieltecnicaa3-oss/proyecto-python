@@ -2,7 +2,7 @@ import os
 import json
 import html as html_lib
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import quote, urlencode
 from flask import Blueprint, redirect, request, send_file
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Image, Paragraph, Spacer
@@ -94,6 +94,16 @@ def _nombre_mostrable(nombre_full, nombre_base="", apellido=""):
 @parte_bp.route("/modulo/parte", methods=["GET", "POST"])
 def parte_semanal():
     db = get_db()
+
+    def _fmt_week_option(fecha_txt):
+        f = str(fecha_txt or "").strip()
+        try:
+            d = datetime.strptime(f[:10], "%Y-%m-%d").date()
+            iso = d.isocalendar()
+            fin = d + timedelta(days=5)
+            return f"Semana {iso[1]:02d} ({iso[0]}) - {d.strftime('%d/%m')} al {fin.strftime('%d/%m/%Y')}"
+        except Exception:
+            return f
 
     if request.method == "POST":
         accion = (request.form.get("accion") or "").strip()
@@ -333,6 +343,39 @@ def parte_semanal():
             )
 
     semana_form_value = editar_semana if editar_semana else ""
+
+    # Semanas válidas para carga: ventana alrededor de la semana actual + semanas existentes en BD.
+    hoy = datetime.today().date()
+    lunes_actual = hoy - timedelta(days=hoy.weekday())
+    semanas_set = set()
+    for i in range(-12, 9):
+        d = lunes_actual + timedelta(weeks=i)
+        semanas_set.add(d.strftime("%Y-%m-%d"))
+
+    semanas_db_rows = db.execute(
+        """
+        SELECT DISTINCT fecha
+        FROM partes_trabajo
+        WHERE fecha IS NOT NULL AND TRIM(fecha) <> ''
+        """
+    ).fetchall()
+    for (fecha_db,) in semanas_db_rows:
+        fecha_txt = str(fecha_db or "").strip()
+        if fecha_txt:
+            semanas_set.add(fecha_txt)
+
+    if semana_form_value:
+        semanas_set.add(semana_form_value)
+
+    semanas_ordenadas = sorted(semanas_set, reverse=True)
+    semana_options_html = ""
+    for semana_val in semanas_ordenadas:
+        selected = "selected" if semana_val == semana_form_value else ""
+        semana_options_html += (
+            f'<option value="{html_lib.escape(semana_val)}" {selected}>'
+            f'{html_lib.escape(_fmt_week_option(semana_val))}'
+            '</option>'
+        )
     banner_edicion_html = ""
     if editar_semana:
         banner_edicion_html = (
@@ -458,7 +501,10 @@ def parte_semanal():
         <input type="hidden" name="semana_original" value="__SEMANA_ORIGINAL__">
         <div class="form-group">
             <label>Semana iniciando:</label>
-            <input type="date" name="semana_inicio" id="semana_inicio" value="__SEMANA_FORM_VALUE__" required>
+            <select name="semana_inicio" id="semana_inicio" required>
+                <option value="">Seleccionar semana...</option>
+                __SEMANA_OPTIONS__
+            </select>
         </div>
         
         <h3>📋 Planilla de Horas (Lunes a Sábado)</h3>
@@ -748,6 +794,7 @@ def parte_semanal():
     html = html.replace("__MODO_EDICION__", "true" if editar_semana else "false")
     html = html.replace("__SEMANA_ORIGINAL__", html_lib.escape(editar_semana))
     html = html.replace("__SEMANA_FORM_VALUE__", html_lib.escape(semana_form_value))
+    html = html.replace("__SEMANA_OPTIONS__", semana_options_html)
     html = html.replace("__PRELOAD_ROWS__", json.dumps(preloaded_rows, ensure_ascii=False))
     return html
 
