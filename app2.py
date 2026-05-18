@@ -5787,6 +5787,7 @@ from programacion_routes import programacion_bp
 from reportes_routes import reportes_bp
 from tablero_ejecutivo_routes import tablero_ejecutivo_bp
 
+app.register_blueprint(ot_bp)
 app.register_blueprint(gestion_calidad_bp)
 app.register_blueprint(calidad_bp)
 app.register_blueprint(parte_bp)

@@ -64,16 +64,23 @@ def _calcular_productividad_proceso(db, ot_id, proceso):
     return int((aprobadas[0] / total[0]) * 100) if total[0] > 0 else 100
 
 
-def _calcular_ruta_critica(db):
+def _calcular_ruta_critica(db, obra_filtro='TODAS'):
     """Identifica procesos que no tienen holgura."""
-    ots = db.execute(
+    # Excluye OTs con avance 100% (piezas ya en p/despacho aunque OT no cerrada formalmente)
+    rows = db.execute(
         """
         SELECT id, titulo, fecha_entrega, estado, obra
         FROM ordenes_trabajo
-        WHERE estado != 'Finalizada' AND fecha_cierre IS NULL
+        WHERE estado != 'Finalizada'
+          AND fecha_cierre IS NULL
+          AND COALESCE(estado_avance, 0) < 100
         ORDER BY fecha_entrega ASC
         """
     ).fetchall()
+    ots = [
+        r for r in rows
+        if obra_filtro in ('TODAS', None, '') or str(r[4] or '').strip() == obra_filtro
+    ]
     
     critica = []
     hoy = datetime.now()
@@ -147,40 +154,95 @@ def _simular_probabilidad_cumplimiento(db, ot_id, fecha_entrega_str, simulacione
     return int((cumplimientos / simulaciones) * 100)
 
 
-def _detectar_cuello_botella(db):
+def _detectar_cuello_botella(db, obra_filtro='TODAS'):
     """Identifica proceso que está retrasando más OTs."""
     cuello = {}
     for proceso in ORDEN_PROCESOS:
-        ots_retrasadas = db.execute(
-            """
-            SELECT COUNT(DISTINCT ot_id)
-            FROM procesos p
-            WHERE p.proceso = ? AND p.estado != 'Aprobado'
-              AND EXISTS (SELECT 1 FROM ordenes_trabajo ot WHERE ot.id = p.ot_id AND ot.fecha_cierre IS NULL)
-            """,
-            (proceso,),
-        ).fetchone()
+        if obra_filtro and obra_filtro != 'TODAS':
+            ots_retrasadas = db.execute(
+                """
+                SELECT COUNT(DISTINCT p.ot_id)
+                FROM procesos p
+                JOIN ordenes_trabajo ot ON ot.id = p.ot_id
+                WHERE p.proceso = ? AND p.estado != 'Aprobado'
+                  AND ot.fecha_cierre IS NULL
+                  AND ot.obra = ?
+                """,
+                (proceso, obra_filtro),
+            ).fetchone()
+        else:
+            ots_retrasadas = db.execute(
+                """
+                SELECT COUNT(DISTINCT ot_id)
+                FROM procesos p
+                WHERE p.proceso = ? AND p.estado != 'Aprobado'
+                  AND EXISTS (SELECT 1 FROM ordenes_trabajo ot WHERE ot.id = p.ot_id AND ot.fecha_cierre IS NULL)
+                """,
+                (proceso,),
+            ).fetchone()
         cuello[proceso] = ots_retrasadas[0] if ots_retrasadas else 0
-    
+
     return sorted(cuello.items(), key=lambda x: x[1], reverse=True)
 
 
-def _calcular_tendencia_productividad(db, dias=60):
-    """Calcula tendencia de productividad. Intenta los últimos N días, si no hay datos busca más atrás."""
-    datos = db.execute(
-        """
-        SELECT DATE(fecha) as dia,
-               COUNT(1) as total,
-               SUM(CASE WHEN estado = 'Aprobado' THEN 1 ELSE 0 END) as aprobadas
-        FROM procesos
-        WHERE fecha IS NOT NULL AND eliminado != 1
-        GROUP BY DATE(fecha)
-        ORDER BY dia ASC
-        LIMIT 60
-        """
-    ).fetchall()
-    
-    return [(str(row[0]), int(row[1] or 0), int(row[2] or 0)) for row in datos] if datos else []
+def _calcular_tendencia_productividad(db, granularidad='semanal', obra_filtro='TODAS'):
+    """Calcula tendencia de productividad agrupada por granularidad (diaria/semanal/mensual)."""
+    if obra_filtro and obra_filtro != 'TODAS':
+        datos = db.execute(
+            """
+            SELECT DATE(p.fecha) as dia,
+                   COUNT(1) as total,
+                   SUM(CASE WHEN p.estado = 'Aprobado' THEN 1 ELSE 0 END) as aprobadas
+            FROM procesos p
+            JOIN ordenes_trabajo ot ON ot.id = p.ot_id
+            WHERE p.fecha IS NOT NULL AND p.eliminado != 1 AND ot.obra = ?
+            GROUP BY DATE(p.fecha)
+            ORDER BY dia ASC
+            LIMIT 365
+            """,
+            (obra_filtro,),
+        ).fetchall()
+    else:
+        datos = db.execute(
+            """
+            SELECT DATE(fecha) as dia,
+                   COUNT(1) as total,
+                   SUM(CASE WHEN estado = 'Aprobado' THEN 1 ELSE 0 END) as aprobadas
+            FROM procesos
+            WHERE fecha IS NOT NULL AND eliminado != 1
+            GROUP BY DATE(fecha)
+            ORDER BY dia ASC
+            LIMIT 365
+            """
+        ).fetchall()
+
+    diarios = [(str(row[0]), int(row[1] or 0), int(row[2] or 0)) for row in datos]
+
+    if granularidad == 'diaria':
+        return diarios[-60:]
+    elif granularidad == 'mensual':
+        meses: dict = {}
+        for dia, total, aprobadas in diarios:
+            key = dia[:7]
+            if key not in meses:
+                meses[key] = [0, 0]
+            meses[key][0] += total
+            meses[key][1] += aprobadas
+        return [(k, v[0], v[1]) for k, v in sorted(meses.items())]
+    else:  # semanal (default)
+        semanas: dict = {}
+        for dia, total, aprobadas in diarios:
+            try:
+                dt = datetime.strptime(dia, "%Y-%m-%d")
+                year, week, _ = dt.isocalendar()
+                key = f"{year}-S{week:02d}"
+            except Exception:
+                key = dia
+            if key not in semanas:
+                semanas[key] = [0, 0]
+            semanas[key][0] += total
+            semanas[key][1] += aprobadas
+        return [(k, v[0], v[1]) for k, v in sorted(semanas.items())]
 
 
 def _obtener_obras(db):
@@ -197,23 +259,34 @@ def _obtener_obras(db):
     return [row[0] for row in obras] if obras else []
 
 
-def _calcular_velocidad_promedio(db):
+def _calcular_velocidad_promedio(db, obra_filtro='TODAS'):
     """Calcula velocidad promedio de piezas procesadas por día."""
     fecha_limite = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-    procesos_completados = db.execute(
-        """
-        SELECT COUNT(1)
-        FROM procesos
-        WHERE estado IN ('Aprobado', 'Reproceso') AND fecha > ?
-        """,
-        (fecha_limite,)
-    ).fetchone()
-    
+    if obra_filtro and obra_filtro != 'TODAS':
+        procesos_completados = db.execute(
+            """
+            SELECT COUNT(1)
+            FROM procesos p
+            JOIN ordenes_trabajo ot ON ot.id = p.ot_id
+            WHERE p.estado IN ('Aprobado', 'Reproceso') AND p.fecha > ? AND ot.obra = ?
+            """,
+            (fecha_limite, obra_filtro),
+        ).fetchone()
+    else:
+        procesos_completados = db.execute(
+            """
+            SELECT COUNT(1)
+            FROM procesos
+            WHERE estado IN ('Aprobado', 'Reproceso') AND fecha > ?
+            """,
+            (fecha_limite,),
+        ).fetchone()
+
     total = (procesos_completados[0] or 0)
     if total == 0:
         ots_activas = db.execute("SELECT COUNT(1) FROM ordenes_trabajo WHERE fecha_cierre IS NULL").fetchone()
         return (ots_activas[0] or 0) // 2
-    
+
     return int(total / 30) if total > 0 else 0
 
 
@@ -227,27 +300,46 @@ def dashboard_estrategico():
     
     # Obtener obra del filtro (por defecto TODAS)
     obra_filtro = request.args.get("obra", "TODAS")
+    granularidad = request.args.get("granularidad", "semanal")
+    if granularidad not in ("diaria", "semanal", "mensual"):
+        granularidad = "semanal"
     obras = _obtener_obras(db)
-    
-    # Calcular KPIs
-    ruta_critica = _calcular_ruta_critica(db)
-    cuello_botella = _detectar_cuello_botella(db)
-    velocidad = _calcular_velocidad_promedio(db)
-    tendencia = _calcular_tendencia_productividad(db, dias=30)
-    
+
+    # Calcular KPIs (todos filtrados por obra)
+    ruta_critica = _calcular_ruta_critica(db, obra_filtro=obra_filtro)
+    cuello_botella = _detectar_cuello_botella(db, obra_filtro=obra_filtro)
+    velocidad = _calcular_velocidad_promedio(db, obra_filtro=obra_filtro)
+    tendencia = _calcular_tendencia_productividad(db, granularidad=granularidad, obra_filtro=obra_filtro)
+
     # Proyección general
-    ots_abiertas = db.execute(
-        "SELECT COUNT(1) FROM ordenes_trabajo WHERE estado != 'Finalizada' AND fecha_cierre IS NULL"
-    ).fetchone()
+    if obra_filtro and obra_filtro != 'TODAS':
+        ots_abiertas = db.execute(
+            "SELECT COUNT(1) FROM ordenes_trabajo WHERE estado != 'Finalizada' AND fecha_cierre IS NULL AND obra = ?",
+            (obra_filtro,),
+        ).fetchone()
+    else:
+        ots_abiertas = db.execute(
+            "SELECT COUNT(1) FROM ordenes_trabajo WHERE estado != 'Finalizada' AND fecha_cierre IS NULL"
+        ).fetchone()
     num_ots = ots_abiertas[0] if ots_abiertas else 0
-    
+
     # Calcular probabilidades + tabla (una sola pasada — evita doble Monte Carlo)
     hoy_dt = datetime.now()
-    ots_list = db.execute(
-        """SELECT id, titulo, fecha_entrega, obra FROM ordenes_trabajo
-           WHERE fecha_cierre IS NULL AND estado != 'Finalizada' AND fecha_entrega IS NOT NULL
-           ORDER BY fecha_entrega ASC"""
-    ).fetchall()
+    if obra_filtro and obra_filtro != 'TODAS':
+        ots_list = db.execute(
+            """SELECT id, titulo, fecha_entrega, obra FROM ordenes_trabajo
+               WHERE fecha_cierre IS NULL AND estado != 'Finalizada' AND fecha_entrega IS NOT NULL
+                 AND COALESCE(estado_avance, 0) < 100 AND obra = ?
+               ORDER BY fecha_entrega ASC""",
+            (obra_filtro,),
+        ).fetchall()
+    else:
+        ots_list = db.execute(
+            """SELECT id, titulo, fecha_entrega, obra FROM ordenes_trabajo
+               WHERE fecha_cierre IS NULL AND estado != 'Finalizada' AND fecha_entrega IS NOT NULL
+                 AND COALESCE(estado_avance, 0) < 100
+               ORDER BY fecha_entrega ASC"""
+        ).fetchall()
 
     probabilidades = []
     fechas_proyectadas = []
@@ -289,13 +381,69 @@ def dashboard_estrategico():
     piezas_datos = [x[1] for x in tendencia]
     aprobadas_datos = [x[2] for x in tendencia]
 
-    # Calcular línea de tendencia (promedio móvil 7 días)
+    # Calcular línea de tendencia (promedio móvil)
+    ventana = 3 if granularidad == 'semanal' else (4 if granularidad == 'mensual' else 7)
     linea_tendencia = []
     for i in range(len(piezas_datos)):
-        inicio = max(0, i - 3)
-        fin = min(len(piezas_datos), i + 4)
+        inicio = max(0, i - (ventana // 2))
+        fin = min(len(piezas_datos), i + (ventana // 2) + 1)
         promedio = sum(piezas_datos[inicio:fin]) / len(piezas_datos[inicio:fin]) if piezas_datos[inicio:fin] else 0
         linea_tendencia.append(round(promedio, 1))
+
+    # --- Proyección a 2 períodos ---
+    def _next_labels(last_label, gran, n=2):
+        result = []
+        if gran == 'semanal':
+            try:
+                year, week = int(last_label[:4]), int(last_label[6:])
+                for i in range(1, n + 1):
+                    w, y = week + i, year
+                    max_w = datetime(y, 12, 28).isocalendar()[1]
+                    if w > max_w:
+                        w -= max_w
+                        y += 1
+                    result.append(f"{y}-S{w:02d}")
+            except Exception:
+                result = [f"Proy.{i}" for i in range(1, n + 1)]
+        elif gran == 'mensual':
+            try:
+                year, month = int(last_label[:4]), int(last_label[5:7])
+                for i in range(1, n + 1):
+                    month += 1
+                    if month > 12:
+                        month, year = 1, year + 1
+                    result.append(f"{year}-{month:02d}")
+            except Exception:
+                result = [f"Proy.{i}" for i in range(1, n + 1)]
+        else:
+            try:
+                last_dt = datetime.strptime(last_label, "%Y-%m-%d")
+                result = [(last_dt + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, n + 1)]
+            except Exception:
+                result = [f"Proy.{i}" for i in range(1, n + 1)]
+        return result
+
+    # Valor proyectado = promedio de últimos períodos disponibles
+    ultimos = [v for v in linea_tendencia[-4:] if v is not None] if linea_tendencia else []
+    valor_proyectado = round(sum(ultimos) / len(ultimos), 1) if ultimos else 0
+
+    # Conectar proyección desde el último valor real
+    last_real = linea_tendencia[-1] if linea_tendencia else None
+    proj_labels = _next_labels(dias_datos[-1], granularidad) if dias_datos else ["Proy.1", "Proy.2"]
+
+    # Nones para histórico excepto el último punto que conecta la línea
+    proyeccion_datos = [None] * (len(piezas_datos) - 1) + [last_real, valor_proyectado, valor_proyectado]
+
+    # Recomendaciones antes de extender las listas
+    tendencia_positiva = len(linea_tendencia) > 3 and linea_tendencia[-1] > linea_tendencia[max(0, len(linea_tendencia) - 4)]
+
+    # Extender listas con períodos proyectados
+    dias_datos = dias_datos + proj_labels
+    piezas_datos = piezas_datos + [None, None]
+    aprobadas_datos = aprobadas_datos + [None, None]
+    linea_tendencia = linea_tendencia + [None, None]
+
+    titulo_grafico = {"diaria": "Productividad Diaria", "semanal": "Productividad Semanal", "mensual": "Productividad Mensual"}.get(granularidad, "Productividad Semanal")
 
     # Datos para gráfico de cuello de botella
     procesos_cuello = [p[0] for p in cuello_botella]
@@ -366,13 +514,24 @@ def dashboard_estrategico():
             <a href="/modulo/tablero-ejecutivo">Tablero Ejecutivo</a>
             <a href="/">Panel Principal</a>
           </div>
-          <div class="filtro-obra">
-            <label>Filtrar por Obra:</label>
-            <select onchange="location.href='?obra=' + this.value">
-              <option value="TODAS" {'selected' if obra_filtro == 'TODAS' else ''}>TODAS</option>
-              {''.join(f'<option value="{o}" {"selected" if obra_filtro == o else ""}>{html.escape(o)}</option>' for o in obras)}
-            </select>
-          </div>
+          <form class="filtro-obra" method="get" style="gap:12px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label>Obra:</label>
+              <select name="obra">
+                <option value="TODAS" {'selected' if obra_filtro == 'TODAS' else ''}>TODAS</option>
+                {''.join(f'<option value="{o}" {"selected" if obra_filtro == o else ""}>{html.escape(o)}</option>' for o in obras)}
+              </select>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label>Vista:</label>
+              <select name="granularidad">
+                <option value="diaria" {'selected' if granularidad == 'diaria' else ''}>Diaria</option>
+                <option value="semanal" {'selected' if granularidad == 'semanal' else ''}>Semanal</option>
+                <option value="mensual" {'selected' if granularidad == 'mensual' else ''}>Mensual</option>
+              </select>
+            </div>
+            <button type="submit" style="padding:8px 14px;border-radius:8px;border:none;background:#fff;color:#667eea;font-weight:700;cursor:pointer;">Aplicar</button>
+          </form>
         </div>
         
         <div class="kpis">
@@ -396,9 +555,9 @@ def dashboard_estrategico():
 
         <div class="charts-row">
           <div class="chart-container">
-            <h3>📈 Productividad Diaria</h3>
+            <h3>📈 {titulo_grafico}</h3>
             <canvas id="trendChart"></canvas>
-            <p style="font-size:11px;color:#64748b;margin:8px 0 0 0">🔵 Registros del día &nbsp;|&nbsp; 🟢 Aprobados &nbsp;|&nbsp; 🔴 Línea = tendencia de 7 días</p>
+            <p style="font-size:11px;color:#64748b;margin:8px 0 0 0">🔵 Registros &nbsp;|&nbsp; 🟢 Aprobados &nbsp;|&nbsp; 🔴 Tendencia &nbsp;|&nbsp; 🟠 Proyección 2 períodos</p>
           </div>
           <div class="chart-container">
             <h3>⚙️ Cuellos de Botella</h3>
@@ -436,7 +595,7 @@ def dashboard_estrategico():
             {'<li>⚠️ <b>Probabilidad baja:</b> Necesita intervención inmediata. Evalúa acelerar, cambiar secuencia o reasignar recursos.</li>' if probabilidad_prom < 50 else '<li>✓ <b>Probabilidad razonable:</b> Mantén monitoreo.</li>' if probabilidad_prom >= 70 else '<li>⚠️ <b>Probabilidad media:</b> Realiza seguimiento diario.</li>'}
             {'<li>🔴 <b>Cuello crítico:</b> ' + criticos_str + '. El patrocinador debe acelerar estos procesos.</li>' if criticos_str else '<li>✓ Carga balanceada entre procesos.</li>'}
             {'<li>📉 <b>Velocidad baja:</b> ' + str(velocidad) + ' pcs/día. Investiga causas de ralentización.</li>' if velocidad < 5 else '<li>✓ Velocidad dentro del rango esperado.</li>'}
-            {'<li>🟢 <b>Tendencia positiva:</b> Productividad mejora. Continúa con el ritmo actual.</li>' if len(linea_tendencia) > 5 and linea_tendencia[-1] > linea_tendencia[-7] else '<li>🔴 <b>Tendencia negativa:</b> Productividad decrece. Acción urgente.</li>'}
+            {'<li>🟢 <b>Tendencia positiva:</b> Productividad mejora. Continúa con el ritmo actual.</li>' if tendencia_positiva else '<li>🔴 <b>Tendencia negativa:</b> Productividad decrece. Acción urgente.</li>'}
           </ul>
         </div>
       </div>
@@ -470,15 +629,30 @@ def dashboard_estrategico():
                 }},
                 {{
                   type: 'line',
-                  label: 'Tendencia media (7d)',
+                  label: 'Tendencia media',
                   data: {json.dumps(linea_tendencia)},
                   borderColor: '#ef4444',
-                  borderWidth: 3,
+                  borderWidth: 2,
                   borderDash: [6, 4],
                   fill: false,
                   pointRadius: 0,
                   tension: 0.4,
                   order: 1,
+                  spanGaps: false,
+                }},
+                {{
+                  type: 'line',
+                  label: 'Proyección (2 per.)',
+                  data: {json.dumps(proyeccion_datos)},
+                  borderColor: '#f97316',
+                  borderWidth: 3,
+                  borderDash: [4, 4],
+                  fill: false,
+                  pointRadius: 4,
+                  pointBackgroundColor: '#f97316',
+                  tension: 0.3,
+                  order: 0,
+                  spanGaps: true,
                 }}
               ]
             }},
