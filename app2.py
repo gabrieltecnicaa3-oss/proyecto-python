@@ -16,6 +16,7 @@ from proceso_utils import (
 )
 from ot_routes import ot_bp
 from suministros_routes import suministros_bp
+from analisis_estrategico_routes import analisis_estrategico_bp
 from db_utils import (
     get_db,
     _resolver_ot_id_para_obra,
@@ -1997,6 +1998,13 @@ def dashboard():
             "titulo": "Tablero Ejecutivo Integral",
             "desc": "Vista estratégica PREVISTO vs PROGRAMADO vs REAL con KPIs de avance, HH, producción y calidad",
         },
+        {
+            "href": "/modulo/analisis-estrategico",
+            "css": "estrategico",
+            "icon": "🚀",
+            "titulo": "Análisis Estratégico",
+            "desc": "Predicción de fechas, ruta crítica, cuellos de botella y probabilidad de cumplimiento con Monte Carlo",
+        },
     ]
 
     ADMIN_ONLY_HREFS = {"/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo"}
@@ -2214,6 +2222,9 @@ def dashboard():
     }
     .module-card.ejecutivo {
         border-left: 5px solid #111827;
+    }
+    .module-card.estrategico {
+        border-left: 5px solid #7c3aed;
     }
     .module-card.rutina {
         border-left: 5px solid #0f766e;
@@ -5785,6 +5796,7 @@ app.register_blueprint(generador_bp)
 app.register_blueprint(programacion_bp)
 app.register_blueprint(reportes_bp)
 app.register_blueprint(tablero_ejecutivo_bp)
+app.register_blueprint(analisis_estrategico_bp)
 
 
 # ====================== BÚSQUEDA GLOBAL ======================
