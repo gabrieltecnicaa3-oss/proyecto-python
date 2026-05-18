@@ -153,6 +153,12 @@ def _rol_puede_acceder(role, path, method):
     if role != ROLE_OBRA:
         return False
 
+    # Whitelist de módulos por usuario (solo si tiene módulos asignados explícitamente)
+    modulos_permitidos = list(session.get("modulos_permitidos") or [])
+    if modulos_permitidos:
+        if not any(p.startswith(m.lower()) for m in modulos_permitidos):
+            return False
+
     metodo = str(method or "").upper()
     if metodo not in ("GET", "HEAD"):
         if not any(p.startswith(prefix) for prefix in OBRA_ALLOWED_POST_PREFIXES):
@@ -502,6 +508,14 @@ def init_db():
         activo INTEGER DEFAULT 1,
         ultimo_login DATETIME,
         creado_en DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS usuario_modulos (
+        usuario_id INTEGER NOT NULL,
+        modulo_href TEXT NOT NULL,
+        PRIMARY KEY (usuario_id, modulo_href)
     )
     """)
     
@@ -1224,6 +1238,15 @@ def login():
                 session["username"] = str(row[1])
                 session["nombre"] = str(row[3] or "")
                 session["user_role"] = role
+                # Cargar módulos permitidos por usuario (solo para rol obra)
+                if role == ROLE_OBRA:
+                    mods = db.execute(
+                        "SELECT modulo_href FROM usuario_modulos WHERE usuario_id = ?",
+                        (int(row[0]),),
+                    ).fetchall()
+                    session["modulos_permitidos"] = [r[0] for r in mods]
+                else:
+                    session["modulos_permitidos"] = []
                 db.execute("UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP WHERE id = ?", (int(row[0]),))
                 db.commit()
                 if not next_url.startswith("/"):
@@ -1410,6 +1433,35 @@ def admin_usuarios():
                         db.commit()
                         mensaje = f"Rol de {row[0]} cambiado a: {nuevo_rol}"
 
+        elif accion == "guardar_modulos":
+            user_id_txt = (request.form.get("user_id") or "").strip()
+            if not user_id_txt.isdigit():
+                error = "Usuario inválido"
+            else:
+                user_id = int(user_id_txt)
+                modulos_sel = request.form.getlist("modulos")
+                # Validar que sean hrefs conocidos
+                MODULOS_VALIDOS = {
+                    "/modulo/suministros", "/modulo/ot", "/modulo/produccion",
+                    "/modulo/calidad", "/modulo/parte", "/modulo/remito",
+                    "/modulo/estado", "/home", "/modulo/generador",
+                    "/modulo/gestion-calidad", "/modulo/programacion",
+                }
+                modulos_validos = [m for m in modulos_sel if m in MODULOS_VALIDOS]
+                db.execute("DELETE FROM usuario_modulos WHERE usuario_id = ?", (user_id,))
+                for m in modulos_validos:
+                    db.execute(
+                        "INSERT INTO usuario_modulos (usuario_id, modulo_href) VALUES (?, ?)",
+                        (user_id, m),
+                    )
+                db.commit()
+                row_u = db.execute("SELECT username FROM usuarios WHERE id = ?", (user_id,)).fetchone()
+                u_name = row_u[0] if row_u else str(user_id)
+                if modulos_validos:
+                    mensaje = f"Permisos de {u_name} actualizados: {', '.join(modulos_validos)}"
+                else:
+                    mensaje = f"Permisos de {u_name} limpiados (acceso a todos los módulos de su rol)"
+
     rows = db.execute(
         """
         SELECT id, username, COALESCE(nombre, ''), COALESCE(rol, ''), COALESCE(activo, 1), COALESCE(ultimo_login, '')
@@ -1425,46 +1477,85 @@ def admin_usuarios():
     ).fetchall()
 
     filas_html = ""
+    MODULOS_OBRA = [
+        ("/modulo/suministros", "🛒 Compras"),
+        ("/modulo/ot", "📋 Órdenes de Trabajo"),
+        ("/modulo/produccion", "🏭 Producción"),
+        ("/modulo/calidad", "🧪 Calidad"),
+        ("/modulo/remito", "🚚 Remitos"),
+        ("/home", "📈 Estado de Piezas"),
+        ("/modulo/gestion-calidad", "✅ Gestión de Calidad"),
+        ("/modulo/programacion", "📆 Programación"),
+        ("/modulo/estado", "📊 Estado Producción"),
+        ("/modulo/parte", "⏱ Parte Semanal"),
+        ("/modulo/generador", "🏷️ Generador QR"),
+    ]
     for user_id, username, nombre, rol, activo, ultimo_login in rows:
         activo_txt = "ACTIVO" if int(activo or 0) == 1 else "INACTIVO"
         activo_bg = "#dcfce7" if int(activo or 0) == 1 else "#fee2e2"
         activo_color = "#166534" if int(activo or 0) == 1 else "#991b1b"
         toggle_label = "Desactivar" if int(activo or 0) == 1 else "Activar"
+
+        # Módulos asignados a este usuario
+        mods_asig = {r[0] for r in db.execute(
+            "SELECT modulo_href FROM usuario_modulos WHERE usuario_id = ?", (int(user_id),)
+        ).fetchall()}
+
+        # Checkboxes de módulos (solo para rol obra; admin/sup tienen acceso total)
+        if str(rol).lower() == ROLE_OBRA:
+            sin_restriccion_txt = "(sin restricción — acceso a todos)" if not mods_asig else ""
+            checks_html = f"""
+            <form method="post" style="margin-top:6px;background:#f8f0ff;border:1px solid #ddd4fe;border-radius:8px;padding:8px;">
+              <input type="hidden" name="accion" value="guardar_modulos">
+              <input type="hidden" name="user_id" value="{int(user_id)}">
+              <div style="font-size:11px;color:#6b21a8;font-weight:700;margin-bottom:4px;">🔐 Módulos permitidos {sin_restriccion_txt}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px 12px;">
+            """ + "".join(
+                f'<label style="font-size:11px;display:flex;align-items:center;gap:3px;"><input type="checkbox" name="modulos" value="{href}" {"checked" if href in mods_asig else ""}> {nombre_m}</label>'
+                for href, nombre_m in MODULOS_OBRA
+            ) + f"""
+              </div>
+              <button type="submit" style="margin-top:6px;background:#7c3aed;color:#fff;border:0;border-radius:5px;padding:5px 10px;font-size:11px;">Guardar permisos</button>
+            </form>"""
+        else:
+            checks_html = '<span style="font-size:11px;color:#64748b;">Acceso completo según rol</span>'
+
         filas_html += f"""
         <tr>
             <td>{int(user_id)}</td>
             <td>{html_lib.escape(str(username or ''))}</td>
             <td>{html_lib.escape(str(nombre or ''))}</td>
             <td>{html_lib.escape(str(rol or ''))}</td>
-            <td><span style=\"padding:4px 8px;border-radius:999px;background:{activo_bg};color:{activo_color};font-weight:700;\">{activo_txt}</span></td>
+            <td><span style="padding:4px 8px;border-radius:999px;background:{activo_bg};color:{activo_color};font-weight:700;">{activo_txt}</span></td>
             <td>{html_lib.escape(str(ultimo_login or '-'))}</td>
             <td>
-                <form method=\"post\" style=\"display:inline-block; margin:2px;\">
-                    <input type=\"hidden\" name=\"accion\" value=\"toggle\">
-                    <input type=\"hidden\" name=\"user_id\" value=\"{int(user_id)}\">
-                    <button type=\"submit\">{toggle_label}</button>
+                <form method="post" style="display:inline-block; margin:2px;">
+                    <input type="hidden" name="accion" value="toggle">
+                    <input type="hidden" name="user_id" value="{int(user_id)}">
+                    <button type="submit">{toggle_label}</button>
                 </form>
-                <form method=\"post\" style=\"display:inline-block; margin:2px;\" onsubmit=\"return confirm('¿Eliminar usuario? Esta acción no se puede deshacer.');\">
-                    <input type=\"hidden\" name=\"accion\" value=\"eliminar\">
-                    <input type=\"hidden\" name=\"user_id\" value=\"{int(user_id)}\">
-                    <button type=\"submit\" style=\"background:#dc2626;color:#fff;border:0;\">Eliminar</button>
+                <form method="post" style="display:inline-block; margin:2px;" onsubmit="return confirm('¿Eliminar usuario? Esta acción no se puede deshacer.');">
+                    <input type="hidden" name="accion" value="eliminar">
+                    <input type="hidden" name="user_id" value="{int(user_id)}">
+                    <button type="submit" style="background:#dc2626;color:#fff;border:0;">Eliminar</button>
                 </form>
-                <form method=\"post\" style=\"display:inline-block; margin:2px;\">
-                    <input type=\"hidden\" name=\"accion\" value=\"reset_password\">
-                    <input type=\"hidden\" name=\"user_id\" value=\"{int(user_id)}\">
-                    <input type=\"password\" name=\"nueva_password\" placeholder=\"Nueva pass\" required style=\"width:120px;\">
-                    <button type=\"submit\">Cambiar pass</button>
+                <form method="post" style="display:inline-block; margin:2px;">
+                    <input type="hidden" name="accion" value="reset_password">
+                    <input type="hidden" name="user_id" value="{int(user_id)}">
+                    <input type="password" name="nueva_password" placeholder="Nueva pass" required style="width:120px;">
+                    <button type="submit">Cambiar pass</button>
                 </form>
-                <form method=\"post\" style=\"display:inline-block; margin:2px;\">
-                    <input type=\"hidden\" name=\"accion\" value=\"cambiar_rol\">
-                    <input type=\"hidden\" name=\"user_id\" value=\"{int(user_id)}\">
-                    <select name=\"nuevo_rol\" style=\"padding:5px 6px;font-size:12px;\">
-                        <option value=\"administrador\" {{'selected' if str(rol).lower() == 'administrador' else ''}}>Administrador</option>
-                        <option value=\"supervisor\" {{'selected' if str(rol).lower() == 'supervisor' else ''}}>Supervisor</option>
-                        <option value=\"obra\" {{'selected' if str(rol).lower() == 'obra' else ''}}>Obra</option>
+                <form method="post" style="display:inline-block; margin:2px;">
+                    <input type="hidden" name="accion" value="cambiar_rol">
+                    <input type="hidden" name="user_id" value="{int(user_id)}">
+                    <select name="nuevo_rol" style="padding:5px 6px;font-size:12px;">
+                        <option value="administrador" {{'selected' if str(rol).lower() == 'administrador' else ''}}>Administrador</option>
+                        <option value="supervisor" {{'selected' if str(rol).lower() == 'supervisor' else ''}}>Supervisor</option>
+                        <option value="obra" {{'selected' if str(rol).lower() == 'obra' else ''}}>Obra</option>
                     </select>
-                    <button type=\"submit\" style=\"background:#7c3aed;color:#fff;border:0;\">Cambiar rol</button>
+                    <button type="submit" style="background:#7c3aed;color:#fff;border:0;">Cambiar rol</button>
                 </form>
+                {checks_html}
             </td>
         </tr>
         """
@@ -2041,6 +2132,7 @@ def dashboard():
     ADMIN_ONLY_HREFS = {"/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo", "/modulo/analisis-estrategico"}
     OBRA_HIDDEN_HREFS = {"/modulo/estado", "/modulo/generador", "/modulo/parte"}
     is_admin = _is_admin_session()
+    modulos_permitidos = list(session.get("modulos_permitidos") or [])
     cards_html = "".join(
         f'''
             <a href="{m["href"]}" class="module-card {m["css"]}">
@@ -2052,6 +2144,7 @@ def dashboard():
         for m in modulos
         if (m["href"] not in ADMIN_ONLY_HREFS or is_admin)
         and not (role_actual == ROLE_OBRA and m["href"] in OBRA_HIDDEN_HREFS)
+        and not (role_actual == ROLE_OBRA and modulos_permitidos and m["href"] not in modulos_permitidos)
     )
 
     top_actions = '''
