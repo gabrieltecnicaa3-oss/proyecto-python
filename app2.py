@@ -156,7 +156,8 @@ def _rol_puede_acceder(role, path, method):
     # Whitelist de módulos por usuario (solo si tiene módulos asignados explícitamente)
     modulos_permitidos = list(session.get("modulos_permitidos") or [])
     if modulos_permitidos:
-        if not any(p.startswith(m.lower()) for m in modulos_permitidos):
+        # Siempre permitir el dashboard raíz y rutas de API compartidas
+        if p not in ("/", "") and not any(p.startswith(m.lower()) for m in modulos_permitidos):
             return False
 
     metodo = str(method or "").upper()
@@ -1529,33 +1530,36 @@ def admin_usuarios():
             <td><span style="padding:4px 8px;border-radius:999px;background:{activo_bg};color:{activo_color};font-weight:700;">{activo_txt}</span></td>
             <td>{html_lib.escape(str(ultimo_login or '-'))}</td>
             <td>
-                <form method="post" style="display:inline-block; margin:2px;">
+              <div style="display:flex;flex-direction:column;gap:6px;min-width:220px;">
+                <div style="display:flex;gap:4px;">
+                  <form method="post" style="flex:1;">
                     <input type="hidden" name="accion" value="toggle">
                     <input type="hidden" name="user_id" value="{int(user_id)}">
-                    <button type="submit">{toggle_label}</button>
-                </form>
-                <form method="post" style="display:inline-block; margin:2px;" onsubmit="return confirm('¿Eliminar usuario? Esta acción no se puede deshacer.');">
-                    <input type="hidden" name="accion" value="eliminar">
+                    <button type="submit" style="width:100%;background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer;">{toggle_label}</button>
+                  </form>
+                  <form method="post" onsubmit="return confirm('¿Eliminar usuario? Esta acción no se puede deshacer.');">
+                    <button type="submit" name="accion" value="eliminar" style="background:#fee2e2;color:#dc2626;border:1px solid #fecaca;border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer;">🗑 Eliminar</button>
                     <input type="hidden" name="user_id" value="{int(user_id)}">
-                    <button type="submit" style="background:#dc2626;color:#fff;border:0;">Eliminar</button>
+                  </form>
+                </div>
+                <form method="post" style="display:flex;gap:4px;align-items:center;">
+                  <input type="hidden" name="accion" value="reset_password">
+                  <input type="hidden" name="user_id" value="{int(user_id)}">
+                  <input type="password" name="nueva_password" placeholder="Nueva contraseña" required style="flex:1;padding:5px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:6px;">
+                  <button type="submit" style="background:#f0fdf4;color:#166534;border:1px solid #86efac;border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer;">🔑 Cambiar</button>
                 </form>
-                <form method="post" style="display:inline-block; margin:2px;">
-                    <input type="hidden" name="accion" value="reset_password">
-                    <input type="hidden" name="user_id" value="{int(user_id)}">
-                    <input type="password" name="nueva_password" placeholder="Nueva pass" required style="width:120px;">
-                    <button type="submit">Cambiar pass</button>
-                </form>
-                <form method="post" style="display:inline-block; margin:2px;">
-                    <input type="hidden" name="accion" value="cambiar_rol">
-                    <input type="hidden" name="user_id" value="{int(user_id)}">
-                    <select name="nuevo_rol" style="padding:5px 6px;font-size:12px;">
-                        <option value="administrador" {{'selected' if str(rol).lower() == 'administrador' else ''}}>Administrador</option>
-                        <option value="supervisor" {{'selected' if str(rol).lower() == 'supervisor' else ''}}>Supervisor</option>
-                        <option value="obra" {{'selected' if str(rol).lower() == 'obra' else ''}}>Obra</option>
-                    </select>
-                    <button type="submit" style="background:#7c3aed;color:#fff;border:0;">Cambiar rol</button>
+                <form method="post" style="display:flex;gap:4px;align-items:center;">
+                  <input type="hidden" name="accion" value="cambiar_rol">
+                  <input type="hidden" name="user_id" value="{int(user_id)}">
+                  <select name="nuevo_rol" style="flex:1;padding:5px 6px;font-size:12px;border:1px solid #d1d5db;border-radius:6px;">
+                    <option value="administrador" {{'selected' if str(rol).lower() == 'administrador' else ''}}>Administrador</option>
+                    <option value="supervisor" {{'selected' if str(rol).lower() == 'supervisor' else ''}}>Supervisor</option>
+                    <option value="obra" {{'selected' if str(rol).lower() == 'obra' else ''}}>Obra</option>
+                  </select>
+                  <button type="submit" style="background:#f5f3ff;color:#6d28d9;border:1px solid #ddd6fe;border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer;">↩ Rol</button>
                 </form>
                 {checks_html}
+              </div>
             </td>
         </tr>
         """
