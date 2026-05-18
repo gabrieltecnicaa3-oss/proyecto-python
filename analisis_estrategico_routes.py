@@ -112,7 +112,7 @@ def _calcular_ruta_critica(db):
     return sorted(critica, key=lambda x: x["holgura"])
 
 
-def _simular_probabilidad_cumplimiento(db, ot_id, fecha_entrega_str, simulaciones=1000):
+def _simular_probabilidad_cumplimiento(db, ot_id, fecha_entrega_str, simulaciones=200):
     """Simula fechas de finalización con variabilidad."""
     try:
         fecha_entrega = datetime.strptime(str(fecha_entrega_str), "%Y-%m-%d")
@@ -239,42 +239,54 @@ def dashboard_estrategico():
     ).fetchone()
     num_ots = ots_abiertas[0] if ots_abiertas else 0
     
-    # Calcular proyección de término si se mantiene productividad
-    if num_ots > 0:
-        ots_list = db.execute(
-            "SELECT id, titulo, fecha_entrega FROM ordenes_trabajo WHERE estado != 'Finalizada' AND fecha_cierre IS NULL ORDER BY fecha_entrega"
-        ).fetchall()
-        
-        probabilidades = []
-        fechas_proyectadas = []
-        for ot in ots_list:
-            prob = _simular_probabilidad_cumplimiento(db, ot[0], ot[2])
-            probabilidades.append(prob)
-            
-            try:
-                fecha_entrega = datetime.strptime(str(ot[2]), "%Y-%m-%d")
-                duracion = sum(_calcular_duracion_proceso(db, ot[0], p) or 2 for p in ORDEN_PROCESOS)
-                fecha_proyectada = datetime.now() + timedelta(days=max(1, duracion))
-                dias_atraso = (fecha_proyectada - fecha_entrega).days
-                if dias_atraso > 0:
-                    fechas_proyectadas.append(dias_atraso)
-            except Exception:
-                pass
-        
-        probabilidad_prom = sum(probabilidades) // len(probabilidades) if probabilidades else 50
-        atraso_promedio = sum(fechas_proyectadas) // len(fechas_proyectadas) if fechas_proyectadas else 0
-    else:
-        probabilidad_prom = 100
-        atraso_promedio = 0
-    
+    # Calcular probabilidades + tabla (una sola pasada — evita doble Monte Carlo)
+    hoy_dt = datetime.now()
+    ots_list = db.execute(
+        """SELECT id, titulo, fecha_entrega, obra FROM ordenes_trabajo
+           WHERE fecha_cierre IS NULL AND estado != 'Finalizada' AND fecha_entrega IS NOT NULL
+           ORDER BY fecha_entrega ASC"""
+    ).fetchall()
+
+    probabilidades = []
+    fechas_proyectadas = []
+    filas_prob = ""
+
+    for ot in ots_list:
+        ot_id_p, titulo_p, fecha_entrega_str_p, obra_p = ot
+        prob = _simular_probabilidad_cumplimiento(db, ot_id_p, fecha_entrega_str_p)
+        probabilidades.append(prob)
+        try:
+            fe = datetime.strptime(str(fecha_entrega_str_p), "%Y-%m-%d")
+            dias_rest_p = max(0, (fe - hoy_dt).days)
+            duracion_p = sum(_calcular_duracion_proceso(db, ot_id_p, p) or 2 for p in ORDEN_PROCESOS)
+            fecha_proy_p = hoy_dt + timedelta(days=max(1, duracion_p))
+            dias_atraso_p = (fecha_proy_p - fe).days
+            if dias_atraso_p > 0:
+                fechas_proyectadas.append(dias_atraso_p)
+        except Exception:
+            dias_rest_p = "-"
+
+        if prob >= 70:
+            pc = "#16a34a"; pbg = "#dcfce7"; pst = "✅ Buena"
+        elif prob >= 50:
+            pc = "#92400e"; pbg = "#fef3c7"; pst = "⚠️ Riesgo"
+        else:
+            pc = "#991b1b"; pbg = "#fee2e2"; pst = "🔴 Crítica"
+
+        pbar = f'<div style="background:#e2e8f0;border-radius:4px;height:8px;margin-top:4px"><div style="background:{pc};height:8px;border-radius:4px;width:{prob}%"></div></div>'
+        filas_prob += f"<tr><td>{html.escape(str(titulo_p or '-'))}</td><td>{html.escape(str(obra_p or '-'))}</td><td>{html.escape(str(fecha_entrega_str_p or '-'))}</td><td>{dias_rest_p}</td><td style='min-width:130px'><b style='color:{pc}'>{prob}%</b>{pbar}</td><td><span style='background:{pbg};color:{pc};padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700'>{pst}</span></td></tr>"
+
+    probabilidad_prom = sum(probabilidades) // len(probabilidades) if probabilidades else 50
+    atraso_promedio = sum(fechas_proyectadas) // len(fechas_proyectadas) if fechas_proyectadas else 0
+
     # Procesos críticos
     criticos_str = ", ".join(p[0] for p in cuello_botella[:3])
-    
+
     # Preparar datos para gráficos
     dias_datos = [x[0] for x in tendencia]
     piezas_datos = [x[1] for x in tendencia]
     aprobadas_datos = [x[2] for x in tendencia]
-    
+
     # Calcular línea de tendencia (promedio móvil 7 días)
     linea_tendencia = []
     for i in range(len(piezas_datos)):
@@ -282,20 +294,11 @@ def dashboard_estrategico():
         fin = min(len(piezas_datos), i + 4)
         promedio = sum(piezas_datos[inicio:fin]) / len(piezas_datos[inicio:fin]) if piezas_datos[inicio:fin] else 0
         linea_tendencia.append(round(promedio, 1))
-    
+
     # Datos para gráfico de cuello de botella
     procesos_cuello = [p[0] for p in cuello_botella]
     cant_cuello = [p[1] for p in cuello_botella]
     colores_cuello = ["#ef4444" if cant > 0 else "#10b981" for cant in cant_cuello]
-    
-    # Datos para gráfico de probabilidades: top 8 OTs abiertas con fecha_entrega
-    ots_para_prob = db.execute(
-        """SELECT id, titulo, fecha_entrega FROM ordenes_trabajo
-           WHERE fecha_cierre IS NULL AND estado != 'Finalizada' AND fecha_entrega IS NOT NULL
-           ORDER BY fecha_entrega ASC LIMIT 8"""
-    ).fetchall()
-    ots_nombres = [html.escape(str(r[1])[:15]) for r in ots_para_prob]
-    ots_probabilidades = [_simular_probabilidad_cumplimiento(db, r[0], r[2]) for r in ots_para_prob]
     
     # Filas de tabla crítica
     filas_critica = ""
@@ -391,8 +394,9 @@ def dashboard_estrategico():
 
         <div class="charts-row">
           <div class="chart-container">
-            <h3>📈 Tendencia de Productividad (últimos 30 días)</h3>
+            <h3>📈 Productividad Diaria</h3>
             <canvas id="trendChart"></canvas>
+            <p style="font-size:11px;color:#64748b;margin:8px 0 0 0">🔵 Registros del día &nbsp;|&nbsp; 🟢 Aprobados &nbsp;|&nbsp; 🔴 Línea = tendencia de 7 días</p>
           </div>
           <div class="chart-container">
             <h3>⚙️ Cuellos de Botella</h3>
@@ -400,7 +404,13 @@ def dashboard_estrategico():
           </div>
         </div>
 
-        {'<div class="chart-container" style="grid-column: 1 / -1;"><h3>🎯 Probabilidad de Cumplimiento por OT Crítica</h3><canvas id="probChart" style="max-height: 200px;"></canvas></div>' if ots_probabilidades else ''}
+        <div class="card">
+          <h3>🎯 Probabilidad de Cumplimiento por OT</h3>
+          <table>
+            <tr><th>OT</th><th>Obra</th><th>Fecha Entrega</th><th>Días Restantes</th><th>Probabilidad (Monte Carlo)</th><th>Estado</th></tr>
+            {filas_prob if filas_prob else '<tr><td colspan="6" style="color:#64748b">Sin OTs con fecha de entrega definida.</td></tr>'}
+          </table>
+        </div>
 
         <div class="card">
           <h3>🚨 Ruta Crítica (Sin holgura real)</h3>
@@ -430,43 +440,43 @@ def dashboard_estrategico():
       </div>
 
       <script>
-        // Gráfico de tendencia
+        // Gráfico de productividad diaria (barras + línea de tendencia)
         const ctx1 = document.getElementById('trendChart')?.getContext('2d');
         if (ctx1) {{
           new Chart(ctx1, {{
-            type: 'line',
+            type: 'bar',
             data: {{
               labels: {json.dumps(dias_datos)},
               datasets: [
                 {{
-                  label: 'Piezas totales',
+                  type: 'bar',
+                  label: 'Registros del día',
                   data: {json.dumps(piezas_datos)},
+                  backgroundColor: 'rgba(59,130,246,0.45)',
                   borderColor: '#3b82f6',
-                  backgroundColor: 'rgba(59, 130, 246, 0.05)',
-                  tension: 0.4,
-                  fill: true,
-                  pointRadius: 2,
-                  borderWidth: 2,
+                  borderWidth: 1,
+                  order: 2,
                 }},
                 {{
-                  label: 'Piezas aprobadas',
+                  type: 'bar',
+                  label: 'Aprobados',
                   data: {json.dumps(aprobadas_datos)},
+                  backgroundColor: 'rgba(16,185,129,0.55)',
                   borderColor: '#10b981',
-                  backgroundColor: 'rgba(16, 185, 129, 0.05)',
-                  tension: 0.4,
-                  fill: true,
-                  pointRadius: 2,
-                  borderWidth: 2,
+                  borderWidth: 1,
+                  order: 3,
                 }},
                 {{
-                  label: 'Tendencia (7d)',
+                  type: 'line',
+                  label: 'Tendencia media (7d)',
                   data: {json.dumps(linea_tendencia)},
                   borderColor: '#ef4444',
                   borderWidth: 3,
-                  borderDash: [5, 5],
+                  borderDash: [6, 4],
                   fill: false,
                   pointRadius: 0,
                   tension: 0.4,
+                  order: 1,
                 }}
               ]
             }},
@@ -475,10 +485,15 @@ def dashboard_estrategico():
               maintainAspectRatio: false,
               plugins: {{
                 legend: {{ position: 'bottom', labels: {{ boxWidth: 12, padding: 10, font: {{ size: 11 }} }} }},
-                filler: {{ propagate: true }}
+                tooltip: {{
+                  callbacks: {{
+                    title: (items) => 'Fecha: ' + items[0].label,
+                    label: (item) => item.dataset.label + ': ' + item.parsed.y + ' procesos',
+                  }}
+                }}
               }},
               scales: {{
-                y: {{ beginAtZero: true }},
+                y: {{ beginAtZero: true, title: {{ display: true, text: 'Procesos' }} }},
               }}
             }}
           }});
@@ -507,29 +522,7 @@ def dashboard_estrategico():
           }});
         }}
 
-        // Gráfico de probabilidades
-        const ctx3 = document.getElementById('probChart')?.getContext('2d');
-        if (ctx3) {{
-          const colors = {json.dumps(ots_probabilidades)}.map(p => p >= 70 ? '#10b981' : p >= 50 ? '#f59e0b' : '#ef4444');
-          new Chart(ctx3, {{
-            type: 'bar',
-            data: {{
-              labels: {json.dumps(ots_nombres)},
-              datasets: [{{
-                label: 'Probabilidad %',
-                data: {json.dumps(ots_probabilidades)},
-                backgroundColor: colors,
-              }}]
-            }},
-            options: {{
-              indexAxis: 'x',
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: {{ legend: {{ display: false }} }},
-              scales: {{ y: {{ min: 0, max: 100 }} }}
-            }}
-          }});
-        }}
+
       </script>
     </body>
     </html>
