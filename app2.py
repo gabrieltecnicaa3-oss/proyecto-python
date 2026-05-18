@@ -976,6 +976,13 @@ def init_db():
             except Exception:
                 pass
 
+        if 'modulos_permitidos' not in usuarios_columns:
+            try:
+                db.execute("ALTER TABLE usuarios ADD COLUMN modulos_permitidos TEXT")
+                db.commit()
+            except Exception:
+                pass
+
         # Migración compatible con SQLite y MySQL: intentar ALTER TABLE directamente
         # (falla silenciosamente si la columna ya existe en ambos motores)
         hallazgos_cols_defs = [
@@ -1327,15 +1334,19 @@ def admin_usuarios():
                 if existe:
                     error = "Ya existe un usuario con ese username"
                 else:
-                    db.execute(
-                        """
-                        INSERT INTO usuarios (username, password_hash, nombre, rol, activo)
-                        VALUES (?, ?, ?, ?, ?)
-                        """,
-                        (username, generate_password_hash(password), nombre, rol, activo),
-                    )
-                    db.commit()
-                    mensaje = f"Usuario creado: {username}"
+                    try:
+                        db.execute(
+                            """
+                            INSERT INTO usuarios (username, password_hash, nombre, rol, activo)
+                            VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (username, generate_password_hash(password), nombre, rol, activo),
+                        )
+                        db.commit()
+                        mensaje = f"Usuario creado: {username}"
+                    except Exception as _ie:
+                        db.rollback() if hasattr(db, 'rollback') else None
+                        error = "No se pudo crear el usuario (el nombre de usuario ya existe o hay un error de base de datos)"
 
         elif accion == "toggle":
             user_id_txt = (request.form.get("user_id") or "").strip()
@@ -1419,6 +1430,7 @@ def admin_usuarios():
             <td><span style=\"padding:4px 8px;border-radius:999px;background:{activo_bg};color:{activo_color};font-weight:700;\">{activo_txt}</span></td>
             <td>{html_lib.escape(str(ultimo_login or '-'))}</td>
             <td>
+                <a href=\"/admin/permisos/{int(user_id)}\" style=\"display:inline-block;margin:2px;padding:7px 10px;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none;font-size:12px;font-weight:700;\">M\u00f3dulos</a>
                 <form method=\"post\" style=\"display:inline-block; margin:2px;\">
                     <input type=\"hidden\" name=\"accion\" value=\"toggle\">
                     <input type=\"hidden\" name=\"user_id\" value=\"{int(user_id)}\">
@@ -1501,6 +1513,109 @@ def admin_usuarios():
             </tr>
             {filas_html}
           </table>
+        </div>
+      </div>
+    </body>
+    </html>
+    """
+
+# =============================================
+# RUTA: Permisos de módulos por usuario
+# =============================================
+@app.route("/admin/permisos/<int:user_id>", methods=["GET", "POST"])
+def admin_permisos_usuario(user_id):
+    if not _is_admin_session():
+        return _respuesta_sin_permiso()
+    db = get_db()
+    user = db.execute(
+        "SELECT id, username, nombre, rol, modulos_permitidos FROM usuarios WHERE id = ?",
+        (user_id,)
+    ).fetchone()
+    if not user:
+        return "Usuario no encontrado", 404
+
+    uid, uname, unombre, urol, modulos_json = user
+    modulos_actuales = set(json.loads(modulos_json)) if modulos_json else None  # None = todos
+
+    TODOS_MODULOS = [
+        ("/modulo/ot",                  "Órdenes de Trabajo"),
+        ("/modulo/produccion",          "Producción"),
+        ("/modulo/calidad",             "Calidad"),
+        ("/modulo/gestion-calidad",     "Gestión de Calidad"),
+        ("/modulo/parte",               "Parte Semanal - Empleados"),
+        ("/modulo/remito",              "Remitos"),
+        ("/modulo/estado",              "Estado de Producción"),
+        ("/home",                       "Estado de Piezas por Proceso"),
+        ("/modulo/generador",           "Generador de Etiquetas QR"),
+        ("/modulo/programacion",        "Programación de Fabricación"),
+        ("/modulo/suministros",         "Suministros / Compras"),
+        ("/modulo/historial",           "Historial de OTs"),
+        ("/modulo/reportes",            "Reportes"),
+        ("/modulo/tablero-ejecutivo",   "Tablero Ejecutivo Integral"),
+        ("/modulo/analisis-estrategico","Análisis Estratégico"),
+    ]
+
+    mensaje = ""
+    if request.method == "POST":
+        accion = (request.form.get("accion") or "").strip()
+        if accion == "guardar":
+            seleccionados = request.form.getlist("modulo")
+            if len(seleccionados) >= len(TODOS_MODULOS):
+                db.execute("UPDATE usuarios SET modulos_permitidos = NULL WHERE id = ?", (user_id,))
+            else:
+                db.execute(
+                    "UPDATE usuarios SET modulos_permitidos = ? WHERE id = ?",
+                    (json.dumps(seleccionados), user_id)
+                )
+            db.commit()
+            mensaje = "Permisos guardados correctamente"
+            row = db.execute("SELECT modulos_permitidos FROM usuarios WHERE id = ?", (user_id,)).fetchone()
+            modulos_actuales = set(json.loads(row[0])) if row and row[0] else None
+
+    checkboxes_html = ""
+    for href, titulo in TODOS_MODULOS:
+        checked = "checked" if (modulos_actuales is None or href in modulos_actuales) else ""
+        checkboxes_html += f"""
+        <label style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:6px;border:1px solid #e5e7eb;cursor:pointer;background:#fff;">
+            <input type="checkbox" name="modulo" value="{html_lib.escape(href)}" {checked} style="width:16px;height:16px;cursor:pointer;">
+            <span>{html_lib.escape(titulo)}</span>
+        </label>"""
+
+    msg_html = f'<div style="background:#dcfce7;border:1px solid #86efac;color:#166534;padding:10px;border-radius:8px;margin-bottom:12px;">{html_lib.escape(mensaje)}</div>' if mensaje else ''
+
+    return f"""
+    <html>
+    <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+    body {{ font-family: Arial, sans-serif; background:#f3f4f6; margin:0; padding:16px; color:#111827; }}
+    .wrap {{ max-width: 700px; margin:0 auto; }}
+    .card {{ background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px; margin-bottom:12px; }}
+    h2 {{ margin: 0 0 6px 0; }}
+    .back {{ display:inline-block; margin-bottom:12px; text-decoration:none; background:#2563eb; color:#fff; padding:8px 12px; border-radius:8px; }}
+    .grid-check {{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:14px; }}
+    @media (max-width: 500px) {{ .grid-check {{ grid-template-columns: 1fr; }} }}
+    </style>
+    </head>
+    <body>
+      <div class="wrap">
+        <a href="/admin/usuarios" class="back">← Volver a Gestión de Usuarios</a>
+        <div class="card">
+          <h2>Permisos de módulos</h2>
+          <p style="color:#6b7280;margin-bottom:12px;">Usuario: <b>{html_lib.escape(str(uname or ''))}</b> — {html_lib.escape(str(unombre or ''))} <span style="background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:999px;font-size:12px;">{html_lib.escape(str(urol or ''))}</span></p>
+          {msg_html}
+          <form method="post">
+            <input type="hidden" name="accion" value="guardar">
+            <div class="grid-check">
+              {checkboxes_html}
+            </div>
+            <p style="color:#6b7280;font-size:12px;margin-bottom:10px;">Si todos los módulos están marcados, no se aplica restricción por usuario (solo por rol).</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button type="button" onclick="document.querySelectorAll('input[name=modulo]').forEach(c=>c.checked=true)" style="padding:8px 14px;background:#64748b;color:#fff;border:0;border-radius:6px;cursor:pointer;">Marcar todos</button>
+              <button type="button" onclick="document.querySelectorAll('input[name=modulo]').forEach(c=>c.checked=false)" style="padding:8px 14px;background:#64748b;color:#fff;border:0;border-radius:6px;cursor:pointer;">Desmarcar todos</button>
+              <button type="submit" style="padding:8px 18px;background:#0f766e;color:#fff;border:0;border-radius:6px;cursor:pointer;font-weight:700;">Guardar permisos</button>
+            </div>
+          </form>
         </div>
       </div>
     </body>
@@ -2008,9 +2123,22 @@ def dashboard():
         },
     ]
 
-    ADMIN_ONLY_HREFS = {"/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo", "/modulo/analisis-estrategico"}
+    ADMIN_ONLY_HREFS = {"/modulo/suministros", "/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo", "/modulo/analisis-estrategico"}
     OBRA_HIDDEN_HREFS = {"/modulo/estado", "/modulo/generador", "/modulo/parte"}
     is_admin = _is_admin_session()
+
+    # Cargar módulos permitidos por usuario (solo si no es admin)
+    modulos_permitidos_set = None
+    if not is_admin:
+        user_id_sess = session.get("user_id")
+        if user_id_sess:
+            try:
+                _db = get_db()
+                _row = _db.execute("SELECT modulos_permitidos FROM usuarios WHERE id = ?", (int(user_id_sess),)).fetchone()
+                if _row and _row[0]:
+                    modulos_permitidos_set = set(json.loads(_row[0]))
+            except Exception:
+                pass
     cards_html = "".join(
         f'''
             <a href="{m["href"]}" class="module-card {m["css"]}">
@@ -2022,6 +2150,7 @@ def dashboard():
         for m in modulos
         if (m["href"] not in ADMIN_ONLY_HREFS or is_admin)
         and not (role_actual == ROLE_OBRA and m["href"] in OBRA_HIDDEN_HREFS)
+        and (modulos_permitidos_set is None or m["href"] in modulos_permitidos_set)
     )
 
     top_actions = '''

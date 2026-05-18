@@ -290,6 +290,52 @@ def _calcular_velocidad_promedio(db, obra_filtro='TODAS'):
     return int(total / 30) if total > 0 else 0
 
 
+def _calcular_kg_hh(db, obra_filtro='TODAS'):
+    """Calcula indicador KG/HH: kg fabricados aprobados en ARMADO dividido horas reales del parte semanal."""
+    ok_estados = ('OK', 'APROBADO', 'OBS', 'OBSERVACION', 'OM', 'OP MEJORA', 'OPORTUNIDAD DE MEJORA')
+    ok_ph = ",".join("?" * len(ok_estados))
+    if obra_filtro and obra_filtro != 'TODAS':
+        kg_row = db.execute(
+            f"""
+            SELECT SUM(COALESCE(p.cantidad, 1) * COALESCE(p.peso, 0))
+            FROM procesos p
+            JOIN ordenes_trabajo ot ON ot.id = p.ot_id
+            WHERE p.proceso = 'ARMADO'
+              AND UPPER(TRIM(COALESCE(p.estado, ''))) IN ({ok_ph})
+              AND p.eliminado = 0
+              AND ot.obra = ?
+            """,
+            list(ok_estados) + [obra_filtro],
+        ).fetchone()
+        hh_row = db.execute(
+            """
+            SELECT SUM(COALESCE(pt.horas, 0))
+            FROM partes_trabajo pt
+            JOIN ordenes_trabajo ot ON ot.id = pt.ot_id
+            WHERE ot.obra = ?
+            """,
+            (obra_filtro,),
+        ).fetchone()
+    else:
+        kg_row = db.execute(
+            f"""
+            SELECT SUM(COALESCE(cantidad, 1) * COALESCE(peso, 0))
+            FROM procesos
+            WHERE proceso = 'ARMADO'
+              AND UPPER(TRIM(COALESCE(estado, ''))) IN ({ok_ph})
+              AND eliminado = 0
+            """,
+            list(ok_estados),
+        ).fetchone()
+        hh_row = db.execute(
+            "SELECT SUM(COALESCE(horas, 0)) FROM partes_trabajo"
+        ).fetchone()
+    kg = float(kg_row[0] or 0) if kg_row else 0.0
+    hh = float(hh_row[0] or 0) if hh_row else 0.0
+    ratio = round(kg / hh, 2) if hh > 0 else 0.0
+    return kg, hh, ratio
+
+
 @analisis_estrategico_bp.route("/")
 def dashboard_estrategico():
     # Solo admin puede ver este módulo
@@ -310,6 +356,7 @@ def dashboard_estrategico():
     cuello_botella = _detectar_cuello_botella(db, obra_filtro=obra_filtro)
     velocidad = _calcular_velocidad_promedio(db, obra_filtro=obra_filtro)
     tendencia = _calcular_tendencia_productividad(db, granularidad=granularidad, obra_filtro=obra_filtro)
+    kg_total, hh_total, kg_hh_ratio = _calcular_kg_hh(db, obra_filtro=obra_filtro)
 
     # Proyección general
     if obra_filtro and obra_filtro != 'TODAS':
@@ -550,6 +597,11 @@ def dashboard_estrategico():
           <div class="kpi-card">
             <div class="kpi-label">Velocidad promedio</div>
             <div class="kpi-value">{velocidad} <span style="font-size: 14px;">pcs/día</span></div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">KG / HH Real</div>
+            <div class="kpi-value">{kg_hh_ratio}</div>
+            <div style="font-size:11px;color:#64748b;margin-top:4px;">{round(kg_total, 0):.0f} kg · {round(hh_total, 1)} HH parte semanal</div>
           </div>
         </div>
 
