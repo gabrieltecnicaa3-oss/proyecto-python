@@ -194,6 +194,30 @@ def remitos():
             table_data = [['POS.', 'PERFIL', 'PESO', 'TOTAL', 'ENVIADO', 'DESCRIPCION', 'OBSERVACIONES']]
             total_enviado_sum = 0
 
+            # Pre-calcular cantidad corregida por pieza: si stored_qty == nro de piezas del mismo prefijo
+            # en la OT, cada pieza vale 1 (e.g., V10-1, V10-2, V10-3 con cantidad=3 → cada una = 1)
+            _todas_piezas_ot = db.execute("""
+                SELECT p_despacho.id, p_first.posicion, COALESCE(p_first.cantidad, '1')
+                FROM procesos p_despacho
+                LEFT JOIN procesos p_first ON p_despacho.posicion = p_first.posicion
+                                           AND p_despacho.obra = p_first.obra
+                                           AND p_first.id = (SELECT MIN(id) FROM procesos
+                                                             WHERE posicion = p_despacho.posicion
+                                                             AND obra = p_despacho.obra)
+                WHERE p_despacho.ot_id = ?
+                  AND UPPER(TRIM(COALESCE(p_despacho.proceso, ''))) IN ('DESPACHO', 'P/DESPACHO')
+            """, (ot_id,)).fetchall()
+            _base_counts = {}
+            for _pid, _pos, _qty in _todas_piezas_ot:
+                _base = re.sub(r'-\d+$', '', str(_pos or '').strip().upper())
+                _base_counts[_base] = _base_counts.get(_base, 0) + 1
+            _cantidad_corregida = {}
+            for _pid, _pos, _qty_raw in _todas_piezas_ot:
+                _stored = int(float(_qty_raw) if _qty_raw else 0) or 1
+                _base = re.sub(r'-\d+$', '', str(_pos or '').strip().upper())
+                _cnt = _base_counts.get(_base, 1)
+                _cantidad_corregida[int(_pid)] = 1 if (_cnt > 1 and _stored == _cnt) else _stored
+
             for pieza_id in piezas_ids:
                 pieza = db.execute("""
                     SELECT p_despacho.id,
@@ -216,7 +240,7 @@ def remitos():
 
                 if pieza:
                     posicion = str(pieza[1]) if pieza[1] else ''
-                    cantidad_total = int(float(pieza[3]) if pieza[3] else 0)
+                    cantidad_total = _cantidad_corregida.get(int(pieza_id), 1)
                     perfil = str(pieza[4]) if pieza[4] else ''
                     peso = str(pieza[5]) if pieza[5] else ''
                     descripcion = str(pieza[6]) if pieza[6] else ''
@@ -806,11 +830,27 @@ def api_piezas_remito(ot_id):
         piezas = sorted(piezas, key=lambda fila: natural_key_posicion(fila[1]))
 
         piezas_list = []
+
+        # Corregir cantidad por pieza: si stored_qty == cantidad de piezas del mismo prefijo base,
+        # cada pieza individual vale 1 (e.g., V10-1, V10-2, V10-3 con cantidad=3 → cada una = 1)
+        base_counts = {}
+        for p in piezas:
+            pos = str(p[1] or '').strip().upper()
+            base = re.sub(r'-\d+$', '', pos)
+            base_counts[base] = base_counts.get(base, 0) + 1
+
         for p in piezas:
             pieza_id = p[0]
             posicion = str(p[1]) if p[1] else ''
             obra = str(p[2]) if p[2] else ''
-            cantidad = str(p[3]) if p[3] else ''
+            stored_qty = int(float(p[3]) if p[3] else 0) or 1
+            base = re.sub(r'-\d+$', '', posicion.strip().upper())
+            count_base = base_counts.get(base, 1)
+            # Si la cantidad almacenada coincide con el número de piezas del grupo, cada una = 1
+            if count_base > 1 and stored_qty == count_base:
+                cantidad = '1'
+            else:
+                cantidad = str(stored_qty)
             perfil = str(p[4]) if p[4] else ''
             peso = str(p[5]) if p[5] else ''
             descripcion = str(p[6]) if p[6] else ''
