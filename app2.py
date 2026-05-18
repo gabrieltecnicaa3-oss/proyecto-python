@@ -5925,6 +5925,7 @@ app.register_blueprint(programacion_bp)
 app.register_blueprint(reportes_bp)
 app.register_blueprint(tablero_ejecutivo_bp)
 app.register_blueprint(analisis_estrategico_bp)
+app.register_blueprint(ot_bp)
 
 
 # ====================== BÚSQUEDA GLOBAL ======================

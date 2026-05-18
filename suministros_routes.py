@@ -35,8 +35,7 @@ def _ensure_suministros_tables(db):
                         proveedor_sugerido TEXT,
                         fecha_necesaria DATE,
                         estado_item TEXT DEFAULT 'Pendiente',
-                        observaciones TEXT,
-                        FOREIGN KEY (solicitud_id) REFERENCES solicitudes_compra(id)
+                        observaciones TEXT
                 )
                 """
         )
