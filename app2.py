@@ -514,7 +514,7 @@ def init_db():
     db.execute("""
     CREATE TABLE IF NOT EXISTS usuario_modulos (
         usuario_id INTEGER NOT NULL,
-        modulo_href TEXT NOT NULL,
+        modulo_href VARCHAR(255) NOT NULL,
         PRIMARY KEY (usuario_id, modulo_href)
     )
     """)
