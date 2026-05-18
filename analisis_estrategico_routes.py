@@ -218,7 +218,7 @@ def _calcular_velocidad_promedio(db):
 @analisis_estrategico_bp.route("/")
 def dashboard_estrategico():
     # Solo admin puede ver este módulo
-    if session.get("role") != "administrador":
+    if str(session.get("user_role") or "").strip().lower() != "administrador":
         return redirect("/")
     
     db = get_db()
