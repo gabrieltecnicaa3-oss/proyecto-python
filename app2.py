@@ -1199,6 +1199,20 @@ def _auth_guard():
         return redirect(f"/login?next={next_qs}")
 
     role = _session_user_role()
+    # Para usuarios obra, refrescar módulos permitidos desde DB en cada request
+    # así los cambios del admin toman efecto sin necesidad de re-login
+    if role == ROLE_OBRA:
+        uid = int(session.get("user_id") or 0)
+        if uid:
+            try:
+                _db = get_db()
+                _mods = _db.execute(
+                    "SELECT modulo_href FROM usuario_modulos WHERE usuario_id = ?", (uid,)
+                ).fetchall()
+                session["modulos_permitidos"] = [r[0] for r in _mods]
+            except Exception:
+                pass  # Si falla la DB, usa el valor cacheado en sesión
+
     if not _rol_puede_acceder(role, path, request.method):
         return _respuesta_sin_permiso()
 
