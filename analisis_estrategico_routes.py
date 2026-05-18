@@ -199,12 +199,14 @@ def _obtener_obras(db):
 
 def _calcular_velocidad_promedio(db):
     """Calcula velocidad promedio de piezas procesadas por día."""
+    fecha_limite = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
     procesos_completados = db.execute(
         """
         SELECT COUNT(1)
         FROM procesos
-        WHERE estado IN ('Aprobado', 'Reproceso') AND fecha > datetime('now', '-30 days')
-        """
+        WHERE estado IN ('Aprobado', 'Reproceso') AND fecha > ?
+        """,
+        (fecha_limite,)
     ).fetchone()
     
     total = (procesos_completados[0] or 0)
