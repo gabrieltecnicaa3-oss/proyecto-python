@@ -15,6 +15,7 @@ from proceso_utils import (
     validar_siguiente_proceso,
 )
 from ot_routes import ot_bp
+from suministros_routes import suministros_bp
 from db_utils import (
     get_db,
     _resolver_ot_id_para_obra,
@@ -41,6 +42,9 @@ from qr_utils import (
     obtener_firma_ok_path as _qr_obtener_firma_ok_path,
     upsert_piezas_desde_excel,
 )
+
+# Crear la instancia de la aplicación Flask
+app = Flask(__name__)
 import csv
 import html as html_lib
 import json
@@ -60,10 +64,12 @@ from io import BytesIO, StringIO
 from datetime import timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("APP_SECRET_KEY", "dev-secret-change-me")
-app.permanent_session_lifetime = timedelta(days=30)
-app.register_blueprint(ot_bp)
+
+app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY") or "dev-local-secret-key"
+
+
+# Registrar blueprint de suministros
+app.register_blueprint(suministros_bp)
 
 ROLE_ADMIN = "administrador"
 ROLE_SUPERVISOR = "supervisor"
@@ -1893,6 +1899,13 @@ def dashboard():
     container_max_width = "1200px"
 
     modulos = [
+        {
+            "href": "/modulo/suministros",
+            "css": "suministros",
+            "icon": "🛒",
+            "titulo": "Suministros / Compras",
+            "desc": "Solicitudes, gestión de compras, recepción y alertas de materiales",
+        },
         {
             "href": "/modulo/ot",
             "css": "ot",
