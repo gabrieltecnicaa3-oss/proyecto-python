@@ -155,9 +155,19 @@ def _rol_puede_acceder(role, path, method):
 
     # Whitelist de módulos por usuario (solo si tiene módulos asignados explícitamente)
     modulos_permitidos = list(session.get("modulos_permitidos") or [])
-    if modulos_permitidos:
+    # Rutas de API asociadas a módulos que requieren permiso explícito
+    _MODULO_API_EXTRAS = {
+        "/modulo/estado": ["/api/dashboard-estado"],
+    }
+    # Construir conjunto expandido (módulo + sus APIs asociadas)
+    expanded_permitidos = set(m.lower() for m in modulos_permitidos)
+    for _m in modulos_permitidos:
+        for _extra in _MODULO_API_EXTRAS.get(_m.lower(), []):
+            expanded_permitidos.add(_extra.lower())
+
+    if expanded_permitidos:
         # Siempre permitir el dashboard raíz y rutas de API compartidas
-        if p not in ("/", "") and not any(p.startswith(m.lower()) for m in modulos_permitidos):
+        if p not in ("/", "") and not any(p.startswith(a) for a in expanded_permitidos):
             return False
 
     metodo = str(method or "").upper()
@@ -166,7 +176,11 @@ def _rol_puede_acceder(role, path, method):
             return False
 
     if any(p.startswith(prefix) for prefix in OBRA_RESTRICTED_PREFIXES):
-        return False
+        # Si el módulo está explícitamente permitido, saltear la restricción
+        if expanded_permitidos and any(p.startswith(a) for a in expanded_permitidos):
+            pass  # permitido explícitamente
+        else:
+            return False
     if p.startswith("/descargar-remito/"):
         return True
     if "export" in p or "pdf" in p or "imprimir" in p:
