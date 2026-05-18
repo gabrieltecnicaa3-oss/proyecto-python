@@ -141,6 +141,7 @@ def _rol_puede_acceder(role, path, method):
         "/modulo/historial",
         "/modulo/reportes",
         "/modulo/tablero-ejecutivo",
+        "/modulo/analisis-estrategico",
     )
     p = str(path or "").lower()
     if any(p.startswith(pref) for pref in ADMIN_ONLY_PREFIXES):
@@ -2007,7 +2008,7 @@ def dashboard():
         },
     ]
 
-    ADMIN_ONLY_HREFS = {"/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo"}
+    ADMIN_ONLY_HREFS = {"/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo", "/modulo/analisis-estrategico"}
     OBRA_HIDDEN_HREFS = {"/modulo/estado", "/modulo/generador", "/modulo/parte"}
     is_admin = _is_admin_session()
     cards_html = "".join(

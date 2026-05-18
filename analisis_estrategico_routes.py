@@ -4,7 +4,7 @@ Predice fechas, calcula ruta crítica, detecta cuellos de botella y valida proba
 Incluye gráficos con tendencias y filtros por obra.
 """
 
-from flask import Blueprint, request
+from flask import Blueprint, request, session, redirect
 from db_utils import get_db
 from datetime import datetime, timedelta
 import random
@@ -165,21 +165,22 @@ def _detectar_cuello_botella(db):
     return sorted(cuello.items(), key=lambda x: x[1], reverse=True)
 
 
-def _calcular_tendencia_productividad(db, dias=30):
-    """Calcula tendencia de productividad últimos N días."""
+def _calcular_tendencia_productividad(db, dias=60):
+    """Calcula tendencia de productividad. Intenta los últimos N días, si no hay datos busca más atrás."""
     datos = db.execute(
-        f"""
-        SELECT DATE(fecha) as dia, 
+        """
+        SELECT DATE(fecha) as dia,
                COUNT(1) as total,
                SUM(CASE WHEN estado = 'Aprobado' THEN 1 ELSE 0 END) as aprobadas
         FROM procesos
-        WHERE fecha > datetime('now', '-{dias} days')
+        WHERE fecha IS NOT NULL AND eliminado != 1
         GROUP BY DATE(fecha)
         ORDER BY dia ASC
+        LIMIT 60
         """
     ).fetchall()
     
-    return [(str(row[0]), row[1], row[2]) for row in datos] if datos else []
+    return [(str(row[0]), int(row[1] or 0), int(row[2] or 0)) for row in datos] if datos else []
 
 
 def _obtener_obras(db):
@@ -216,6 +217,10 @@ def _calcular_velocidad_promedio(db):
 
 @analisis_estrategico_bp.route("/")
 def dashboard_estrategico():
+    # Solo admin puede ver este módulo
+    if session.get("role") != "administrador":
+        return redirect("/")
+    
     db = get_db()
     
     # Obtener obra del filtro (por defecto TODAS)
@@ -283,17 +288,14 @@ def dashboard_estrategico():
     cant_cuello = [p[1] for p in cuello_botella]
     colores_cuello = ["#ef4444" if cant > 0 else "#10b981" for cant in cant_cuello]
     
-    # Datos para gráfico de probabilidades por OT
-    if ruta_critica:
-        ots_nombres = []
-        ots_probabilidades = []
-        for item in ruta_critica[:8]:
-            ots_nombres.append(html.escape(str(item['titulo'])[:15]))
-            prob = _simular_probabilidad_cumplimiento(db, item['ot_id'], item['fecha_entrega'])
-            ots_probabilidades.append(prob)
-    else:
-        ots_nombres = []
-        ots_probabilidades = []
+    # Datos para gráfico de probabilidades: top 8 OTs abiertas con fecha_entrega
+    ots_para_prob = db.execute(
+        """SELECT id, titulo, fecha_entrega FROM ordenes_trabajo
+           WHERE fecha_cierre IS NULL AND estado != 'Finalizada' AND fecha_entrega IS NOT NULL
+           ORDER BY fecha_entrega ASC LIMIT 8"""
+    ).fetchall()
+    ots_nombres = [html.escape(str(r[1])[:15]) for r in ots_para_prob]
+    ots_probabilidades = [_simular_probabilidad_cumplimiento(db, r[0], r[2]) for r in ots_para_prob]
     
     # Filas de tabla crítica
     filas_critica = ""
