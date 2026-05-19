@@ -25,6 +25,7 @@ from db_utils import (
 from proceso_utils import (
     _extraer_ciclos_reinspeccion,
     _estado_pieza_persistente,
+    _proceso_aprobado,
     _registrar_trazabilidad,
     _agregar_ciclo_reinspeccion,
     pieza_completada,
@@ -4453,21 +4454,15 @@ def control_pintura_nuevo():
             ultimo_soldadura = {}
             for pos_s, est_s, re_insp_s in soldadura_rows:
                 if pos_s not in ultimo_soldadura:
-                    # Resolver estado considerando re-inspecciones
-                    est_final_s = est_s
-                    if est_s == "NC" and re_insp_s:
-                        ciclos_s = _extraer_ciclos_reinspeccion(re_insp_s)
-                        if ciclos_s:
-                            ultimo_ciclo_s = ciclos_s[-1].get("estado", "").strip().upper()
-                            if ultimo_ciclo_s in ("OK", "APROBADO", "CONFORME", "OBS", "OM"):
-                                est_final_s = ultimo_ciclo_s
-                    ultimo_soldadura[pos_s] = est_final_s
+                    # Resolver estado usando _proceso_aprobado (maneja NC, NO CONFORME,
+                    # re-inspecciones y todos los estados aprobados del sistema)
+                    aprobado_s = _proceso_aprobado(est_s, re_insp_s)
+                    ultimo_soldadura[pos_s] = "OK" if aprobado_s else (est_s or "NC").upper()
 
-            # Filtrar piezas: solo las que estén OK en SOLDADURA
+            # Filtrar piezas: solo las que estén aprobadas en SOLDADURA
             piezas_filtradas = []
             for p in piezas_all:
-                est_sold = (ultimo_soldadura.get(p) or "").upper()
-                if est_sold in ("OK", "APROBADO", "CONFORME", "OBS", "OM"):
+                if ultimo_soldadura.get(p) == "OK":
                     piezas_filtradas.append(p)
             
             if etapa_sel:
