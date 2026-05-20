@@ -792,7 +792,8 @@ def remitos():
                     console.error('Error del servidor:', data.error);
                     document.getElementById('piezas-container').innerHTML = `<p class="error">Error: ${data.error}</p>`;
                 } else if (data.piezas && data.piezas.length > 0) {
-                    let html = '<table class="piezas-table"><thead><tr>';
+                    let html = '<div style="margin-bottom:8px;"><button type="button" class="btn-manual btn-add-manual" style="font-size:13px;padding:6px 14px;" onclick="toggleSeleccionarTodas(\'piezas-container\')">☑ Seleccionar / Deseleccionar todas</button></div>';
+                    html += '<table class="piezas-table"><thead><tr>';
                     html += '<th style="width: 40px;">✓</th>';
                     html += '<th style="width: 100px;">Posición</th>';
                     html += '<th style="width: 140px;">Total</th>';
@@ -869,7 +870,8 @@ def remitos():
                     container.innerHTML = '<p style="color:#999;padding:20px;">No hay piezas despachadas para esta OT.</p>';
                     return;
                 }
-                let h = '<table class="piezas-table"><thead><tr>';
+                let h = '<div style="margin-bottom:8px;"><button type="button" class="btn-manual btn-add-manual" style="font-size:13px;padding:6px 14px;" onclick="toggleSeleccionarTodas(\'reenvio-piezas-container\')">☑ Seleccionar / Deseleccionar todas</button></div>';
+                h += '<table class="piezas-table"><thead><tr>';
                 h += '<th style="width:40px;">✓</th>';
                 h += '<th>Posición</th>';
                 h += '<th>Total</th>';
@@ -900,6 +902,14 @@ def remitos():
             .catch(err => {
                 container.innerHTML = `<p class="error">Error: ${err.message}</p>`;
             });
+    }
+
+    function toggleSeleccionarTodas(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const checks = container.querySelectorAll('input[type="checkbox"][name="piezas"]');
+        const todasMarcadas = Array.from(checks).every(c => c.checked);
+        checks.forEach(c => { c.checked = !todasMarcadas; });
     }
 
     renumerarArticulosManual();
