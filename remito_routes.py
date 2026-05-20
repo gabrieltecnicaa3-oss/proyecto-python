@@ -416,14 +416,17 @@ def remitos():
     ots_por_obra_json = json.dumps(ots_por_obra, ensure_ascii=False).replace("</", "<\\/")
 
     # OTs con piezas ya despachadas (para sección de reenvio)
-    reenvio_ots_raw = db.execute("""
-        SELECT DISTINCT p.ot_id, ot.obra, ot.cliente, TRIM(COALESCE(ot.titulo, '')) as titulo
-        FROM procesos p
-        JOIN ordenes_trabajo ot ON ot.id = p.ot_id
-        WHERE UPPER(TRIM(COALESCE(p.estado_pieza, ''))) = 'DESPACHADO'
-          AND p.ot_id IS NOT NULL
-        ORDER BY p.ot_id DESC
-    """).fetchall()
+    try:
+        reenvio_ots_raw = db.execute("""
+            SELECT DISTINCT p.ot_id, ot.obra, ot.cliente, TRIM(COALESCE(ot.titulo, '')) as titulo
+            FROM procesos p
+            JOIN ordenes_trabajo ot ON ot.id = p.ot_id
+            WHERE UPPER(TRIM(COALESCE(p.estado_pieza, ''))) = 'DESPACHADO'
+              AND p.ot_id IS NOT NULL
+            ORDER BY p.ot_id DESC
+        """).fetchall()
+    except Exception:
+        reenvio_ots_raw = []
     reenvio_ots_por_obra = {}
     for rot in reenvio_ots_raw:
         obra_txt = str(rot[1] or "").strip()
@@ -833,9 +836,10 @@ def remitos():
     function cargarOTsReenvio() {
         const obraSel = document.getElementById('reenvio-obra-select') ? document.getElementById('reenvio-obra-select').value : '';
         const otSelect = document.getElementById('reenvio-ot-select');
-        if (!otSelect) return;
+        const reenvioContainer = document.getElementById('reenvio-piezas-container');
+        if (!otSelect || !reenvioContainer) return;
         otSelect.innerHTML = '<option value="">Seleccionar OT...</option>';
-        document.getElementById('reenvio-piezas-container').innerHTML = '<p style="color:#999;padding:20px;">Selecciona una OT para ver las piezas despachadas...</p>';
+        reenvioContainer.innerHTML = '<p style="color:#999;padding:20px;">Selecciona una OT para ver las piezas despachadas...</p>';
         if (!obraSel || !reenvioOtsPorObra[obraSel] || !reenvioOtsPorObra[obraSel].length) {
             otSelect.disabled = true;
             return;
