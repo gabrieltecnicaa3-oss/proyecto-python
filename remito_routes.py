@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import glob
 import html as html_lib
 from io import BytesIO
 from datetime import datetime
@@ -414,6 +415,29 @@ def remitos():
         })
     ots_por_obra_json = json.dumps(ots_por_obra, ensure_ascii=False).replace("</", "<\\/")
 
+    # OTs con piezas ya despachadas (para sección de reenvio)
+    reenvio_ots_raw = db.execute("""
+        SELECT DISTINCT p.ot_id, ot.obra, ot.cliente, TRIM(COALESCE(ot.titulo, '')) as titulo
+        FROM procesos p
+        JOIN ordenes_trabajo ot ON ot.id = p.ot_id
+        WHERE UPPER(TRIM(COALESCE(p.estado_pieza, ''))) = 'DESPACHADO'
+          AND p.ot_id IS NOT NULL
+        ORDER BY p.ot_id DESC
+    """).fetchall()
+    reenvio_ots_por_obra = {}
+    for rot in reenvio_ots_raw:
+        obra_txt = str(rot[1] or "").strip()
+        if not obra_txt:
+            continue
+        reenvio_ots_por_obra.setdefault(obra_txt, []).append({
+            "id": int(rot[0]),
+            "cliente": str(rot[2] or ""),
+            "obra": obra_txt,
+            "titulo": str(rot[3] or ""),
+        })
+    reenvio_obras_disponibles = sorted(reenvio_ots_por_obra.keys())
+    reenvio_ots_por_obra_json = json.dumps(reenvio_ots_por_obra, ensure_ascii=False).replace("</", "<\\/")
+
     # Paginación de remitos
     POR_PAGINA_REM = 20
     page_rem_txt = (request.args.get("page") or "1").strip()
@@ -501,6 +525,7 @@ def remitos():
     </div>
 
     __FORM_REMITO__
+    __REENVIO_SECTION__
     """
 
     form_remito_html = """
@@ -587,6 +612,58 @@ def remitos():
     )
     html = html.replace("__FORM_REMITO__", form_remito_html)
 
+    reenvio_section_html = ""
+    if not es_obra:
+        reenvio_obras_options = ""
+        for obra in reenvio_obras_disponibles:
+            reenvio_obras_options += f'<option value="{html_lib.escape(obra)}">{html_lib.escape(obra)}</option>'
+        reenvio_section_html = f"""
+        <details style="background:white;border-radius:5px;margin:20px 0;max-width:1200px;">
+            <summary style="padding:15px 20px;cursor:pointer;font-weight:bold;font-size:16px;color:#1e40af;background:#eff6ff;border-radius:5px;list-style:none;display:flex;align-items:center;gap:8px;">
+                🔄 Reenviar Piezas ya Despachadas
+                <span style="font-size:12px;font-weight:normal;color:#64748b;">&nbsp;(expandir para ver)</span>
+            </summary>
+            <form method="post" id="reenvio-form" style="padding:20px;border-top:2px solid #bfdbfe;">
+                <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;padding:10px 15px;margin-bottom:15px;color:#1e40af;font-size:13px;">
+                    ℹ️ Esta sección permite generar un nuevo remito para piezas que ya fueron despachadas anteriormente. Usá los filtros de obra y OT para encontrar las piezas.
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                    <div class="form-group">
+                        <label>Filtrar por Obra:</label>
+                        <select id="reenvio-obra-select" onchange="cargarOTsReenvio()">
+                            <option value="">Seleccionar obra...</option>
+                            {reenvio_obras_options}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Orden de Trabajo:</label>
+                        <select name="ot_id" id="reenvio-ot-select" onchange="cargarPiezasReenvio()" disabled>
+                            <option value="">Seleccionar OT...</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                    <div class="form-group">
+                        <label>Fecha de Remito:</label>
+                        <input type="date" name="fecha_remito" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Transporte:</label>
+                        <input type="text" name="transporte" placeholder="Ej: Empresa XYZ, Auto particular, etc.">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label><b>Piezas ya Despachadas:</b></label>
+                    <div id="reenvio-piezas-container">
+                        <p style="color:#999;padding:20px;">Selecciona una OT para ver las piezas despachadas...</p>
+                    </div>
+                </div>
+                <button type="submit" style="background:#1d4ed8;">📄 Generar Remito de Reenvio</button>
+            </form>
+        </details>
+        """
+    html = html.replace("__REENVIO_SECTION__", reenvio_section_html)
+
     html += f"""
     <h2>Remitos Generados <span style="font-size:14px;color:#666;font-weight:normal;">({total_remitos} total, p&aacute;g {page_rem}/{total_paginas_rem})</span></h2>
     <table>
@@ -632,9 +709,11 @@ def remitos():
 
     html += """
     <script id="ots-por-obra-json" type="application/json">__OTS_POR_OBRA_JSON__</script>
+    <script id="reenvio-ots-por-obra-json" type="application/json">__REENVIO_OTS_JSON__</script>
 
     <script>
     const otsPorObra = JSON.parse(document.getElementById('ots-por-obra-json').textContent || '{}');
+    const reenvioOtsPorObra = JSON.parse(document.getElementById('reenvio-ots-por-obra-json').textContent || '{}');
 
     function cargarOTs() {
         const obraSel = document.getElementById('obra-select').value;
@@ -750,12 +829,86 @@ def remitos():
             });
     }
 
+    function cargarOTsReenvio() {
+        const obraSel = document.getElementById('reenvio-obra-select') ? document.getElementById('reenvio-obra-select').value : '';
+        const otSelect = document.getElementById('reenvio-ot-select');
+        if (!otSelect) return;
+        otSelect.innerHTML = '<option value="">Seleccionar OT...</option>';
+        document.getElementById('reenvio-piezas-container').innerHTML = '<p style="color:#999;padding:20px;">Selecciona una OT para ver las piezas despachadas...</p>';
+        if (!obraSel || !reenvioOtsPorObra[obraSel] || !reenvioOtsPorObra[obraSel].length) {
+            otSelect.disabled = true;
+            return;
+        }
+        reenvioOtsPorObra[obraSel].forEach(ot => {
+            const opt = document.createElement('option');
+            opt.value = String(ot.id);
+            opt.textContent = `OT ${ot.id} - ${ot.obra}${ot.titulo ? ' - ' + ot.titulo : ''}`;
+            otSelect.appendChild(opt);
+        });
+        otSelect.disabled = false;
+    }
+
+    function cargarPiezasReenvio() {
+        const otSelectEl = document.getElementById('reenvio-ot-select');
+        const container = document.getElementById('reenvio-piezas-container');
+        if (!otSelectEl || !container) return;
+        const otId = otSelectEl.value;
+        if (!otId) {
+            container.innerHTML = '<p style="color:#999;padding:20px;">Selecciona una OT para ver las piezas despachadas...</p>';
+            return;
+        }
+        container.innerHTML = '<p style="color:#999;padding:20px;">Cargando piezas...</p>';
+        fetch(`/api/piezas-despachadas/${otId}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    container.innerHTML = `<p class="error">Error: ${data.error}</p>`;
+                    return;
+                }
+                if (!data.piezas || !data.piezas.length) {
+                    container.innerHTML = '<p style="color:#999;padding:20px;">No hay piezas despachadas para esta OT.</p>';
+                    return;
+                }
+                let h = '<table class="piezas-table"><thead><tr>';
+                h += '<th style="width:40px;">✓</th>';
+                h += '<th>Posición</th>';
+                h += '<th>Total</th>';
+                h += '<th>A Enviar</th>';
+                h += '<th>Perfil</th>';
+                h += '<th>Peso</th>';
+                h += '<th>Descripción</th>';
+                h += '<th>Remito Anterior</th>';
+                h += '<th>Observaciones</th>';
+                h += '</tr></thead><tbody>';
+                data.piezas.forEach(pieza => {
+                    const cantTotal = parseInt(parseFloat(pieza.cantidad) || 0);
+                    h += `<tr class="pieza-row">
+                        <td><input type="checkbox" name="piezas" value="${pieza.id}" checked></td>
+                        <td><strong>${pieza.posicion}</strong></td>
+                        <td class="cantidad-info">${cantTotal} unidades</td>
+                        <td><input type="number" name="cant_${pieza.id}" class="cantidad-input" value="${cantTotal}" min="0" max="${cantTotal}"></td>
+                        <td class="perfil-cell">${pieza.perfil}</td>
+                        <td class="peso-cell">${pieza.peso}</td>
+                        <td class="descripcion-cell">${pieza.descripcion}</td>
+                        <td style="font-size:11px;color:#64748b;">${pieza.remito_anterior || '-'}</td>
+                        <td><textarea name="obs_${pieza.id}" placeholder="Observaciones..."></textarea></td>
+                    </tr>`;
+                });
+                h += '</tbody></table>';
+                container.innerHTML = h;
+            })
+            .catch(err => {
+                container.innerHTML = `<p class="error">Error: ${err.message}</p>`;
+            });
+    }
+
     renumerarArticulosManual();
     </script>
     </body>
     </html>
     """
     html = html.replace("__OTS_POR_OBRA_JSON__", ots_por_obra_json)
+    html = html.replace("__REENVIO_OTS_JSON__", reenvio_ots_por_obra_json)
     return html
 
 
@@ -897,9 +1050,93 @@ def eliminar_remito(remito_id):
 @remito_bp.route("/descargar-remito/<filename>")
 def descargar_remito(filename):
     try:
+        # Primero buscar en carpeta local de remitos
         filepath = os.path.join(_REMITOS_DIR, filename)
-        if not os.path.exists(filepath):
-            return "Remito no encontrado", 404
-        return send_file(filepath, as_attachment=True, download_name=filename)
+        if os.path.exists(filepath):
+            return send_file(filepath, as_attachment=True, download_name=filename)
+        # Fallback: buscar en árbol de databooks (Reportes Produccion/)
+        matches = glob.glob(os.path.join(_DATABOOKS_DIR, "**", filename), recursive=True)
+        if matches:
+            return send_file(matches[0], as_attachment=True, download_name=filename)
+        return "Remito no encontrado", 404
     except Exception as e:
         return f"Error descargando remito: {str(e)}", 500
+
+
+@remito_bp.route("/api/piezas-despachadas/<int:ot_id>", methods=["GET"])
+def api_piezas_despachadas(ot_id):
+    """Devuelve piezas con estado_pieza=DESPACHADO para la OT indicada (usado en reenvio)."""
+    try:
+        db = get_db()
+        ot = db.execute(
+            "SELECT TRIM(COALESCE(obra, '')) FROM ordenes_trabajo WHERE id = ?",
+            (ot_id,)
+        ).fetchone()
+        if not ot:
+            return jsonify({"error": "OT no encontrada", "piezas": []}), 404
+
+        piezas = db.execute("""
+            SELECT p_despacho.id,
+                   p_first.posicion,
+                   p_first.obra,
+                   COALESCE(p_first.cantidad, ''),
+                   COALESCE(p_first.perfil, ''),
+                   COALESCE(p_first.peso, ''),
+                   COALESCE(p_first.descripcion, ''),
+                   COALESCE(p_despacho.reproceso, '')
+            FROM procesos p_despacho
+            LEFT JOIN procesos p_first ON p_despacho.posicion = p_first.posicion
+                                       AND p_despacho.obra = p_first.obra
+                                       AND p_first.id = (
+                                           SELECT MIN(id) FROM procesos
+                                           WHERE posicion = p_despacho.posicion
+                                           AND obra = p_despacho.obra
+                                       )
+            WHERE p_despacho.ot_id = ?
+              AND UPPER(TRIM(COALESCE(p_despacho.proceso, ''))) IN ('DESPACHO', 'P/DESPACHO')
+              AND UPPER(TRIM(COALESCE(p_despacho.estado_pieza, ''))) = 'DESPACHADO'
+        """, (ot_id,)).fetchall()
+
+        piezas = sorted(
+            piezas,
+            key=lambda fila: [int(p) if p.isdigit() else p for p in re.split(r"(\d+)", str(fila[1] or "").strip().upper())]
+        )
+
+        # Corregir cantidades (igual que en api_piezas_remito)
+        base_counts = {}
+        for p in piezas:
+            base = re.sub(r'-\d+$', '', str(p[1] or '').strip().upper())
+            base_counts[base] = base_counts.get(base, 0) + 1
+
+        piezas_list = []
+        for p in piezas:
+            stored_qty = int(float(p[3]) if p[3] else 0) or 1
+            base = re.sub(r'-\d+$', '', str(p[1] or '').strip().upper())
+            count_base = base_counts.get(base, 1)
+            cantidad = '1' if (count_base > 1 and stored_qty == count_base) else str(stored_qty)
+
+            # Extraer referencias a remitos anteriores desde campo reproceso
+            reproceso = str(p[7] or "")
+            remitos_anteriores = []
+            for part in reproceso.split(" | "):
+                part = part.strip()
+                if "REMITO:" in part:
+                    rem_code = part.split("REMITO:")[1].split("|")[0].strip()
+                    if rem_code:
+                        remitos_anteriores.append(rem_code)
+            remito_anterior = ", ".join(remitos_anteriores)
+
+            piezas_list.append({
+                "id": p[0],
+                "posicion": str(p[1] or ''),
+                "obra": str(p[2] or ''),
+                "cantidad": cantidad,
+                "perfil": str(p[4] or ''),
+                "peso": str(p[5] or ''),
+                "descripcion": str(p[6] or ''),
+                "remito_anterior": remito_anterior,
+            })
+
+        return jsonify({"piezas": piezas_list}), 200
+    except Exception as e:
+        return jsonify({"error": str(e), "piezas": []}), 500
