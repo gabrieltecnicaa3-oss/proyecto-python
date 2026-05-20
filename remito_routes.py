@@ -795,7 +795,7 @@ def remitos():
                     console.error('Error del servidor:', data.error);
                     document.getElementById('piezas-container').innerHTML = `<p class="error">Error: ${data.error}</p>`;
                 } else if (data.piezas && data.piezas.length > 0) {
-                    let html = '<div style="margin-bottom:8px;"><button type="button" class="btn-manual btn-add-manual" style="font-size:13px;padding:6px 14px;" onclick="toggleSeleccionarTodas(\'piezas-container\')">☑ Seleccionar / Deseleccionar todas</button></div>';
+                    let html = '<div style="margin-bottom:8px;"><button type="button" class="btn-manual btn-add-manual" style="font-size:13px;padding:6px 14px;" onclick="toggleSeleccionarTodas(\\'piezas-container\\')">☑ Seleccionar / Deseleccionar todas</button></div>';
                     html += '<table class="piezas-table"><thead><tr>';
                     html += '<th style="width: 40px;">✓</th>';
                     html += '<th style="width: 100px;">Posición</th>';
@@ -874,7 +874,7 @@ def remitos():
                     container.innerHTML = '<p style="color:#999;padding:20px;">No hay piezas despachadas para esta OT.</p>';
                     return;
                 }
-                let h = '<div style="margin-bottom:8px;"><button type="button" class="btn-manual btn-add-manual" style="font-size:13px;padding:6px 14px;" onclick="toggleSeleccionarTodas(\'reenvio-piezas-container\')">☑ Seleccionar / Deseleccionar todas</button></div>';
+                let h = '<div style="margin-bottom:8px;"><button type="button" class="btn-manual btn-add-manual" style="font-size:13px;padding:6px 14px;" onclick="toggleSeleccionarTodas(\\'reenvio-piezas-container\\')">☑ Seleccionar / Deseleccionar todas</button></div>';
                 h += '<table class="piezas-table"><thead><tr>';
                 h += '<th style="width:40px;">✓</th>';
                 h += '<th>Posición</th>';
