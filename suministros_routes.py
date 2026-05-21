@@ -22,6 +22,11 @@ import csv
 import io
 
 try:
+    from articulos_seed import ARTICULOS_SEED
+except Exception:
+    ARTICULOS_SEED = []
+
+try:
     import openpyxl
     _HAS_OPENPYXL = True
 except ImportError:
@@ -310,6 +315,17 @@ def _ensure_tables(db):
         db.execute("DELETE FROM proveedores")
         for _n in PROVEEDORES_EXCEL:
             db.execute("INSERT INTO proveedores (nombre, activo) VALUES (?,1)", (_n,))
+    # Auto-seed articulos_sum si la tabla está vacía (primera vez en producción MySQL)
+    if ARTICULOS_SEED:
+        _art_count = db.execute("SELECT COUNT(*) FROM articulos_sum").fetchone()[0]
+        if _art_count == 0:
+            for _cod, _desc, _unid, _cat, _act, _kg in ARTICULOS_SEED:
+                try:
+                    db.execute(
+                        "INSERT INTO articulos_sum (codigo,descripcion,unidad,categoria,activo,kg_per_m) VALUES (?,?,?,?,?,?)",
+                        (_cod, _desc, _unid, _cat, _act, _kg))
+                except Exception:
+                    pass
     db.commit()
 
 # ═══════════════════════════ HELPERS ═══════════════════════════
