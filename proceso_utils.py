@@ -60,7 +60,46 @@ def _ot_no_requiere_pintura(db, obra=None, ot_id=None):
     return _esquema_sin_pintura(row[0] if row else "")
 
 
-def obtener_orden_procesos_ot(db, obra=None, ot_id=None):
+def _pieza_es_inserto(db, pos, obra=None, ot_id=None):
+    pos_txt = str(pos or "").strip()
+    if not pos_txt:
+        return False
+
+    row = None
+    if ot_id is not None:
+        row = db.execute(
+            """
+            SELECT COALESCE(descripcion, '')
+            FROM procesos
+            WHERE TRIM(COALESCE(posicion, '')) = TRIM(?)
+              AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+              AND TRIM(COALESCE(descripcion, '')) <> ''
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (pos_txt, ot_id),
+        ).fetchone()
+    elif obra:
+        row = db.execute(
+            """
+            SELECT COALESCE(descripcion, '')
+            FROM procesos
+            WHERE TRIM(COALESCE(posicion, '')) = TRIM(?)
+              AND TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, ''))
+              AND TRIM(COALESCE(descripcion, '')) <> ''
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (pos_txt, obra),
+        ).fetchone()
+
+    desc_u = str(row[0] or "").strip().upper() if row else ""
+    return "INSERTO" in desc_u
+
+
+def obtener_orden_procesos_ot(db, obra=None, ot_id=None, pos=None):
+    if pos and _pieza_es_inserto(db, pos, obra=obra, ot_id=ot_id):
+        return ["ARMADO", "DESPACHO"]
     if _ot_no_requiere_pintura(db, obra=obra, ot_id=ot_id):
         return ["ARMADO", "SOLDADURA", "DESPACHO"]
     return list(ORDEN_PROCESOS)
@@ -200,7 +239,7 @@ def _obtener_timeline_pieza(db, pos, obra=None):
 def obtener_procesos_completados(pos, obra=None, ot_id=None):
     """Retorna lista de procesos aprobados (OK efectivo) en orden, sin saltos."""
     db = get_db()
-    orden_flujo = obtener_orden_procesos_ot(db, obra=obra, ot_id=ot_id)
+    orden_flujo = obtener_orden_procesos_ot(db, obra=obra, ot_id=ot_id, pos=pos)
 
     if ot_id is not None:
         rows = db.execute(
@@ -249,7 +288,7 @@ def validar_siguiente_proceso(pos, nuevo_proceso, obra=None, ot_id=None):
     procesos_hechos = obtener_procesos_completados(pos, obra, ot_id)
     db = get_db()
 
-    orden_flujo = obtener_orden_procesos_ot(db, obra=obra, ot_id=ot_id)
+    orden_flujo = obtener_orden_procesos_ot(db, obra=obra, ot_id=ot_id, pos=pos)
 
     # Si el proceso ya existe, es una edición
     if nuevo_proceso in procesos_hechos:

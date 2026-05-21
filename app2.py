@@ -153,34 +153,13 @@ def _rol_puede_acceder(role, path, method):
     if role != ROLE_OBRA:
         return False
 
-    # Whitelist de módulos por usuario (solo si tiene módulos asignados explícitamente)
-    modulos_permitidos = list(session.get("modulos_permitidos") or [])
-    # Rutas de API asociadas a módulos que requieren permiso explícito
-    _MODULO_API_EXTRAS = {
-        "/modulo/estado": ["/api/dashboard-estado"],
-    }
-    # Construir conjunto expandido (módulo + sus APIs asociadas)
-    expanded_permitidos = set(m.lower() for m in modulos_permitidos)
-    for _m in modulos_permitidos:
-        for _extra in _MODULO_API_EXTRAS.get(_m.lower(), []):
-            expanded_permitidos.add(_extra.lower())
-
-    if expanded_permitidos:
-        # Siempre permitir el dashboard raíz y rutas de API compartidas
-        if p not in ("/", "") and not any(p.startswith(a) for a in expanded_permitidos):
-            return False
-
     metodo = str(method or "").upper()
     if metodo not in ("GET", "HEAD"):
         if not any(p.startswith(prefix) for prefix in OBRA_ALLOWED_POST_PREFIXES):
             return False
 
     if any(p.startswith(prefix) for prefix in OBRA_RESTRICTED_PREFIXES):
-        # Si el módulo está explícitamente permitido, saltear la restricción
-        if expanded_permitidos and any(p.startswith(a) for a in expanded_permitidos):
-            pass  # permitido explícitamente
-        else:
-            return False
+        return False
     if p.startswith("/descargar-remito/"):
         return True
     if "export" in p or "pdf" in p or "imprimir" in p:
@@ -523,14 +502,6 @@ def init_db():
         activo INTEGER DEFAULT 1,
         ultimo_login DATETIME,
         creado_en DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    db.execute("""
-    CREATE TABLE IF NOT EXISTS usuario_modulos (
-        usuario_id INTEGER NOT NULL,
-        modulo_href VARCHAR(255) NOT NULL,
-        PRIMARY KEY (usuario_id, modulo_href)
     )
     """)
     
@@ -1005,6 +976,13 @@ def init_db():
             except Exception:
                 pass
 
+        if 'modulos_permitidos' not in usuarios_columns:
+            try:
+                db.execute("ALTER TABLE usuarios ADD COLUMN modulos_permitidos TEXT")
+                db.commit()
+            except Exception:
+                pass
+
         # Migración compatible con SQLite y MySQL: intentar ALTER TABLE directamente
         # (falla silenciosamente si la columna ya existe en ambos motores)
         hallazgos_cols_defs = [
@@ -1199,20 +1177,6 @@ def _auth_guard():
         return redirect(f"/login?next={next_qs}")
 
     role = _session_user_role()
-    # Para usuarios obra, refrescar módulos permitidos desde DB en cada request
-    # así los cambios del admin toman efecto sin necesidad de re-login
-    if role == ROLE_OBRA:
-        uid = int(session.get("user_id") or 0)
-        if uid:
-            try:
-                _db = get_db()
-                _mods = _db.execute(
-                    "SELECT modulo_href FROM usuario_modulos WHERE usuario_id = ?", (uid,)
-                ).fetchall()
-                session["modulos_permitidos"] = [r[0] for r in _mods]
-            except Exception:
-                pass  # Si falla la DB, usa el valor cacheado en sesión
-
     if not _rol_puede_acceder(role, path, request.method):
         return _respuesta_sin_permiso()
 
@@ -1267,15 +1231,6 @@ def login():
                 session["username"] = str(row[1])
                 session["nombre"] = str(row[3] or "")
                 session["user_role"] = role
-                # Cargar módulos permitidos por usuario (solo para rol obra)
-                if role == ROLE_OBRA:
-                    mods = db.execute(
-                        "SELECT modulo_href FROM usuario_modulos WHERE usuario_id = ?",
-                        (int(row[0]),),
-                    ).fetchall()
-                    session["modulos_permitidos"] = [r[0] for r in mods]
-                else:
-                    session["modulos_permitidos"] = []
                 db.execute("UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP WHERE id = ?", (int(row[0]),))
                 db.commit()
                 if not next_url.startswith("/"):
@@ -1379,15 +1334,19 @@ def admin_usuarios():
                 if existe:
                     error = "Ya existe un usuario con ese username"
                 else:
-                    db.execute(
-                        """
-                        INSERT INTO usuarios (username, password_hash, nombre, rol, activo)
-                        VALUES (?, ?, ?, ?, ?)
-                        """,
-                        (username, generate_password_hash(password), nombre, rol, activo),
-                    )
-                    db.commit()
-                    mensaje = f"Usuario creado: {username}"
+                    try:
+                        db.execute(
+                            """
+                            INSERT INTO usuarios (username, password_hash, nombre, rol, activo)
+                            VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (username, generate_password_hash(password), nombre, rol, activo),
+                        )
+                        db.commit()
+                        mensaje = f"Usuario creado: {username}"
+                    except Exception as _ie:
+                        db.rollback() if hasattr(db, 'rollback') else None
+                        error = "No se pudo crear el usuario (el nombre de usuario ya existe o hay un error de base de datos)"
 
         elif accion == "toggle":
             user_id_txt = (request.form.get("user_id") or "").strip()
@@ -1442,55 +1401,6 @@ def admin_usuarios():
                         db.commit()
                         mensaje = f"Usuario eliminado: {row[0]}"
 
-        elif accion == "cambiar_rol":
-            user_id_txt = (request.form.get("user_id") or "").strip()
-            nuevo_rol = _normalizar_rol_usuario(request.form.get("nuevo_rol") or "")
-            if not user_id_txt.isdigit():
-                error = "Usuario inválido"
-            elif nuevo_rol not in ALLOWED_ROLES:
-                error = "Rol inválido"
-            else:
-                user_id = int(user_id_txt)
-                if int(session.get("user_id") or 0) == user_id and nuevo_rol != ROLE_ADMIN:
-                    error = "No podés cambiar tu propio rol de administrador"
-                else:
-                    row = db.execute("SELECT username FROM usuarios WHERE id = ?", (user_id,)).fetchone()
-                    if not row:
-                        error = "Usuario no encontrado"
-                    else:
-                        db.execute("UPDATE usuarios SET rol = ? WHERE id = ?", (nuevo_rol, user_id))
-                        db.commit()
-                        mensaje = f"Rol de {row[0]} cambiado a: {nuevo_rol}"
-
-        elif accion == "guardar_modulos":
-            user_id_txt = (request.form.get("user_id") or "").strip()
-            if not user_id_txt.isdigit():
-                error = "Usuario inválido"
-            else:
-                user_id = int(user_id_txt)
-                modulos_sel = request.form.getlist("modulos")
-                # Validar que sean hrefs conocidos
-                MODULOS_VALIDOS = {
-                    "/modulo/suministros", "/modulo/ot", "/modulo/produccion",
-                    "/modulo/calidad", "/modulo/parte", "/modulo/remito",
-                    "/modulo/estado", "/home", "/modulo/generador",
-                    "/modulo/gestion-calidad", "/modulo/programacion",
-                }
-                modulos_validos = [m for m in modulos_sel if m in MODULOS_VALIDOS]
-                db.execute("DELETE FROM usuario_modulos WHERE usuario_id = ?", (user_id,))
-                for m in modulos_validos:
-                    db.execute(
-                        "INSERT INTO usuario_modulos (usuario_id, modulo_href) VALUES (?, ?)",
-                        (user_id, m),
-                    )
-                db.commit()
-                row_u = db.execute("SELECT username FROM usuarios WHERE id = ?", (user_id,)).fetchone()
-                u_name = row_u[0] if row_u else str(user_id)
-                if modulos_validos:
-                    mensaje = f"Permisos de {u_name} actualizados: {', '.join(modulos_validos)}"
-                else:
-                    mensaje = f"Permisos de {u_name} limpiados (acceso a todos los módulos de su rol)"
-
     rows = db.execute(
         """
         SELECT id, username, COALESCE(nombre, ''), COALESCE(rol, ''), COALESCE(activo, 1), COALESCE(ultimo_login, '')
@@ -1506,88 +1416,37 @@ def admin_usuarios():
     ).fetchall()
 
     filas_html = ""
-    MODULOS_OBRA = [
-        ("/modulo/suministros", "🛒 Compras"),
-        ("/modulo/ot", "📋 Órdenes de Trabajo"),
-        ("/modulo/produccion", "🏭 Producción"),
-        ("/modulo/calidad", "🧪 Calidad"),
-        ("/modulo/remito", "🚚 Remitos"),
-        ("/home", "📈 Estado de Piezas"),
-        ("/modulo/gestion-calidad", "✅ Gestión de Calidad"),
-        ("/modulo/programacion", "📆 Programación"),
-        ("/modulo/estado", "📊 Estado Producción"),
-        ("/modulo/parte", "⏱ Parte Semanal"),
-        ("/modulo/generador", "🏷️ Generador QR"),
-    ]
     for user_id, username, nombre, rol, activo, ultimo_login in rows:
         activo_txt = "ACTIVO" if int(activo or 0) == 1 else "INACTIVO"
         activo_bg = "#dcfce7" if int(activo or 0) == 1 else "#fee2e2"
         activo_color = "#166534" if int(activo or 0) == 1 else "#991b1b"
         toggle_label = "Desactivar" if int(activo or 0) == 1 else "Activar"
-
-        # Módulos asignados a este usuario
-        mods_asig = {r[0] for r in db.execute(
-            "SELECT modulo_href FROM usuario_modulos WHERE usuario_id = ?", (int(user_id),)
-        ).fetchall()}
-
-        # Checkboxes de módulos (solo para rol obra; admin/sup tienen acceso total)
-        if str(rol).lower() == ROLE_OBRA:
-            sin_restriccion_txt = "(sin restricción — acceso a todos)" if not mods_asig else ""
-            checks_html = f"""
-            <form method="post" style="margin-top:6px;background:#f8f0ff;border:1px solid #ddd4fe;border-radius:8px;padding:8px;">
-              <input type="hidden" name="accion" value="guardar_modulos">
-              <input type="hidden" name="user_id" value="{int(user_id)}">
-              <div style="font-size:11px;color:#6b21a8;font-weight:700;margin-bottom:4px;">🔐 Módulos permitidos {sin_restriccion_txt}</div>
-              <div style="display:flex;flex-wrap:wrap;gap:4px 12px;">
-            """ + "".join(
-                f'<label style="font-size:11px;display:flex;align-items:center;gap:3px;"><input type="checkbox" name="modulos" value="{href}" {"checked" if href in mods_asig else ""}> {nombre_m}</label>'
-                for href, nombre_m in MODULOS_OBRA
-            ) + f"""
-              </div>
-              <button type="submit" style="margin-top:6px;background:#7c3aed;color:#fff;border:0;border-radius:5px;padding:5px 10px;font-size:11px;">Guardar permisos</button>
-            </form>"""
-        else:
-            checks_html = '<span style="font-size:11px;color:#64748b;">Acceso completo según rol</span>'
-
         filas_html += f"""
         <tr>
             <td>{int(user_id)}</td>
             <td>{html_lib.escape(str(username or ''))}</td>
             <td>{html_lib.escape(str(nombre or ''))}</td>
             <td>{html_lib.escape(str(rol or ''))}</td>
-            <td><span style="padding:4px 8px;border-radius:999px;background:{activo_bg};color:{activo_color};font-weight:700;">{activo_txt}</span></td>
+            <td><span style=\"padding:4px 8px;border-radius:999px;background:{activo_bg};color:{activo_color};font-weight:700;\">{activo_txt}</span></td>
             <td>{html_lib.escape(str(ultimo_login or '-'))}</td>
             <td>
-              <div style="display:flex;flex-direction:column;gap:6px;min-width:220px;">
-                <div style="display:flex;gap:4px;">
-                  <form method="post" style="flex:1;">
-                    <input type="hidden" name="accion" value="toggle">
-                    <input type="hidden" name="user_id" value="{int(user_id)}">
-                    <button type="submit" style="width:100%;background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer;">{toggle_label}</button>
-                  </form>
-                  <form method="post" onsubmit="return confirm('¿Eliminar usuario? Esta acción no se puede deshacer.');">
-                    <button type="submit" name="accion" value="eliminar" style="background:#fee2e2;color:#dc2626;border:1px solid #fecaca;border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer;">🗑 Eliminar</button>
-                    <input type="hidden" name="user_id" value="{int(user_id)}">
-                  </form>
-                </div>
-                <form method="post" style="display:flex;gap:4px;align-items:center;">
-                  <input type="hidden" name="accion" value="reset_password">
-                  <input type="hidden" name="user_id" value="{int(user_id)}">
-                  <input type="password" name="nueva_password" placeholder="Nueva contraseña" required style="flex:1;padding:5px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:6px;">
-                  <button type="submit" style="background:#f0fdf4;color:#166534;border:1px solid #86efac;border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer;">🔑 Cambiar</button>
+                <a href=\"/admin/permisos/{int(user_id)}\" style=\"display:inline-block;margin:2px;padding:7px 10px;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none;font-size:12px;font-weight:700;\">M\u00f3dulos</a>
+                <form method=\"post\" style=\"display:inline-block; margin:2px;\">
+                    <input type=\"hidden\" name=\"accion\" value=\"toggle\">
+                    <input type=\"hidden\" name=\"user_id\" value=\"{int(user_id)}\">
+                    <button type=\"submit\">{toggle_label}</button>
                 </form>
-                <form method="post" style="display:flex;gap:4px;align-items:center;">
-                  <input type="hidden" name="accion" value="cambiar_rol">
-                  <input type="hidden" name="user_id" value="{int(user_id)}">
-                  <select name="nuevo_rol" style="flex:1;padding:5px 6px;font-size:12px;border:1px solid #d1d5db;border-radius:6px;">
-                    <option value="administrador" {{'selected' if str(rol).lower() == 'administrador' else ''}}>Administrador</option>
-                    <option value="supervisor" {{'selected' if str(rol).lower() == 'supervisor' else ''}}>Supervisor</option>
-                    <option value="obra" {{'selected' if str(rol).lower() == 'obra' else ''}}>Obra</option>
-                  </select>
-                  <button type="submit" style="background:#f5f3ff;color:#6d28d9;border:1px solid #ddd6fe;border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer;">↩ Rol</button>
+                <form method=\"post\" style=\"display:inline-block; margin:2px;\" onsubmit=\"return confirm('¿Eliminar usuario? Esta acción no se puede deshacer.');\">
+                    <input type=\"hidden\" name=\"accion\" value=\"eliminar\">
+                    <input type=\"hidden\" name=\"user_id\" value=\"{int(user_id)}\">
+                    <button type=\"submit\" style=\"background:#dc2626;color:#fff;border:0;\">Eliminar</button>
                 </form>
-                {checks_html}
-              </div>
+                <form method=\"post\" style=\"display:inline-block; margin:2px;\">
+                    <input type=\"hidden\" name=\"accion\" value=\"reset_password\">
+                    <input type=\"hidden\" name=\"user_id\" value=\"{int(user_id)}\">
+                    <input type=\"password\" name=\"nueva_password\" placeholder=\"Nueva pass\" required style=\"width:120px;\">
+                    <button type=\"submit\">Cambiar pass</button>
+                </form>
             </td>
         </tr>
         """
@@ -1654,6 +1513,109 @@ def admin_usuarios():
             </tr>
             {filas_html}
           </table>
+        </div>
+      </div>
+    </body>
+    </html>
+    """
+
+# =============================================
+# RUTA: Permisos de módulos por usuario
+# =============================================
+@app.route("/admin/permisos/<int:user_id>", methods=["GET", "POST"])
+def admin_permisos_usuario(user_id):
+    if not _is_admin_session():
+        return _respuesta_sin_permiso()
+    db = get_db()
+    user = db.execute(
+        "SELECT id, username, nombre, rol, modulos_permitidos FROM usuarios WHERE id = ?",
+        (user_id,)
+    ).fetchone()
+    if not user:
+        return "Usuario no encontrado", 404
+
+    uid, uname, unombre, urol, modulos_json = user
+    modulos_actuales = set(json.loads(modulos_json)) if modulos_json else None  # None = todos
+
+    TODOS_MODULOS = [
+        ("/modulo/ot",                  "Órdenes de Trabajo"),
+        ("/modulo/produccion",          "Producción"),
+        ("/modulo/calidad",             "Calidad"),
+        ("/modulo/gestion-calidad",     "Gestión de Calidad"),
+        ("/modulo/parte",               "Parte Semanal - Empleados"),
+        ("/modulo/remito",              "Remitos"),
+        ("/modulo/estado",              "Estado de Producción"),
+        ("/home",                       "Estado de Piezas por Proceso"),
+        ("/modulo/generador",           "Generador de Etiquetas QR"),
+        ("/modulo/programacion",        "Programación de Fabricación"),
+        ("/modulo/suministros",         "Suministros / Compras"),
+        ("/modulo/historial",           "Historial de OTs"),
+        ("/modulo/reportes",            "Reportes"),
+        ("/modulo/tablero-ejecutivo",   "Tablero Ejecutivo Integral"),
+        ("/modulo/analisis-estrategico","Análisis Estratégico"),
+    ]
+
+    mensaje = ""
+    if request.method == "POST":
+        accion = (request.form.get("accion") or "").strip()
+        if accion == "guardar":
+            seleccionados = request.form.getlist("modulo")
+            if len(seleccionados) >= len(TODOS_MODULOS):
+                db.execute("UPDATE usuarios SET modulos_permitidos = NULL WHERE id = ?", (user_id,))
+            else:
+                db.execute(
+                    "UPDATE usuarios SET modulos_permitidos = ? WHERE id = ?",
+                    (json.dumps(seleccionados), user_id)
+                )
+            db.commit()
+            mensaje = "Permisos guardados correctamente"
+            row = db.execute("SELECT modulos_permitidos FROM usuarios WHERE id = ?", (user_id,)).fetchone()
+            modulos_actuales = set(json.loads(row[0])) if row and row[0] else None
+
+    checkboxes_html = ""
+    for href, titulo in TODOS_MODULOS:
+        checked = "checked" if (modulos_actuales is None or href in modulos_actuales) else ""
+        checkboxes_html += f"""
+        <label style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:6px;border:1px solid #e5e7eb;cursor:pointer;background:#fff;">
+            <input type="checkbox" name="modulo" value="{html_lib.escape(href)}" {checked} style="width:16px;height:16px;cursor:pointer;">
+            <span>{html_lib.escape(titulo)}</span>
+        </label>"""
+
+    msg_html = f'<div style="background:#dcfce7;border:1px solid #86efac;color:#166534;padding:10px;border-radius:8px;margin-bottom:12px;">{html_lib.escape(mensaje)}</div>' if mensaje else ''
+
+    return f"""
+    <html>
+    <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+    body {{ font-family: Arial, sans-serif; background:#f3f4f6; margin:0; padding:16px; color:#111827; }}
+    .wrap {{ max-width: 700px; margin:0 auto; }}
+    .card {{ background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px; margin-bottom:12px; }}
+    h2 {{ margin: 0 0 6px 0; }}
+    .back {{ display:inline-block; margin-bottom:12px; text-decoration:none; background:#2563eb; color:#fff; padding:8px 12px; border-radius:8px; }}
+    .grid-check {{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:14px; }}
+    @media (max-width: 500px) {{ .grid-check {{ grid-template-columns: 1fr; }} }}
+    </style>
+    </head>
+    <body>
+      <div class="wrap">
+        <a href="/admin/usuarios" class="back">← Volver a Gestión de Usuarios</a>
+        <div class="card">
+          <h2>Permisos de módulos</h2>
+          <p style="color:#6b7280;margin-bottom:12px;">Usuario: <b>{html_lib.escape(str(uname or ''))}</b> — {html_lib.escape(str(unombre or ''))} <span style="background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:999px;font-size:12px;">{html_lib.escape(str(urol or ''))}</span></p>
+          {msg_html}
+          <form method="post">
+            <input type="hidden" name="accion" value="guardar">
+            <div class="grid-check">
+              {checkboxes_html}
+            </div>
+            <p style="color:#6b7280;font-size:12px;margin-bottom:10px;">Si todos los módulos están marcados, no se aplica restricción por usuario (solo por rol).</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button type="button" onclick="document.querySelectorAll('input[name=modulo]').forEach(c=>c.checked=true)" style="padding:8px 14px;background:#64748b;color:#fff;border:0;border-radius:6px;cursor:pointer;">Marcar todos</button>
+              <button type="button" onclick="document.querySelectorAll('input[name=modulo]').forEach(c=>c.checked=false)" style="padding:8px 14px;background:#64748b;color:#fff;border:0;border-radius:6px;cursor:pointer;">Desmarcar todos</button>
+              <button type="submit" style="padding:8px 18px;background:#0f766e;color:#fff;border:0;border-radius:6px;cursor:pointer;font-weight:700;">Guardar permisos</button>
+            </div>
+          </form>
         </div>
       </div>
     </body>
@@ -2161,10 +2123,22 @@ def dashboard():
         },
     ]
 
-    ADMIN_ONLY_HREFS = {"/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo", "/modulo/analisis-estrategico"}
+    ADMIN_ONLY_HREFS = {"/modulo/suministros", "/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo", "/modulo/analisis-estrategico"}
     OBRA_HIDDEN_HREFS = {"/modulo/estado", "/modulo/generador", "/modulo/parte"}
     is_admin = _is_admin_session()
-    modulos_permitidos = list(session.get("modulos_permitidos") or [])
+
+    # Cargar módulos permitidos por usuario (solo si no es admin)
+    modulos_permitidos_set = None
+    if not is_admin:
+        user_id_sess = session.get("user_id")
+        if user_id_sess:
+            try:
+                _db = get_db()
+                _row = _db.execute("SELECT modulos_permitidos FROM usuarios WHERE id = ?", (int(user_id_sess),)).fetchone()
+                if _row and _row[0]:
+                    modulos_permitidos_set = set(json.loads(_row[0]))
+            except Exception:
+                pass
     cards_html = "".join(
         f'''
             <a href="{m["href"]}" class="module-card {m["css"]}">
@@ -2176,7 +2150,7 @@ def dashboard():
         for m in modulos
         if (m["href"] not in ADMIN_ONLY_HREFS or is_admin)
         and not (role_actual == ROLE_OBRA and m["href"] in OBRA_HIDDEN_HREFS)
-        and not (role_actual == ROLE_OBRA and modulos_permitidos and m["href"] not in modulos_permitidos)
+        and (modulos_permitidos_set is None or m["href"] in modulos_permitidos_set)
     )
 
     top_actions = '''
@@ -3122,6 +3096,15 @@ def home(page=1):
         color: #64748b;
         margin: -4px 0 10px 0;
     }}
+    .legend-note {{
+        font-size: 11px;
+        color: #334155;
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: 8px;
+        padding: 8px 10px;
+        margin: -2px 0 12px 0;
+    }}
     .stage-tooltip {{
         position: absolute;
         left: 50%;
@@ -3243,6 +3226,7 @@ def home(page=1):
     else:
         html += f"<div class='info-paginacion'>Mostrando {inicio + 1}-{min(fin, total_piezas)} de {total_piezas} piezas</div>"
         html += "<div class='table-note'>La tabla muestra un resumen por etapa. Pasá el cursor sobre cada estado para ver el detalle.</div>"
+        html += "<div class='legend-note'><b>Leyenda Insertos:</b> para piezas con descripción de insertos, solo se controla <b>Armado</b> y <b>P/Despacho</b>. En avance ponderado se aplica <b>90% Armado</b> y <b>10% Despacho</b>; Soldadura y Pintura figuran como <b>N/A</b>.</div>"
 
         def _norm_estado_panel(estado_txt):
             s = str(estado_txt or '').strip().upper()
@@ -3281,7 +3265,9 @@ def home(page=1):
             pintura_no_aplica = _ot_no_requiere_pintura_panel(pos, obra_key, ot_key)
             
             # Obtener descripción de la pieza
-            desc_pieza = html_lib.escape(desc_por_pieza.get((pos, obra_key, ot_key), ''))
+            desc_raw = str(desc_por_pieza.get((pos, obra_key, ot_key), '') or '').strip()
+            desc_pieza = html_lib.escape(desc_raw)
+            es_pieza_inserto = 'INSERTO' in desc_raw.upper()
 
             obra_raw = str(obra_key or '').strip()
             
@@ -3326,6 +3312,10 @@ def home(page=1):
             celdas = []
             for proceso in ORDEN_PROCESOS:
                 dato = latest_proc.get(proceso)
+                if es_pieza_inserto and proceso in ('SOLDADURA', 'PINTURA'):
+                    tooltip_html = "<b>Estado:</b> No aplica<br><b>Detalle:</b> Pieza de insertos: solo requiere control de Armado y P/Despacho"
+                    celdas.append(f'<td><div class="stage-box"><span class="chip chip-ok">N/A</span><div class="stage-sub">Insertos</div><div class="stage-tooltip">{tooltip_html}</div></div></td>')
+                    continue
                 if proceso == 'PINTURA' and pintura_no_aplica and not dato:
                     tooltip_html = "<b>Estado:</b> No aplica<br><b>Detalle:</b> OT configurada sin requerimiento de pintura"
                     celdas.append(f'<td><div class="stage-box"><span class="chip chip-ok">N/A</span><div class="stage-sub">No requiere</div><div class="stage-tooltip">{tooltip_html}</div></div></td>')
@@ -5002,6 +4992,7 @@ def cargar(pos):
         db,
         obra=obra_ot_actual if obra_ot_actual else None,
         ot_id=ot_id_existente,
+        pos=pos,
     )
     procesos_hechos = obtener_procesos_completados(pos, obra_ot_actual if obra_ot_actual else None, ot_id_existente)
     try:
@@ -5942,6 +5933,7 @@ from programacion_routes import programacion_bp
 from reportes_routes import reportes_bp
 from tablero_ejecutivo_routes import tablero_ejecutivo_bp
 
+app.register_blueprint(ot_bp)
 app.register_blueprint(gestion_calidad_bp)
 app.register_blueprint(calidad_bp)
 app.register_blueprint(parte_bp)
@@ -5953,7 +5945,6 @@ app.register_blueprint(programacion_bp)
 app.register_blueprint(reportes_bp)
 app.register_blueprint(tablero_ejecutivo_bp)
 app.register_blueprint(analisis_estrategico_bp)
-app.register_blueprint(ot_bp)
 
 
 # ====================== BÚSQUEDA GLOBAL ======================
