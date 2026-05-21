@@ -1,0 +1,10 @@
+import sqlite3
+con = sqlite3.connect(r'C:\Users\usuar\OneDrive\Desktop\python\database.db')
+cur = con.cursor()
+cur.execute("SELECT COUNT(*) FROM articulos_sum WHERE codigo IS NULL OR codigo=''")
+print('Sin codigo:', cur.fetchone()[0])
+cur.execute("SELECT COUNT(*) FROM articulos_sum WHERE descripcion LIKE '%x 0\"%'")
+print('Con x 0\":', cur.fetchone()[0])
+cur.execute("SELECT descripcion FROM articulos_sum WHERE descripcion LIKE '%x 0\"%' LIMIT 5")
+for r in cur.fetchall(): print(' ', r[0])
+con.close()
