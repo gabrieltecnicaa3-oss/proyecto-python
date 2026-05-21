@@ -427,6 +427,10 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:#f97316;backgr
 .filters-form,.cumpl-filter-form{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .gantt-toolbar,.cumpl-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;}
 .cumpl-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;}
+.collapsible-header{display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none;padding:4px 0;}
+.collapsible-header h3{margin:0;}
+.collapsible-toggle{background:#fff7ed;border:1px solid #fdba74;border-radius:6px;padding:4px 12px;font-size:12px;font-weight:700;color:#9a3412;cursor:pointer;white-space:nowrap;flex-shrink:0;}
+.collapsible-body{overflow:hidden;transition:max-height 0.3s ease;}
 .desvio-legend-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px;}
 @media(max-width:800px){
     :root{
@@ -1420,8 +1424,12 @@ def programacion_index():
     cumpl_kpi_ac = f"{pct_acumulado:.1f}%" if pct_acumulado is not None else "—"
     cumplimiento_panel = f"""
 <div class="panel" id="cumplimiento-section">
-    <div class="cumpl-head">
-        <h3>Cumplimiento de objetivos semanales</h3>
+    <div class="collapsible-header" onclick="toggleSection('cumpl-body','cumpl-toggle')">
+        <h3>📋 Cumplimiento de objetivos semanales</h3>
+        <button class="collapsible-toggle" id="cumpl-toggle">▼ Mostrar</button>
+    </div>
+    <div class="collapsible-body" id="cumpl-body" style="max-height:0;display:none;">
+    <div class="cumpl-head" style="margin-top:10px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
             <a href="/modulo/programacion/cumplimientos-historial" class="btn btn-sec btn-sm">📋 Ver historial completo</a>
             {'' if es_obra else '<button onclick="printCumplimiento()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>'}
@@ -1564,6 +1572,7 @@ def programacion_index():
     }}
     document.addEventListener('DOMContentLoaded', function() {{ calcCumplimientoKPIs(); aplicarEdicionDesdeQuery(); }});
     </script>
+    </div>
 </div>
 """
 
@@ -1677,11 +1686,33 @@ function printCumplimiento() {{
 
 {cumplimiento_panel}
 
-<div class="panel">
-    <h3>Detalle — {len(entradas)} programaciones · {total_hs:.0f} hs planificadas totales</h3>
-    <div style="margin:-4px 0 12px 22px;"><span class="section-chip">📊 Tabla resumen</span></div>
-    {tabla_html}
+<div class="panel" id="detalle-wrapper">
+    <div class="collapsible-header" onclick="toggleSection('detalle-body','detalle-toggle')">
+        <h3>📊 Detalle — {len(entradas)} programaciones · {total_hs:.0f} hs planificadas totales</h3>
+        <button class="collapsible-toggle" id="detalle-toggle">▼ Mostrar</button>
+    </div>
+    <div class="collapsible-body" id="detalle-body" style="max-height:0;display:none;">
+        <div style="margin:8px 0 12px 0;"><span class="section-chip">📊 Tabla resumen</span></div>
+        {tabla_html}
+    </div>
 </div>
+
+<script>
+function toggleSection(bodyId, toggleId) {{
+    var body = document.getElementById(bodyId);
+    var btn = document.getElementById(toggleId);
+    if (!body) return;
+    if (body.style.display === 'none' || body.style.maxHeight === '0px') {{
+        body.style.display = 'block';
+        body.style.maxHeight = body.scrollHeight + 'px';
+        if (btn) btn.textContent = '▲ Ocultar';
+    }} else {{
+        body.style.maxHeight = '0';
+        setTimeout(function(){{ body.style.display = 'none'; }}, 300);
+        if (btn) btn.textContent = '▼ Mostrar';
+    }}
+}}
+</script>
 
 </body></html>"""
 
