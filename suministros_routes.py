@@ -276,7 +276,17 @@ def _ensure_tables(db):
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         oc_id INTEGER NOT NULL, descripcion TEXT NOT NULL,
         cantidad REAL NOT NULL, unidad TEXT DEFAULT 'u',
-        precio_unitario REAL DEFAULT 0, cantidad_recibida REAL DEFAULT 0)""")
+        precio_unitario REAL DEFAULT 0, cantidad_recibida REAL DEFAULT 0,
+        estado_stock TEXT DEFAULT 'Pendiente')""")
+    # Reintentar migración de estado_stock después de CREATE TABLE para bases nuevas
+    try:
+        db.execute("ALTER TABLE items_oc ADD COLUMN estado_stock TEXT DEFAULT 'Pendiente'")
+    except Exception:
+        pass
+    try:
+        db.execute("UPDATE items_oc SET estado_stock='Pendiente' WHERE estado_stock IS NULL OR estado_stock=''")
+    except Exception:
+        pass
     # Tablas legacy (backward compat)
     db.execute("""CREATE TABLE IF NOT EXISTS solicitudes_compra (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
