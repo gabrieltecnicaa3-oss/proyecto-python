@@ -881,29 +881,57 @@ def ot_nueva():
 def ot_editar(ot_id):
     db = get_db()
     ot = db.execute("SELECT * FROM ordenes_trabajo WHERE id=?", (ot_id,)).fetchone()
+    error_msg = ""
 
     if not ot:
         return "<h3>❌ Orden no encontrada</h3>"
 
     if request.method == "POST":
-        db.execute("""
-        UPDATE ordenes_trabajo 
-        SET cliente=?, obra=?, titulo=?, fecha_entrega=?, estado=?, hs_previstas=?, tipo_estructura=?, esquema_pintura=?, espesor_total_requerido=?
-        WHERE id=?
-        """, (
-            request.form["cliente"],
-            request.form["obra"],
-            request.form["titulo"],
-            request.form["fecha_entrega"],
-            request.form["estado"],
-            request.form.get("hs_previstas") or 0,
-            request.form.get("tipo_estructura") or "",
-            request.form.get("esquema_pintura") or "",
-            request.form.get("espesor_total_requerido") or "",
-            ot_id
-        ))
-        db.commit()
-        return redirect("/modulo/ot")
+        try:
+            excel_file = request.files.get("excel_armado")
+            if not excel_file or not excel_file.filename:
+                error_msg = "Debes adjuntar la planilla Excel de armados para actualizar la OT."
+            else:
+                import werkzeug.utils
+                filename = werkzeug.utils.secure_filename(excel_file.filename)
+                ext = os.path.splitext(filename)[1].lower()
+                if ext not in (".xls", ".xlsx"):
+                    error_msg = "Formato inválido. La planilla debe ser .xls o .xlsx"
+                else:
+                    obra = (request.form.get("obra") or "").strip()
+                    titulo = (request.form.get("titulo") or "").strip()
+                    db.execute("""
+                    UPDATE ordenes_trabajo 
+                    SET cliente=?, obra=?, titulo=?, fecha_entrega=?, estado=?, hs_previstas=?, tipo_estructura=?, esquema_pintura=?, espesor_total_requerido=?
+                    WHERE id=?
+                    """, (
+                        request.form["cliente"],
+                        request.form["obra"],
+                        request.form["titulo"],
+                        request.form["fecha_entrega"],
+                        request.form["estado"],
+                        request.form.get("hs_previstas") or 0,
+                        request.form.get("tipo_estructura") or "",
+                        request.form.get("esquema_pintura") or "",
+                        request.form.get("espesor_total_requerido") or "",
+                        ot_id
+                    ))
+
+                    carpeta_ot = _asegurar_databook(obra, ot_id=ot_id)
+                    if not carpeta_ot:
+                        error_msg = "No se pudo resolver la carpeta de la OT para guardar la planilla."
+                    else:
+                        excel_path = os.path.join(carpeta_ot, filename)
+                        excel_file.save(excel_path)
+                        _cargar_piezas_excel_a_ot(db, excel_path, obra, ot_id, descripcion_ot=titulo)
+                        db.commit()
+                        return redirect("/modulo/ot")
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            error_msg = f"Error al actualizar OT: {str(e)}"
 
     fecha_cierre_ot = ot[12] if len(ot) > 12 else None
 
@@ -925,7 +953,8 @@ def ot_editar(ot_id):
     </head>
     <body>
     <h2>✏️ Editar Orden de Trabajo</h2>
-    <form method="post">
+    <form method="post" enctype="multipart/form-data">
+        {f"<div style='background:#fee2e2; border:1px solid #fecaca; color:#991b1b; padding:10px; border-radius:6px; margin-bottom:10px; font-weight:600;'>{html_lib.escape(error_msg)}</div>" if error_msg else ""}
         <label>Cliente:</label>
         <input type="text" name="cliente" value="{ot[1]}" required>
         
@@ -969,7 +998,7 @@ def ot_editar(ot_id):
             <p style="margin:8px 0; font-size:13px;">
             {"🔒 <b>CERRADA</b> el " + str(fecha_cierre_ot)[:16] if fecha_cierre_ot else "✅ ACTIVA"}
             </p>
-            {"<button type='submit' formaction='/modulo/ot/reabrir/" + str(ot[0]) + "' formmethod='post' style='width:auto; background:#e5a3a3; padding:8px 12px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top:0;'>🔓 Reabrir OT</button>" if fecha_cierre_ot else "<button type='submit' formaction='/modulo/ot/cerrar/" + str(ot[0]) + "' formmethod='post' style='width:auto; background:#667eea; padding:8px 12px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top:0;' onclick='return confirm(\"¿Cerrar esta OT? Se ocultarán todas sus piezas y procesos.\");'>🔒 Cerrar OT</button>"}
+            {"<button type='submit' formaction='/modulo/ot/reabrir/" + str(ot[0]) + "' formmethod='post' formnovalidate style='width:auto; background:#e5a3a3; padding:8px 12px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top:0;'>🔓 Reabrir OT</button>" if fecha_cierre_ot else "<button type='submit' formaction='/modulo/ot/cerrar/" + str(ot[0]) + "' formmethod='post' formnovalidate style='width:auto; background:#667eea; padding:8px 12px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top:0;' onclick='return confirm(\"¿Cerrar esta OT? Se ocultarán todas sus piezas y procesos.\");'>🔒 Cerrar OT</button>"}
         </div>
         
         <label>Esquema de pintura:</label>
@@ -977,6 +1006,12 @@ def ot_editar(ot_id):
 
         <label>Espesor total requerido (μm):</label>
         <input type="text" name="espesor_total_requerido" value="{ot[12] if len(ot) > 12 and ot[12] else ''}" maxlength="20" placeholder="Ej: 120">
+
+        <label>Planilla Excel de Armados (obligatoria al editar):</label>
+        <input type="file" name="excel_armado" accept=".xls,.xlsx" required>
+        <div style="margin-top:6px; background:#ecfeff; border:1px solid #a5f3fc; border-radius:4px; padding:8px; color:#155e75; font-size:12px; line-height:1.3;">
+            <b>Crítico:</b> para evitar pérdida de información, cada edición exige volver a adjuntar la planilla de armados.
+        </div>
 
         <button type="submit">💾 Actualizar OT</button>
     </form>
