@@ -251,6 +251,11 @@ def _ensure_tables(db):
         db.execute("ALTER TABLE ordenes_compra ADD COLUMN fecha_pago TEXT")
     except Exception:
         pass
+    # Migración: columna codigo en articulos_sum (para tablas existentes en producción)
+    try:
+        db.execute("ALTER TABLE articulos_sum ADD COLUMN codigo TEXT")
+    except Exception:
+        pass
     # Migrar estado 'En aprobación' → 'Aprobada' en registros existentes
     db.execute("UPDATE ordenes_pedido SET estado='Aprobada' WHERE estado='En aprobaci\u00f3n'")
     db.execute("""CREATE TABLE IF NOT EXISTS items_oc (
