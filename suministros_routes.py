@@ -224,11 +224,11 @@ def _ensure_tables(db):
         pass
     # Migraciones OC: moneda y unidad_precio
     try:
-        db.execute("ALTER TABLE ordenes_compra ADD COLUMN moneda TEXT DEFAULT '$'")
+        db.execute("ALTER TABLE ordenes_compra ADD COLUMN moneda TEXT")
     except Exception:
         pass
     try:
-        db.execute("ALTER TABLE items_oc ADD COLUMN unidad_precio TEXT DEFAULT 'barra'")
+        db.execute("ALTER TABLE items_oc ADD COLUMN unidad_precio TEXT")
     except Exception:
         pass
     try:
