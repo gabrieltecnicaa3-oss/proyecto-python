@@ -261,6 +261,15 @@ def _ensure_tables(db):
         db.execute("ALTER TABLE articulos_sum ADD COLUMN codigo TEXT")
     except Exception:
         pass
+    # Migración: control de stock
+    try:
+        db.execute("ALTER TABLE items_oc ADD COLUMN estado_stock TEXT DEFAULT 'Pendiente'")
+    except Exception:
+        pass
+    try:
+        db.execute("UPDATE items_oc SET estado_stock='Pendiente' WHERE estado_stock IS NULL OR estado_stock=''")
+    except Exception:
+        pass
     # Migrar estado 'En aprobación' → 'Aprobada' en registros existentes
     db.execute("UPDATE ordenes_pedido SET estado='Aprobada' WHERE estado='En aprobaci\u00f3n'")
     db.execute("""CREATE TABLE IF NOT EXISTS items_oc (
@@ -694,6 +703,7 @@ def dashboard():
         "<a class='b sm or' href='/modulo/suministros/articulos'>Lista de Materiales</a>"
         "<a class='b sm pu' href='/modulo/suministros/proveedores'>Proveedores</a>"
         "<a class='b sm gr' href='/modulo/suministros/kanban'>Kanban completo</a>"
+        "<a class='b sm' style='background:#0f766e' href='/modulo/suministros/control-stock'>&#128230; Control de Stock</a>"
         "<a class='b sm' style='background:#065f46' href='/modulo/suministros/ordenes-compra/cerradas'>&#10003; OC Cerradas</a>"
         "</div>"
         # KPIs compactos
@@ -2791,6 +2801,92 @@ def oc_pdf(oc_id):
 
 
 # ─── Recepcion / Checklist ─────────────────────────────────────
+
+@suministros_bp.route("/control-stock")
+def control_stock():
+    db = get_db()
+    _ensure_tables(db)
+
+    rows = db.execute(
+        "SELECT ic.id, COALESCE(oc.numero,''), COALESCE(oc.fecha_recepcion,''),"
+        " COALESCE(a.codigo,''), COALESCE(ic.descripcion,''), COALESCE(a.categoria,''),"
+        " COALESCE(ic.cantidad_recibida,0), COALESCE(ic.unidad,'u'),"
+        " COALESCE(op.obra,''), COALESCE(ic.estado_stock,'Pendiente')"
+        " FROM items_oc ic"
+        " JOIN ordenes_compra oc ON oc.id=ic.oc_id"
+        " LEFT JOIN articulos_sum a ON a.id=ic.articulo_id"
+        " LEFT JOIN ordenes_pedido op ON op.id=oc.op_id"
+        " WHERE COALESCE(ic.cantidad_recibida,0) > 0"
+        " AND ("
+        "   UPPER(COALESCE(a.categoria,'')) LIKE 'PERFIL%'"
+        "   OR UPPER(COALESCE(ic.descripcion,'')) LIKE '%PERFIL%'"
+        "   OR UPPER(COALESCE(a.categoria,'')) LIKE '%BULON%'"
+        "   OR UPPER(COALESCE(ic.descripcion,'')) LIKE '%BULON%'"
+        " )"
+        " ORDER BY oc.id DESC, ic.id DESC"
+    ).fetchall()
+
+    def _badge_stock(v):
+        est = str(v or "Pendiente")
+        if est == "Procesado":
+            return "<span style='background:#dcfce7;color:#166534;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700'>Procesado</span>"
+        return "<span style='background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700'>Pendiente</span>"
+
+    filas = "".join(
+        "<tr>"
+        "<td>{oc}</td>"
+        "<td>{fr}</td>"
+        "<td style='color:#7c2d12;font-size:12px'><b>{cod}</b></td>"
+        "<td><b>{desc}</b></td>"
+        "<td>{cat}</td>"
+        "<td style='text-align:right'>{cant}</td>"
+        "<td>{u}</td>"
+        "<td>{obra}</td>"
+        "<td>{estado}</td>"
+        "<td style='white-space:nowrap'>{acc}</td>"
+        "</tr>".format(
+            oc=_e(r[1]),
+            fr=_e(str(r[2])[:10]) or "—",
+            cod=_e(r[3]) or "—",
+            desc=_e(r[4]),
+            cat=_e(r[5]) or "—",
+            cant=_fmt(r[6]),
+            u=_e(r[7]),
+            obra=_e(r[8]) or "—",
+            estado=_badge_stock(r[9]),
+            acc=(
+                "<form method='post' action='/modulo/suministros/control-stock/{iid}/procesado' style='display:inline'>"
+                "<button class='b gn sm' type='submit'>Marcar procesado</button>"
+                "</form>"
+            ).format(iid=int(r[0])) if str(r[9] or "Pendiente") != "Procesado" else "<span style='color:#16a34a;font-size:12px;font-weight:700'>OK</span>"
+        )
+        for r in rows
+    ) or "<tr><td colspan='10'>Sin materiales recibidos de perfiles/bulones.</td></tr>"
+
+    body = (
+        "<h2>Control de Stock</h2>"
+        "<a class='b gr' href='/modulo/suministros'>Dashboard Compras</a>"
+        "<a class='b bl' href='/modulo/suministros/ordenes-compra'>Tablero OC</a>"
+        "<div class='card' style='margin-top:10px;overflow-x:auto'>"
+        "<table class='hl'><thead><tr>"
+        "<th>OC</th><th>F. Recepcion</th><th>Codigo</th><th>Descripcion</th><th>Categoria</th>"
+        "<th style='text-align:right'>Cant. Recibida</th><th>Unidad</th><th>Obra</th><th>Estado</th><th></th>"
+        "</tr></thead><tbody>{filas}</tbody></table>"
+        "</div>"
+        "<div class='card' style='font-size:13px;color:#64748b'>"
+        "Solo se listan materiales recibidos vinculados a perfiles y bulones."
+        "</div>"
+    ).format(filas=filas)
+    return _page("Control de Stock", body)
+
+
+@suministros_bp.route("/control-stock/<int:item_id>/procesado", methods=["POST"])
+def control_stock_marcar_procesado(item_id):
+    db = get_db()
+    _ensure_tables(db)
+    db.execute("UPDATE items_oc SET estado_stock='Procesado' WHERE id=?", (item_id,))
+    db.commit()
+    return redirect("/modulo/suministros/control-stock")
 
 @suministros_bp.route("/ordenes-compra/<int:oc_id>/recepcion", methods=["GET", "POST"])
 def oc_recepcion(oc_id):
