@@ -1,6 +1,7 @@
 import html as html_lib
 import os as _os
 import base64 as _base64
+import time as _time
 from datetime import datetime, timedelta, date
 from calendar import monthrange
 from urllib.parse import quote
@@ -10,6 +11,38 @@ from produccion_routes import calcular_avance_ot
 
 programacion_bp = Blueprint("programacion", __name__)
 _programacion_schema_ready = False
+
+# ── Caché de avance por OT (5 min TTL) ────────────────────────────────────────
+_avance_cache: dict = {}
+_AVANCE_CACHE_TTL = 300  # segundos
+
+def _calcular_avance_cached(db, ot_id: int) -> int:
+    """Evita releer Excel en cada request; cachea el resultado 5 minutos."""
+    now = _time.monotonic()
+    c = _avance_cache.get(ot_id)
+    if c and (now - c[1]) < _AVANCE_CACHE_TTL:
+        return c[0]
+    try:
+        val = max(0, min(100, int(round(calcular_avance_ot(db, ot_id)))))
+    except Exception:
+        val = 0
+    _avance_cache[ot_id] = (val, now)
+    return val
+
+# ── Caché del logo (se lee del disco una sola vez) ────────────────────────────
+_logo_b64_cache: "str | None" = None
+
+def _get_logo_b64() -> str:
+    global _logo_b64_cache
+    if _logo_b64_cache is not None:
+        return _logo_b64_cache
+    _path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "LOGO.png")
+    try:
+        with open(_path, "rb") as _f:
+            _logo_b64_cache = "data:image/png;base64," + _base64.b64encode(_f.read()).decode()
+    except Exception:
+        _logo_b64_cache = ""
+    return _logo_b64_cache
 
 
 def _asegurar_schema_programacion():
@@ -1056,10 +1089,7 @@ def programacion_index():
             continue
         if ot_id_row <= 0 or ot_id_row in avance_live_by_ot:
             continue
-        try:
-            avance_live_by_ot[ot_id_row] = max(0, min(100, int(round(calcular_avance_ot(db, ot_id_row)))))
-        except Exception:
-            avance_live_by_ot[ot_id_row] = 0
+        avance_live_by_ot[ot_id_row] = _calcular_avance_cached(db, ot_id_row)
 
     prog_ids = [int(r[0]) for r in rows]
     hitos_map = {pid: [] for pid in prog_ids}
@@ -1108,13 +1138,7 @@ def programacion_index():
         edit_pct = None
     edit_desvio = (request.args.get("edit_desvio") or "").strip()
 
-    # Logo embebido como base64 para que funcione en ventanas de impresión
-    _logo_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "LOGO.png")
-    try:
-        with open(_logo_path, "rb") as _lf:
-            _logo_b64 = "data:image/png;base64," + _base64.b64encode(_lf.read()).decode()
-    except Exception:
-        _logo_b64 = ""
+    _logo_b64 = _get_logo_b64()
 
     cumplimiento_rows = db.execute(
         """
@@ -1138,6 +1162,7 @@ def programacion_index():
         ORDER BY id ASC
     """).fetchall()
 
+    # Avance para OTs activas no programadas: solo usa caché caliente (no dispara lecturas de disco)
     for r in ots_activas_cumpl:
         try:
             oid = int(r[0] or 0)
@@ -1145,10 +1170,9 @@ def programacion_index():
             continue
         if oid <= 0 or oid in avance_live_by_ot:
             continue
-        try:
-            avance_live_by_ot[oid] = max(0, min(100, int(round(calcular_avance_ot(db, oid)))))
-        except Exception:
-            avance_live_by_ot[oid] = 0
+        cached = _avance_cache.get(oid)
+        if cached:
+            avance_live_by_ot[oid] = cached[0]
 
     ot_ids_con_actividad_semana = set()
     for e in entradas:
