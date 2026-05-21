@@ -2816,25 +2816,44 @@ def oc_pdf(oc_id):
 def control_stock():
     db = get_db()
     _ensure_tables(db)
-
-    rows = db.execute(
-        "SELECT ic.id, COALESCE(oc.numero,''), COALESCE(oc.fecha_recepcion,''),"
-        " COALESCE(a.codigo,''), COALESCE(ic.descripcion,''), COALESCE(a.categoria,''),"
-        " COALESCE(ic.cantidad_recibida,0), COALESCE(ic.unidad,'u'),"
-        " COALESCE(op.obra,''), COALESCE(ic.estado_stock,'Pendiente')"
-        " FROM items_oc ic"
-        " JOIN ordenes_compra oc ON oc.id=ic.oc_id"
-        " LEFT JOIN articulos_sum a ON a.id=ic.articulo_id"
-        " LEFT JOIN ordenes_pedido op ON op.id=oc.op_id"
-        " WHERE COALESCE(ic.cantidad_recibida,0) > 0"
-        " AND ("
-        "   UPPER(COALESCE(a.categoria,'')) LIKE 'PERFIL%'"
-        "   OR UPPER(COALESCE(ic.descripcion,'')) LIKE '%PERFIL%'"
-        "   OR UPPER(COALESCE(a.categoria,'')) LIKE '%BULON%'"
-        "   OR UPPER(COALESCE(ic.descripcion,'')) LIKE '%BULON%'"
-        " )"
-        " ORDER BY oc.id DESC, ic.id DESC"
-    ).fetchall()
+    query_error = ""
+    try:
+        rows = db.execute(
+            "SELECT ic.id, COALESCE(oc.numero,''), COALESCE(oc.fecha_recepcion,''),"
+            " COALESCE(a.codigo,''), COALESCE(ic.descripcion,''), COALESCE(a.categoria,''),"
+            " COALESCE(ic.cantidad_recibida,0), COALESCE(ic.unidad,'u'),"
+            " COALESCE(op.obra,''), COALESCE(ic.estado_stock,'Pendiente')"
+            " FROM items_oc ic"
+            " JOIN ordenes_compra oc ON oc.id=ic.oc_id"
+            " LEFT JOIN articulos_sum a ON a.id=ic.articulo_id"
+            " LEFT JOIN ordenes_pedido op ON op.id=oc.op_id"
+            " WHERE COALESCE(ic.cantidad_recibida,0) > 0"
+            " AND ("
+            "   UPPER(COALESCE(a.categoria,'')) LIKE 'PERFIL%'"
+            "   OR UPPER(COALESCE(ic.descripcion,'')) LIKE '%PERFIL%'"
+            "   OR UPPER(COALESCE(a.categoria,'')) LIKE '%BULON%'"
+            "   OR UPPER(COALESCE(ic.descripcion,'')) LIKE '%BULON%'"
+            " )"
+            " ORDER BY oc.id DESC, ic.id DESC"
+        ).fetchall()
+    except Exception as ex:
+        query_error = str(ex)
+        # Fallback defensivo para esquemas legacy: evita 500 y permite operar.
+        rows = db.execute(
+            "SELECT ic.id, COALESCE(oc.numero,''), COALESCE(oc.fecha_recepcion,''),"
+            " '', COALESCE(ic.descripcion,''), '',"
+            " COALESCE(ic.cantidad_recibida,0), COALESCE(ic.unidad,'u'),"
+            " COALESCE(op.obra,''), 'Pendiente'"
+            " FROM items_oc ic"
+            " JOIN ordenes_compra oc ON oc.id=ic.oc_id"
+            " LEFT JOIN ordenes_pedido op ON op.id=oc.op_id"
+            " WHERE COALESCE(ic.cantidad_recibida,0) > 0"
+            " AND ("
+            "   UPPER(COALESCE(ic.descripcion,'')) LIKE '%PERFIL%'"
+            "   OR UPPER(COALESCE(ic.descripcion,'')) LIKE '%BULON%'"
+            " )"
+            " ORDER BY oc.id DESC, ic.id DESC"
+        ).fetchall()
 
     def _badge_stock(v):
         est = str(v or "Pendiente")
@@ -2877,6 +2896,8 @@ def control_stock():
         "<h2>Control de Stock</h2>"
         "<a class='b gr' href='/modulo/suministros'>Dashboard Compras</a>"
         "<a class='b bl' href='/modulo/suministros/ordenes-compra'>Tablero OC</a>"
+        + ("<div class='card' style='background:#fff7ed;border-left:4px solid #f59e0b;color:#92400e;font-size:12px'>"
+           "Se aplicó modo compatibilidad por esquema legacy. Detalle técnico: {}</div>".format(_e(query_error)) if query_error else "") +
         "<div class='card' style='margin-top:10px;overflow-x:auto'>"
         "<table class='hl'><thead><tr>"
         "<th>OC</th><th>F. Recepcion</th><th>Codigo</th><th>Descripcion</th><th>Categoria</th>"
@@ -2894,7 +2915,14 @@ def control_stock():
 def control_stock_marcar_procesado(item_id):
     db = get_db()
     _ensure_tables(db)
-    db.execute("UPDATE items_oc SET estado_stock='Procesado' WHERE id=?", (item_id,))
+    try:
+        db.execute("UPDATE items_oc SET estado_stock='Procesado' WHERE id=?", (item_id,))
+    except Exception:
+        try:
+            db.execute("ALTER TABLE items_oc ADD COLUMN estado_stock TEXT DEFAULT 'Pendiente'")
+        except Exception:
+            pass
+        db.execute("UPDATE items_oc SET estado_stock='Procesado' WHERE id=?", (item_id,))
     db.commit()
     return redirect("/modulo/suministros/control-stock")
 
