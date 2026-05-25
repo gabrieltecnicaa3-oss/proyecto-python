@@ -20,6 +20,8 @@ Unidad Compartida, usa OAuth de usuario para subir con tu propia cuota.
 import os
 import json
 import io
+import re
+import base64
 
 _drive_service = None
 _drive_init_attempted = False
@@ -29,6 +31,58 @@ _drive_last_upload_ok = None
 _drive_last_upload_trace = None
 
 
+def _normalizar_credentials_json(raw_value):
+    """Normaliza JSON de credenciales desde env para casos comunes de despliegue.
+
+    Acepta:
+    - JSON directo
+    - JSON con '\\n' escapado en private_key
+    - Base64 (cuando se almacena codificado por CI/CD)
+    """
+    txt = str(raw_value or "").strip()
+    if not txt:
+        return ""
+
+    # 1) Intentar parseo directo
+    try:
+        obj = json.loads(txt)
+        if isinstance(obj, dict):
+            if isinstance(obj.get("private_key"), str):
+                obj["private_key"] = obj["private_key"].replace("\\n", "\n")
+            return json.dumps(obj)
+    except Exception:
+        pass
+
+    # 2) Intentar como base64
+    try:
+        decoded = base64.b64decode(txt).decode("utf-8")
+        obj = json.loads(decoded)
+        if isinstance(obj, dict):
+            if isinstance(obj.get("private_key"), str):
+                obj["private_key"] = obj["private_key"].replace("\\n", "\n")
+            return json.dumps(obj)
+    except Exception:
+        pass
+
+    # 3) Devolver tal cual para que el caller reporte error concreto
+    return txt
+
+
+def _extraer_drive_folder_id(value):
+    """Acepta ID puro o URL de carpeta y devuelve el folder_id."""
+    txt = str(value or "").strip()
+    if not txt:
+        return ""
+    if "/folders/" in txt:
+        m = re.search(r"/folders/([a-zA-Z0-9_-]+)", txt)
+        if m:
+            return m.group(1)
+    m = re.search(r"[?&]id=([a-zA-Z0-9_-]+)", txt)
+    if m:
+        return m.group(1)
+    return txt
+
+
 def _get_drive_service():
     global _drive_service, _drive_init_attempted, _drive_last_error
     if _drive_init_attempted:
@@ -36,7 +90,11 @@ def _get_drive_service():
     _drive_init_attempted = True
     _drive_last_error = None
 
-    credentials_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
+    credentials_json = _normalizar_credentials_json(
+        os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
+        or os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+        or os.environ.get("GOOGLE_CREDENTIALS_BASE64", "")
+    )
     oauth_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
     oauth_client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
     oauth_refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN", "").strip()
@@ -63,8 +121,9 @@ def _get_drive_service():
 
         if not credentials_json:
             _drive_last_error = (
-                "Sin credenciales: GOOGLE_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN no configurados "
-                "y GOOGLE_CREDENTIALS_JSON vacío."
+                "Sin credenciales: falta OAuth completo "
+                "(GOOGLE_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN) y también falta "
+                "GOOGLE_CREDENTIALS_JSON (o GOOGLE_SERVICE_ACCOUNT_JSON/GOOGLE_CREDENTIALS_BASE64)."
             )
             return None
 
@@ -161,10 +220,10 @@ def subir_pdf_a_drive(pdf_bytes, filename, obra, seccion_nombre, ot_subfolder=No
         _drive_last_upload_error = "Servicio de Drive no disponible"
         return None
 
-    root_folder_id = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "").strip()
+    root_folder_id = _extraer_drive_folder_id(os.environ.get("GOOGLE_DRIVE_FOLDER_ID", ""))
     if not root_folder_id:
-        print("[Drive] GOOGLE_DRIVE_FOLDER_ID no configurado")
-        _drive_last_upload_error = "GOOGLE_DRIVE_FOLDER_ID no configurado"
+        print("[Drive] GOOGLE_DRIVE_FOLDER_ID no configurado o inválido")
+        _drive_last_upload_error = "GOOGLE_DRIVE_FOLDER_ID no configurado o inválido"
         return None
 
     if isinstance(pdf_bytes, bytearray):
