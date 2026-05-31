@@ -2,7 +2,7 @@ import os
 import json
 import html as html_lib
 from io import BytesIO
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from urllib.parse import quote, urlencode
 from flask import Blueprint, redirect, request, send_file
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Image, Paragraph, Spacer
@@ -344,30 +344,25 @@ def parte_semanal():
 
     semana_form_value = editar_semana if editar_semana else ""
 
-    # Semanas válidas para carga: ventana alrededor de la semana actual + semanas existentes en BD.
+    # Semanas válidas para carga: desde semana actual hacia atrás (misma lógica solicitada por usuario).
     hoy = datetime.today().date()
-    lunes_actual = hoy - timedelta(days=hoy.weekday())
-    semanas_set = set()
-    for i in range(-12, 9):
-        d = lunes_actual + timedelta(weeks=i)
-        semanas_set.add(d.strftime("%Y-%m-%d"))
+    anio_iso, semana_iso, _ = hoy.isocalendar()
+    if not semana_form_value:
+        try:
+            semana_form_value = date.fromisocalendar(int(anio_iso), int(semana_iso), 1).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    semanas_ordenadas = []
+    for w in range(int(semana_iso), 0, -1):
+        try:
+            lunes = date.fromisocalendar(int(anio_iso), int(w), 1)
+        except Exception:
+            continue
+        semanas_ordenadas.append(lunes.strftime("%Y-%m-%d"))
 
-    semanas_db_rows = db.execute(
-        """
-        SELECT DISTINCT fecha
-        FROM partes_trabajo
-        WHERE fecha IS NOT NULL AND TRIM(fecha) <> ''
-        """
-    ).fetchall()
-    for (fecha_db,) in semanas_db_rows:
-        fecha_txt = str(fecha_db or "").strip()
-        if fecha_txt:
-            semanas_set.add(fecha_txt)
+    if semana_form_value and semana_form_value not in semanas_ordenadas:
+        semanas_ordenadas.insert(0, semana_form_value)
 
-    if semana_form_value:
-        semanas_set.add(semana_form_value)
-
-    semanas_ordenadas = sorted(semanas_set, reverse=True)
     semana_options_html = ""
     for semana_val in semanas_ordenadas:
         selected = "selected" if semana_val == semana_form_value else ""
@@ -1617,22 +1612,52 @@ def parte_semanal_reportes():
 
     where_sql = f"WHERE {' AND '.join(condiciones)}" if condiciones else ""
 
-    reportes = db.execute(f"""
-        SELECT pt.id,
-               pt.fecha,
-               pt.operario,
-               TRIM(COALESCE(ot.obra, '')) AS obra,
-               pt.ot_id,
-               TRIM(COALESCE(ot.titulo, '')) AS ot_titulo,
-               TRIM(COALESCE(pt.actividad, '')) AS actividad,
-               COALESCE(pt.horas, 0) AS horas
+    resumen_global = db.execute(
+        f"""
+        SELECT COALESCE(SUM(COALESCE(pt.horas, 0)), 0), COUNT(*)
         FROM partes_trabajo pt
         LEFT JOIN ordenes_trabajo ot ON ot.id = pt.ot_id
         {where_sql}
-        ORDER BY pt.fecha DESC, pt.operario ASC
-    """, params).fetchall()
+        """,
+        params,
+    ).fetchone()
+    total_horas = float(resumen_global[0] or 0)
+    total_registros = int(resumen_global[1] or 0)
 
-    total_horas = sum(float(r[7] or 0) for r in reportes)
+    semanas_resumen = db.execute(
+        f"""
+        SELECT pt.fecha,
+               COUNT(*) AS registros,
+               COUNT(DISTINCT LOWER(TRIM(COALESCE(pt.operario, '')))) AS empleados,
+               COALESCE(SUM(COALESCE(pt.horas, 0)), 0) AS horas
+        FROM partes_trabajo pt
+        LEFT JOIN ordenes_trabajo ot ON ot.id = pt.ot_id
+        {where_sql}
+        GROUP BY pt.fecha
+        ORDER BY pt.fecha DESC
+        """,
+        params,
+    ).fetchall()
+
+    reportes = []
+    if filtro_semana:
+        reportes = db.execute(
+            f"""
+            SELECT pt.id,
+                   pt.fecha,
+                   pt.operario,
+                   TRIM(COALESCE(ot.obra, '')) AS obra,
+                   pt.ot_id,
+                   TRIM(COALESCE(ot.titulo, '')) AS ot_titulo,
+                   TRIM(COALESCE(pt.actividad, '')) AS actividad,
+                   COALESCE(pt.horas, 0) AS horas
+            FROM partes_trabajo pt
+            LEFT JOIN ordenes_trabajo ot ON ot.id = pt.ot_id
+            {where_sql}
+            ORDER BY pt.fecha DESC, LOWER(TRIM(COALESCE(pt.operario, ''))) ASC, pt.id ASC
+            """,
+            params,
+        ).fetchall()
 
     opciones_obras = '<option value="">Todas las obras</option>'
     for obra in obras:
@@ -1683,28 +1708,39 @@ def parte_semanal_reportes():
 
     reportes_por_semana = {}
     for rep in reportes:
-        fecha = rep[1] or ''
-        if fecha not in reportes_por_semana:
-            reportes_por_semana[fecha] = {}
+        fecha = str(rep[1] or '').strip()
+        if not fecha:
+            continue
+        reportes_por_semana.setdefault(fecha, {})
+        operario = str(rep[2] or '').strip()
+        reportes_por_semana[fecha].setdefault(operario, []).append(rep)
 
-        operario = rep[2] or ''
-        if operario not in reportes_por_semana[fecha]:
-            reportes_por_semana[fecha][operario] = []
-
-        reportes_por_semana[fecha][operario].append(rep)
+    filtros_base = {}
+    if filtro_obra:
+        filtros_base["obra"] = filtro_obra
+    if filtro_empleado:
+        filtros_base["empleado"] = filtro_empleado
+    if filtro_mes:
+        filtros_base["mes"] = filtro_mes
 
     filas = ""
-    for fecha in sorted(reportes_por_semana.keys(), reverse=True):
-        reps_semana = reportes_por_semana[fecha]
-        total_empleados = len(reps_semana)
+    for fecha, registros_semana, total_empleados, horas_semana in semanas_resumen:
+        fecha = str(fecha or '').strip()
+        if not fecha:
+            continue
+        reps_semana = reportes_por_semana.get(fecha, {})
         semana_id = "wk_" + "".join(ch for ch in str(fecha) if ch.isalnum())
         semana_lbl = _semana_iso_label(fecha)
         expanded = (filtro_semana == str(fecha))
         btn_txt = "Ocultar" if expanded else "Desplegar"
         btn_aria = "true" if expanded else "false"
 
-        horas_semana = sum(float(r[7] or 0) for row_list in reps_semana.values() for r in row_list)
-        registros_semana = sum(len(row_list) for row_list in reps_semana.values())
+        qs = dict(filtros_base)
+        if not expanded:
+            qs["semana"] = fecha
+        boton_url = "/modulo/parte/reportes"
+        if qs:
+            boton_url += "?" + urlencode(qs)
         editar_semana_url = f"/modulo/parte/editar-semana/{quote(str(fecha or ''))}"
 
         filas += f"""
@@ -1713,7 +1749,7 @@ def parte_semanal_reportes():
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
                     <span>📅 {semana_lbl} · del {fecha} | {total_empleados} empleados | {registros_semana} registros | {horas_semana:.1f} HS</span>
                     <div style="display:flex;align-items:center;gap:8px;">
-                        <button type="button" class="btn-toggle-week" aria-expanded="{btn_aria}" onclick="toggleWeekDetails('{semana_id}', this)">{btn_txt}</button>
+                        <a href="{boton_url}" class="btn-toggle-week" aria-expanded="{btn_aria}" style="text-decoration:none;display:inline-block;">{btn_txt}</a>
                         <a href="{editar_semana_url}" style="display:inline-block;padding:6px 10px;border-radius:6px;background:#2563eb;color:#fff;text-decoration:none;font-size:12px;">✏️ Editar semana</a>
                     </div>
                 </div>
@@ -1838,7 +1874,7 @@ def parte_semanal_reportes():
     </div>
 
     <div class="summary">
-        Horas consumidas: <b>{total_horas:.1f}</b> | Registros encontrados: <b>{len(reportes)}</b>
+        Horas consumidas: <b>{total_horas:.1f}</b> | Registros encontrados: <b>{total_registros}</b>
     </div>
 
     <table>
@@ -1854,20 +1890,6 @@ def parte_semanal_reportes():
         </tr>
         {filas}
     </table>
-    <script>
-    function toggleWeekDetails(weekId, btn) {{
-        const rows = document.querySelectorAll('tr[data-week="' + weekId + '"]');
-        if (!rows.length) return;
-        const isShown = rows[0].classList.contains('show');
-        rows.forEach((row) => {{
-            row.classList.toggle('show', !isShown);
-        }});
-        if (btn) {{
-            btn.textContent = isShown ? 'Desplegar' : 'Ocultar';
-            btn.setAttribute('aria-expanded', isShown ? 'false' : 'true');
-        }}
-    }}
-    </script>
     </body>
     </html>
     """

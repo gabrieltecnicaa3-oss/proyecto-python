@@ -480,6 +480,12 @@ def init_db():
     )
     """)
 
+    # Índices para acelerar filtros y reportes del módulo Parte.
+    db.execute("CREATE INDEX IF NOT EXISTS idx_partes_fecha ON partes_trabajo(fecha)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_partes_operario ON partes_trabajo(operario)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_partes_ot_id ON partes_trabajo(ot_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_partes_fecha_operario ON partes_trabajo(fecha, operario)")
+
     db.execute("""
     CREATE TABLE IF NOT EXISTS empleados_parte (
         id INTEGER PRIMARY KEY,
