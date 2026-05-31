@@ -5293,7 +5293,7 @@ def cargar(pos):
             const valorActual = operarioSel.value;
             while (operarioSel.options.length > 1) operarioSel.remove(1);
             TODOS_OPERARIOS.forEach(function(op) {{
-                if (!rolFiltro || op.puesto.includes(rolFiltro)) {{
+                if (!rolFiltro || op.puesto.includes(rolFiltro) || op.puesto.includes('subcontrato')) {{
                     const opt = document.createElement('option');
                     opt.value = op.nombre;
                     opt.textContent = op.nombre;

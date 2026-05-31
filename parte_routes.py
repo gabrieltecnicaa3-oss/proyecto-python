@@ -42,6 +42,7 @@ PUESTOS_OPERARIO = [
     "Medio Of.",
     "Ayudante",
     "Of. Pintor",
+    "Subcontrato",
 ]
 
 
@@ -54,7 +55,7 @@ def _normalizar_tipo_puesto(valor):
 
 def _inferir_tipo_puesto_legacy(puesto_txt):
     txt = str(puesto_txt or "").strip().lower()
-    if any(k in txt for k in ["operario", "soldador", "armador", "medio", "ayudante", "pintor"]):
+    if any(k in txt for k in ["operario", "soldador", "armador", "medio", "ayudante", "pintor", "subcontrato"]):
         return "operario"
     return "supervisor"
 
@@ -299,6 +300,7 @@ def parte_semanal():
            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%armador%'
            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%ayudante%'
            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%pintor%'
+           OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%subcontrato%'
         ORDER BY LOWER(TRIM(COALESCE(nombre, ''))) COLLATE NOCASE ASC
         """
     ).fetchall()
@@ -1480,7 +1482,7 @@ def parte_carga_empleados():
 
     <script>
     const PUESTOS_SUPERVISOR = ["Of tecnica", "Jefe de Taller", "Coord Estructuras", "Resp. calidad", "Mantenimiento", "Encargado Pintura"];
-    const PUESTOS_OPERARIO = ["Of. Soldador", "Of. Armador", "Medio Of.", "Ayudante", "Of. Pintor"];
+    const PUESTOS_OPERARIO = ["Of. Soldador", "Of. Armador", "Medio Of.", "Ayudante", "Of. Pintor", "Subcontrato"];
 
     function setOpcionesDetalle(selectEl, tipo, valorActual) {
         const arr = (tipo === 'operario') ? PUESTOS_OPERARIO : PUESTOS_SUPERVISOR;

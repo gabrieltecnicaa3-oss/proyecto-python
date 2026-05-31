@@ -728,6 +728,7 @@ def _obtener_operarios_disponibles(db):
                                 OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%medio%'
                                 OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%ayudante%'
                                 OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%pintor%'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%subcontrato%'
                             )
           AND TRIM(COALESCE(nombre, '')) <> ''
                 ORDER BY nombre ASC
@@ -764,6 +765,7 @@ def _obtener_operarios_con_puesto(db):
             OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%medio%'
             OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%ayudante%'
             OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%pintor%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%subcontrato%'
         )
         AND TRIM(COALESCE(nombre, '')) <> ''
         ORDER BY nombre ASC
