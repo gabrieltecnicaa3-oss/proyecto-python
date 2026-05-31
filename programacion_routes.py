@@ -15,19 +15,60 @@ _programacion_schema_ready = False
 # ── Caché de avance por OT (5 min TTL) ────────────────────────────────────────
 _avance_cache: dict = {}
 _AVANCE_CACHE_TTL = 300  # segundos
+_MAX_LIVE_AVANCE_POR_REQUEST = 6
 
-def _calcular_avance_cached(db, ot_id: int) -> int:
-    """Evita releer Excel en cada request; cachea el resultado 5 minutos."""
+# Cache de operarios disponibles para no recalcular en cada request.
+_operarios_count_cache: "tuple[int, float] | None" = None
+
+
+def _get_avance_cache_hot(ot_id: int):
     now = _time.monotonic()
     c = _avance_cache.get(ot_id)
     if c and (now - c[1]) < _AVANCE_CACHE_TTL:
         return c[0]
+    return None
+
+def _calcular_avance_cached(db, ot_id: int) -> int:
+    """Evita releer Excel en cada request; cachea el resultado 5 minutos."""
+    hot = _get_avance_cache_hot(ot_id)
+    if hot is not None:
+        return hot
+    now = _time.monotonic()
     try:
         val = max(0, min(100, int(round(calcular_avance_ot(db, ot_id)))))
     except Exception:
         val = 0
     _avance_cache[ot_id] = (val, now)
     return val
+
+
+def _get_operarios_disponibles_cached(db) -> int:
+    global _operarios_count_cache
+    now = _time.monotonic()
+    if _operarios_count_cache and (now - _operarios_count_cache[1]) < _AVANCE_CACHE_TTL:
+        return int(_operarios_count_cache[0])
+
+    val = db.execute(
+        """
+        SELECT COUNT(DISTINCT TRIM(COALESCE(nombre, '')))
+        FROM empleados_parte
+        WHERE (
+            LOWER(TRIM(COALESCE(puesto_tipo, ''))) = 'operario'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%operario%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%soldador%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%armador%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%medio%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%ayudante%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%pintor%'
+        )
+        AND TRIM(COALESCE(nombre, '')) <> ''
+        AND LOWER(TRIM(COALESCE(puesto_tipo, puesto, ''))) NOT LIKE '%supervisor%'
+        AND LOWER(TRIM(COALESCE(puesto_tipo, puesto, ''))) NOT LIKE '%encargado%'
+        """
+    ).fetchone()[0] or 0
+
+    _operarios_count_cache = (int(val), now)
+    return int(val)
 
 # ── Caché del logo (se lee del disco una sola vez) ────────────────────────────
 _logo_b64_cache: "str | None" = None
@@ -1149,8 +1190,15 @@ def programacion_index():
         for e in entradas
         if e.get("_fi") and e.get("_ff") and e["_fi"] <= ff_vista and e["_ff"] >= fi_vista and int(e.get("ot_id") or 0) > 0
     }
+    live_calculados = 0
     for ot_id_row in ot_ids_visibles:
-        avance_live_by_ot[ot_id_row] = _calcular_avance_cached(db, ot_id_row)
+        hot = _get_avance_cache_hot(ot_id_row)
+        if hot is not None:
+            avance_live_by_ot[ot_id_row] = hot
+            continue
+        if live_calculados < _MAX_LIVE_AVANCE_POR_REQUEST:
+            avance_live_by_ot[ot_id_row] = _calcular_avance_cached(db, ot_id_row)
+            live_calculados += 1
     for e in entradas:
         e["avance"] = int(avance_live_by_ot.get(int(e.get("ot_id") or 0), 0))
 
@@ -1164,79 +1212,84 @@ def programacion_index():
     edit_ot_txt = (request.args.get("edit_ot") or "").strip()
     edit_ot = int(edit_ot_txt) if edit_ot_txt.isdigit() else 0
     edit_pct_txt = (request.args.get("edit_pct") or "").strip()
+    cargar_cumplimiento = (
+        (request.args.get("cumplimiento") or "").strip() == "1"
+        or bool((request.args.get("semana") or "").strip())
+        or edit_ot > 0
+    )
     try:
         edit_pct = max(0, min(100, int(float(edit_pct_txt)))) if edit_pct_txt else None
     except Exception:
         edit_pct = None
     edit_desvio = (request.args.get("edit_desvio") or "").strip()
 
-    _logo_b64 = _get_logo_b64()
-
     semana_key = semana_sel.strftime("%Y-%m-%d")
 
-    cumplimiento_semana_rows = db.execute(
+    cumplimiento_semana_rows = []
+    pct_acumulado = None
+    desvio_rows = []
+    weekly_stats_rows = []
+
+    if cargar_cumplimiento:
+        cumplimiento_semana_rows = db.execute(
+            """
+            SELECT ot_id, COALESCE(pct_cumplido, 0), COALESCE(desvio_codigo, '')
+            FROM programacion_cumplimiento
+            WHERE semana_inicio = ?
+            """,
+            (semana_key,),
+        ).fetchall()
+
+        pct_acumulado_row = db.execute(
+            """
+            SELECT AVG(COALESCE(pct_cumplido, 0))
+            FROM programacion_cumplimiento
+            WHERE semana_inicio <= ?
+            """,
+            (semana_key,),
+        ).fetchone()
+        pct_acumulado = float(pct_acumulado_row[0]) if pct_acumulado_row and pct_acumulado_row[0] is not None else None
+
+        desvio_rows = db.execute(
+            """
+            SELECT COALESCE(desvio_codigo, ''), COUNT(*)
+            FROM programacion_cumplimiento
+            WHERE semana_inicio <= ?
+              AND COALESCE(pct_cumplido, 0) < 100
+              AND TRIM(COALESCE(desvio_codigo, '')) <> ''
+            GROUP BY COALESCE(desvio_codigo, '')
+            """,
+            (semana_key,),
+        ).fetchall()
+
+        weekly_stats_rows = db.execute(
+            """
+            SELECT semana_inicio,
+                   COUNT(*) AS tot,
+                   SUM(COALESCE(pct_cumplido, 0)) AS pct_sum,
+                   SUM(CASE WHEN COALESCE(pct_cumplido, 0) < 100 THEN 1 ELSE 0 END) AS desv
+            FROM programacion_cumplimiento
+            WHERE semana_inicio <= ?
+              AND TRIM(COALESCE(semana_inicio, '')) <> ''
+            GROUP BY semana_inicio
+            ORDER BY semana_inicio ASC
+            """,
+            (semana_key,),
+        ).fetchall()
+    ots_activas_cumpl = []
+    if cargar_cumplimiento:
+        ots_sql = """
+            SELECT id, COALESCE(obra, ''), COALESCE(titulo, ''), COALESCE(fecha_entrega, '')
+            FROM ordenes_trabajo
+            WHERE fecha_cierre IS NULL
+              AND (es_mantenimiento IS NULL OR es_mantenimiento = 0)
         """
-        SELECT ot_id, COALESCE(pct_cumplido, 0), COALESCE(desvio_codigo, '')
-        FROM programacion_cumplimiento
-        WHERE semana_inicio = ?
-        """,
-        (semana_key,),
-    ).fetchall()
-
-    cumpl_idx = {}
-    for r in cumplimiento_semana_rows:
-        cumpl_idx[int(r[0])] = (float(r[1] or 0), str(r[2] or ""))
-
-    pct_acumulado_row = db.execute(
-        """
-        SELECT AVG(COALESCE(pct_cumplido, 0))
-        FROM programacion_cumplimiento
-        WHERE semana_inicio <= ?
-        """,
-        (semana_key,),
-    ).fetchone()
-    pct_acumulado = float(pct_acumulado_row[0]) if pct_acumulado_row and pct_acumulado_row[0] is not None else None
-
-    desvio_rows = db.execute(
-        """
-        SELECT COALESCE(desvio_codigo, ''), COUNT(*)
-        FROM programacion_cumplimiento
-        WHERE semana_inicio <= ?
-          AND COALESCE(pct_cumplido, 0) < 100
-          AND TRIM(COALESCE(desvio_codigo, '')) <> ''
-        GROUP BY COALESCE(desvio_codigo, '')
-        """,
-        (semana_key,),
-    ).fetchall()
-
-    weekly_stats_rows = db.execute(
-        """
-        SELECT semana_inicio,
-               COUNT(*) AS tot,
-               SUM(COALESCE(pct_cumplido, 0)) AS pct_sum,
-               SUM(CASE WHEN COALESCE(pct_cumplido, 0) < 100 THEN 1 ELSE 0 END) AS desv
-        FROM programacion_cumplimiento
-        WHERE semana_inicio <= ?
-          AND TRIM(COALESCE(semana_inicio, '')) <> ''
-        GROUP BY semana_inicio
-        ORDER BY semana_inicio ASC
-        """,
-        (semana_key,),
-    ).fetchall()
-
-    # Cumplimiento: mostrar OTs con actividad en la semana seleccionada O con avance registrado.
-    ots_sql = """
-        SELECT id, COALESCE(obra, ''), COALESCE(titulo, ''), COALESCE(fecha_entrega, '')
-        FROM ordenes_trabajo
-        WHERE fecha_cierre IS NULL
-          AND (es_mantenimiento IS NULL OR es_mantenimiento = 0)
-    """
-    ots_params = []
-    if obra_fil:
-        ots_sql += " AND LOWER(COALESCE(obra, '')) LIKE ?"
-        ots_params.append(f"%{obra_fil.lower()}%")
-    ots_sql += " ORDER BY id ASC"
-    ots_activas_cumpl = db.execute(ots_sql, tuple(ots_params)).fetchall()
+        ots_params = []
+        if obra_fil:
+            ots_sql += " AND LOWER(COALESCE(obra, '')) LIKE ?"
+            ots_params.append(f"%{obra_fil.lower()}%")
+        ots_sql += " ORDER BY id ASC"
+        ots_activas_cumpl = db.execute(ots_sql, tuple(ots_params)).fetchall()
 
     # Avance para OTs activas no programadas: solo usa caché caliente (no dispara lecturas de disco)
     for r in ots_activas_cumpl:
@@ -1246,9 +1299,9 @@ def programacion_index():
             continue
         if oid <= 0 or oid in avance_live_by_ot:
             continue
-        cached = _avance_cache.get(oid)
-        if cached:
-            avance_live_by_ot[oid] = cached[0]
+        hot = _get_avance_cache_hot(oid)
+        if hot is not None:
+            avance_live_by_ot[oid] = hot
 
     ot_ids_con_actividad_semana = set()
     for e in entradas:
@@ -1423,24 +1476,7 @@ def programacion_index():
         chart_svg = "<div style='color:#9a3412;font-style:italic;padding:10px;'>Sin datos guardados todav\u00eda. Carg\u00e1 un cumplimiento y hacé click en \"Guardar\".</div>"
         weeks_rows_html = "<tr><td colspan='5' style='text-align:center;color:#64748b;'>Sin semanas guardadas todav\u00eda.</td></tr>"
 
-    operarios_count = db.execute(
-        """
-        SELECT COUNT(DISTINCT TRIM(COALESCE(nombre, '')))
-        FROM empleados_parte
-        WHERE (
-            LOWER(TRIM(COALESCE(puesto_tipo, ''))) = 'operario'
-            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%operario%'
-            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%soldador%'
-            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%armador%'
-            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%medio%'
-            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%ayudante%'
-            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%pintor%'
-        )
-        AND TRIM(COALESCE(nombre, '')) <> ''
-        AND LOWER(TRIM(COALESCE(puesto_tipo, puesto, ''))) NOT LIKE '%supervisor%'
-        AND LOWER(TRIM(COALESCE(puesto_tipo, puesto, ''))) NOT LIKE '%encargado%'
-        """
-    ).fetchone()[0] or 0
+    operarios_count = _get_operarios_disponibles_cached(db)
     gantt = _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=operarios_count, es_obra=es_obra)
 
     # KPIs
@@ -1458,6 +1494,7 @@ def programacion_index():
         ff = e.get("_ff")
         dur = ((ff - fi).days + 1) if fi and ff else "—"
         hs = float(e["hs_programadas"] or 0)
+        hs_txt = str(int(round(hs)))
         cant_rec = int(e["cantidad_recursos"] or 0)
         fecha_nec = e.get("_fecha_entrega")
         color = _color_ot(e["ot_id"])
@@ -1473,7 +1510,7 @@ def programacion_index():
             <td>{_fmt(ff)}</td>
             <td style="text-align:center;">{dur} días</td>
             <td style="text-align:center;">{cant_rec} rec.</td>
-            <td style="text-align:center;">{hs:.0f} hs</td>
+            <td style="text-align:center;">{hs_txt} hs</td>
             <td>
                 <a href="/modulo/programacion/editar/{e['id']}" style="color:#2563eb;font-size:12px;">Editar</a>
                 &nbsp;
@@ -1511,9 +1548,27 @@ def programacion_index():
     )
 
     semana_str = semana_sel.strftime("%Y-%m-%d")
-    cumpl_kpi_sem = f"{pct_semanal:.1f}%" if pct_semanal is not None else "—"
-    cumpl_kpi_ac = f"{pct_acumulado:.1f}%" if pct_acumulado is not None else "—"
-    cumplimiento_panel = f"""
+    if not cargar_cumplimiento:
+        _base_qs = [f"fi={fi_str}", f"ff={ff_str}"]
+        if obra_fil:
+            _base_qs.append("obra=" + quote(obra_fil))
+        _base_qs.append("cumplimiento=1")
+        _url_cumplimiento = "/modulo/programacion?" + "&".join(_base_qs) + "#cumplimiento-section"
+        cumplimiento_panel = f"""
+<div class="panel" id="cumplimiento-section">
+    <div class="collapsible-header">
+        <h3>📋 Cumplimiento de objetivos semanales</h3>
+        <a class="collapsible-toggle" href="{_url_cumplimiento}" style="text-decoration:none;">Cargar</a>
+    </div>
+    <div style="padding:8px 0 2px;color:#9a3412;font-size:13px;">
+        Este bloque se carga bajo demanda para acelerar la apertura del módulo.
+    </div>
+</div>
+"""
+    else:
+        cumpl_kpi_sem = f"{pct_semanal:.1f}%" if pct_semanal is not None else "—"
+        cumpl_kpi_ac = f"{pct_acumulado:.1f}%" if pct_acumulado is not None else "—"
+        cumplimiento_panel = f"""
 <div class="panel" id="cumplimiento-section">
     <div class="collapsible-header" onclick="toggleSection('cumpl-body','cumpl-toggle')">
         <h3>📋 Cumplimiento de objetivos semanales</h3>
