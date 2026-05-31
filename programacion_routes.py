@@ -15,7 +15,7 @@ _programacion_schema_ready = False
 # ── Caché de avance por OT (5 min TTL) ────────────────────────────────────────
 _avance_cache: dict = {}
 _AVANCE_CACHE_TTL = 300  # segundos
-_MAX_LIVE_AVANCE_POR_REQUEST = 6
+_MAX_LIVE_AVANCE_POR_REQUEST = 4
 
 # Cache de operarios disponibles para no recalcular en cada request.
 _operarios_count_cache: "tuple[int, float] | None" = None
@@ -1125,6 +1125,7 @@ def programacion_index():
     if ff_vista <= fi_vista:
         ff_vista = fi_vista + timedelta(days=89)
     obra_fil = (request.args.get("obra") or "").strip()
+    recalcular_avance_vivo = (request.args.get("avance_vivo") or "").strip() == "1"
 
     fi_vista_str = fi_vista.strftime("%Y-%m-%d")
     ff_vista_str = ff_vista.strftime("%Y-%m-%d")
@@ -1206,15 +1207,21 @@ def programacion_index():
         for e in entradas
         if e.get("_fi") and e.get("_ff") and e["_fi"] <= ff_vista and e["_ff"] >= fi_vista and int(e.get("ot_id") or 0) > 0
     }
-    live_calculados = 0
-    for ot_id_row in ot_ids_visibles:
-        hot = _get_avance_cache_hot(ot_id_row)
-        if hot is not None:
-            avance_live_by_ot[ot_id_row] = hot
-            continue
-        if live_calculados < _MAX_LIVE_AVANCE_POR_REQUEST:
-            avance_live_by_ot[ot_id_row] = _calcular_avance_cached(db, ot_id_row)
-            live_calculados += 1
+    if recalcular_avance_vivo:
+        live_calculados = 0
+        for ot_id_row in ot_ids_visibles:
+            hot = _get_avance_cache_hot(ot_id_row)
+            if hot is not None:
+                avance_live_by_ot[ot_id_row] = hot
+                continue
+            if live_calculados < _MAX_LIVE_AVANCE_POR_REQUEST:
+                avance_live_by_ot[ot_id_row] = _calcular_avance_cached(db, ot_id_row)
+                live_calculados += 1
+    else:
+        for ot_id_row in ot_ids_visibles:
+            hot = _get_avance_cache_hot(ot_id_row)
+            if hot is not None:
+                avance_live_by_ot[ot_id_row] = hot
     for e in entradas:
         e["avance"] = int(avance_live_by_ot.get(int(e.get("ot_id") or 0), 0))
 
@@ -1261,6 +1268,7 @@ def programacion_index():
     for r in cumplimiento_semana_rows:
         cumpl_idx[int(r[0])] = (float(r[1] or 0), str(r[2] or ""))
 
+    if cargar_cumplimiento:
         pct_acumulado_row = db.execute(
             """
             SELECT AVG(COALESCE(pct_cumplido, 0))
@@ -1559,6 +1567,12 @@ def programacion_index():
     fi_str = fi_vista.strftime("%Y-%m-%d")
     ff_str = ff_vista.strftime("%Y-%m-%d")
     obra_qs = ("&obra=" + html_lib.escape(obra_fil)) if obra_fil else ""
+    _qs_refresh = [f"fi={fi_str}", f"ff={ff_str}", "avance_vivo=1"]
+    if obra_fil:
+        _qs_refresh.append("obra=" + quote(obra_fil))
+    if vista:
+        _qs_refresh.append("vista=" + quote(vista))
+    _url_refresh_avance = "/modulo/programacion?" + "&".join(_qs_refresh)
     _btn_active = "background:#6366f1;color:#fff;border-color:#6366f1;"
     btn_trimestral_active = _btn_active if vista in ("", "trimestral") else ""
     btn_semana_active    = _btn_active if vista == "semana"    else ""
@@ -1855,6 +1869,7 @@ function printCumplimiento() {{
             <a href="/modulo/programacion?vista=trimestral{obra_qs}" class="btn btn-sm" style="{btn_trimestral_active}">📊 Trimestral</a>
             <a href="/modulo/programacion?vista=mensual{obra_qs}" class="btn btn-sm" style="{btn_mensual_active}">📅 Mensual</a>
             <a href="/modulo/programacion?vista=semana{obra_qs}" class="btn btn-sm" style="{btn_semana_active}">📆 Semana</a>
+            <a href="{_url_refresh_avance}" class="btn btn-sec btn-sm">🔄 Actualizar avance real</a>
         </div>
             {'' if es_obra else '<button onclick="printGantt()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>'}
     </div>
