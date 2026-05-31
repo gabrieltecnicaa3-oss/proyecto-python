@@ -1174,16 +1174,6 @@ def programacion_index():
 
     semana_key = semana_sel.strftime("%Y-%m-%d")
 
-    cumplimiento_rows = db.execute(
-        """
-        SELECT ot_id, semana_inicio, COALESCE(pct_cumplido, 0), COALESCE(desvio_codigo, '')
-        FROM programacion_cumplimiento
-        WHERE semana_inicio <= ?
-        ORDER BY semana_inicio ASC, ot_id ASC
-        """,
-        (semana_key,),
-    ).fetchall()
-
     cumplimiento_semana_rows = db.execute(
         """
         SELECT ot_id, COALESCE(pct_cumplido, 0), COALESCE(desvio_codigo, '')
@@ -1195,15 +1185,58 @@ def programacion_index():
 
     cumpl_idx = {}
     for r in cumplimiento_semana_rows:
-        cumpl_idx[(int(r[0]), semana_key)] = (float(r[1] or 0), str(r[2] or ""))
+        cumpl_idx[int(r[0])] = (float(r[1] or 0), str(r[2] or ""))
+
+    pct_acumulado_row = db.execute(
+        """
+        SELECT AVG(COALESCE(pct_cumplido, 0))
+        FROM programacion_cumplimiento
+        WHERE semana_inicio <= ?
+        """,
+        (semana_key,),
+    ).fetchone()
+    pct_acumulado = float(pct_acumulado_row[0]) if pct_acumulado_row and pct_acumulado_row[0] is not None else None
+
+    desvio_rows = db.execute(
+        """
+        SELECT COALESCE(desvio_codigo, ''), COUNT(*)
+        FROM programacion_cumplimiento
+        WHERE semana_inicio <= ?
+          AND COALESCE(pct_cumplido, 0) < 100
+          AND TRIM(COALESCE(desvio_codigo, '')) <> ''
+        GROUP BY COALESCE(desvio_codigo, '')
+        """,
+        (semana_key,),
+    ).fetchall()
+
+    weekly_stats_rows = db.execute(
+        """
+        SELECT semana_inicio,
+               COUNT(*) AS tot,
+               SUM(COALESCE(pct_cumplido, 0)) AS pct_sum,
+               SUM(CASE WHEN COALESCE(pct_cumplido, 0) < 100 THEN 1 ELSE 0 END) AS desv
+        FROM programacion_cumplimiento
+        WHERE semana_inicio <= ?
+          AND TRIM(COALESCE(semana_inicio, '')) <> ''
+        GROUP BY semana_inicio
+        ORDER BY semana_inicio ASC
+        """,
+        (semana_key,),
+    ).fetchall()
 
     # Cumplimiento: mostrar OTs con actividad en la semana seleccionada O con avance registrado.
-    ots_activas_cumpl = db.execute("""
+    ots_sql = """
         SELECT id, COALESCE(obra, ''), COALESCE(titulo, ''), COALESCE(fecha_entrega, '')
         FROM ordenes_trabajo
-        WHERE fecha_cierre IS NULL AND (es_mantenimiento IS NULL OR es_mantenimiento = 0)
-        ORDER BY id ASC
-    """).fetchall()
+        WHERE fecha_cierre IS NULL
+          AND (es_mantenimiento IS NULL OR es_mantenimiento = 0)
+    """
+    ots_params = []
+    if obra_fil:
+        ots_sql += " AND LOWER(COALESCE(obra, '')) LIKE ?"
+        ots_params.append(f"%{obra_fil.lower()}%")
+    ots_sql += " ORDER BY id ASC"
+    ots_activas_cumpl = db.execute(ots_sql, tuple(ots_params)).fetchall()
 
     # Avance para OTs activas no programadas: solo usa caché caliente (no dispara lecturas de disco)
     for r in ots_activas_cumpl:
@@ -1253,7 +1286,7 @@ def programacion_index():
         ot_id = int(e["ot_id"])
         obra = html_lib.escape(str(e.get("obra") or ""))
         titulo = html_lib.escape(str(e.get("titulo") or ""))
-        pct_prev, desvio_prev = cumpl_idx.get((ot_id, semana_key), (100.0, ""))
+        pct_prev, desvio_prev = cumpl_idx.get(ot_id, (100.0, ""))
         pct_val = max(0, min(100, int(round(pct_prev))))
         if pct_val < 100:
             pcts_semana.append(pct_val)
@@ -1279,21 +1312,19 @@ def programacion_index():
         </tr>
         """
 
-    todas_hasta_semana = []
-    for r in cumplimiento_rows:
-        todas_hasta_semana.append(float(r[2] or 0))
-
     pct_semanal = (sum(pcts_semana) / len(pcts_semana)) if pcts_semana else None
-    pct_acumulado = (sum(todas_hasta_semana) / len(todas_hasta_semana)) if todas_hasta_semana else None
 
     desvio_stats = {}
     total_desv = 0
-    for r in cumplimiento_rows:
-        pct = float(r[2] or 0)
-        cod = str(r[3] or "").strip()
-        if pct < 100 and cod in _DESVIOS:
-            desvio_stats[cod] = desvio_stats.get(cod, 0) + 1
-            total_desv += 1
+    for cod_raw, count_raw in desvio_rows:
+        cod = str(cod_raw or "").strip()
+        if cod not in _DESVIOS:
+            continue
+        count = int(count_raw or 0)
+        if count <= 0:
+            continue
+        desvio_stats[cod] = count
+        total_desv += count
 
     _colors_desv = [
         "#6366f1", "#f97316", "#3b82f6", "#10b981", "#ef4444",
@@ -1323,29 +1354,30 @@ def programacion_index():
 
     donut_svg = _svg_donut_chart(desvio_stats, total_desv, size=220)
 
-    week_map = {}
-    for r in cumplimiento_rows:
-        wk_key = str(r[1] or "").strip()
+    weeks_data = []
+    for wk, tot, pct_sum, desv in weekly_stats_rows:
+        wk_key = str(wk or "").strip()
         if not wk_key:
             continue
-        if wk_key not in week_map:
-            week_map[wk_key] = {"tot": 0, "desv": 0, "pct_sum": 0.0}
-        week_map[wk_key]["tot"] += 1
-        week_map[wk_key]["pct_sum"] += float(r[2] or 0)
-        if float(r[2] or 0) < 100:
-            week_map[wk_key]["desv"] += 1
+        weeks_data.append(
+            {
+                "wk": wk_key,
+                "tot": int(tot or 0),
+                "pct_sum": float(pct_sum or 0.0),
+                "desv": int(desv or 0),
+            }
+        )
 
-    weeks_sorted = sorted(week_map.keys())
     weeks_rows_html = ""
     svg_paths = ""
     svg_points_sem = []
     svg_points_ac = []
     acum_tot = 0
     acum_pct_sum = 0.0
-    if weeks_sorted:
-        max_x = max(1, len(weeks_sorted) - 1)
-        for i, wk in enumerate(weeks_sorted):
-            dato = week_map[wk]
+    if weeks_data:
+        max_x = max(1, len(weeks_data) - 1)
+        for i, dato in enumerate(weeks_data):
+            wk = dato["wk"]
             # % cumplimiento promedio de esa semana
             sem_pct = (dato["pct_sum"] / dato["tot"]) if dato["tot"] else 100.0
             acum_tot += dato["tot"]
