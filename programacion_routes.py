@@ -131,6 +131,17 @@ def _asegurar_schema_programacion():
     except Exception:
         pass
 
+    for _idx_sql in [
+        "CREATE INDEX IF NOT EXISTS idx_programacion_orden_id ON programacion(orden, id)",
+        "CREATE INDEX IF NOT EXISTS idx_programacion_ot_id ON programacion(ot_id)",
+        "CREATE INDEX IF NOT EXISTS idx_programacion_cumpl_sem_ot ON programacion_cumplimiento(semana_inicio, ot_id)",
+        "CREATE INDEX IF NOT EXISTS idx_ordenes_trabajo_activas ON ordenes_trabajo(fecha_cierre, es_mantenimiento, id)",
+    ]:
+        try:
+            db.execute(_idx_sql)
+        except Exception:
+            pass
+
     try:
         db.commit()
     except Exception:
@@ -544,9 +555,9 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=F
     # Rows
     rows_html = ""
     for e in entradas:
-        fi = _parse_date(e.get("fecha_inicio"))
-        ff = _parse_date(e.get("fecha_fin"))
-        fecha_nec = _parse_date(e.get("fecha_entrega"))
+        fi = e.get("_fi") or _parse_date(e.get("fecha_inicio"))
+        ff = e.get("_ff") or _parse_date(e.get("fecha_fin"))
+        fecha_nec = e.get("_fecha_entrega") or _parse_date(e.get("fecha_entrega"))
         hitos = e.get("hitos") or []
         ot_id = e["ot_id"]
         obra = html_lib.escape(str(e.get("obra") or f"OT {ot_id}"))
@@ -768,6 +779,14 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=F
         )
 
     # ── Weekly resource summary rows ──────────────────────────────────────────
+    entradas_rango = []
+    for e in entradas:
+        fi_e = e.get("_fi") or _parse_date(e.get("fecha_inicio"))
+        ff_e = e.get("_ff") or _parse_date(e.get("fecha_fin"))
+        if not fi_e or not ff_e:
+            continue
+        entradas_rango.append((fi_e, ff_e, int(e.get("cantidad_recursos") or 0), bool(e.get("es_subcontrato"))))
+
     first_monday = fi_vista - timedelta(days=fi_vista.weekday())
     semanas = []
     d = first_monday
@@ -777,11 +796,9 @@ def _gantt_html(entradas, fi_vista, ff_vista, operarios_disponibles=0, es_obra=F
         vis_e = min(week_end, ff_vista)
         if vis_s <= vis_e:
             total_rec = 0
-            for e in entradas:
-                fi_e = _parse_date(e.get("fecha_inicio"))
-                ff_e = _parse_date(e.get("fecha_fin"))
-                if fi_e and ff_e and fi_e <= week_end and ff_e >= d and not e.get("es_subcontrato"):
-                    total_rec += int(e.get("cantidad_recursos") or 0)
+            for fi_e, ff_e, cant_e, es_sub_e in entradas_rango:
+                if fi_e <= week_end and ff_e >= d and not es_sub_e:
+                    total_rec += cant_e
             semanas.append((vis_s, vis_e, total_rec))
         d += timedelta(days=7)
 
@@ -1074,13 +1091,12 @@ def programacion_index():
                COALESCE(p.hito_titulo, ''), COALESCE(p.hito_fecha, ''),
                COALESCE(ot.obra, ''), COALESCE(ot.titulo, ''),
                COALESCE(ot.cliente, ''), COALESCE(ot.estado, ''), COALESCE(ot.fecha_entrega, ''),
-               COALESCE(ot.hs_previstas, 0)
+               COALESCE(ot.hs_previstas, 0), COALESCE(ot.estado_avance, 0)
         FROM programacion p
         LEFT JOIN ordenes_trabajo ot ON ot.id = p.ot_id
         ORDER BY COALESCE(p.orden, p.id) ASC, p.id ASC
     """).fetchall()
 
-    # Usar avance vivo (Produccion) para toda visualizacion del modulo.
     avance_live_by_ot = {}
     for r in rows:
         try:
@@ -1089,7 +1105,7 @@ def programacion_index():
             continue
         if ot_id_row <= 0 or ot_id_row in avance_live_by_ot:
             continue
-        avance_live_by_ot[ot_id_row] = _calcular_avance_cached(db, ot_id_row)
+        avance_live_by_ot[ot_id_row] = max(0, min(100, int(r[15] or 0)))
 
     prog_ids = [int(r[0]) for r in rows]
     hitos_map = {pid: [] for pid in prog_ids}
@@ -1107,20 +1123,36 @@ def programacion_index():
         for pid, titulo_h, fecha_h in hitos_rows:
             hitos_map.setdefault(int(pid), []).append({"titulo": str(titulo_h or ""), "fecha": str(fecha_h or "")})
 
-    entradas = [
-        {
-            "id": r[0], "ot_id": r[1], "fecha_inicio": r[2], "fecha_fin": r[3],
-            "hs_programadas": r[4], "cantidad_recursos": r[5], "observaciones": r[6],
-            "hito_titulo": r[7], "hito_fecha": r[8],
-            "hitos": (hitos_map.get(int(r[0])) or ([{"titulo": str(r[7] or ""), "fecha": str(r[8] or "")}] if (str(r[7] or "").strip() and str(r[8] or "").strip()) else [])),
-            "obra": r[9], "titulo": r[10], "cliente": r[11], "estado_ot": r[12], "fecha_entrega": r[13],
-            "avance": int(avance_live_by_ot.get(int(r[1] or 0), 0)),
-            "es_subcontrato": float(r[14] or 0) == 0 or int(r[5] or 0) == 0,
-        }
-        for r in rows
-    ]
+    entradas = []
+    for r in rows:
+        _fi = _parse_date(r[2])
+        _ff = _parse_date(r[3])
+        _fecha_entrega = _parse_date(r[13])
+        entradas.append(
+            {
+                "id": r[0], "ot_id": r[1], "fecha_inicio": r[2], "fecha_fin": r[3],
+                "_fi": _fi, "_ff": _ff, "_fecha_entrega": _fecha_entrega,
+                "hs_programadas": r[4], "cantidad_recursos": r[5], "observaciones": r[6],
+                "hito_titulo": r[7], "hito_fecha": r[8],
+                "hitos": (hitos_map.get(int(r[0])) or ([{"titulo": str(r[7] or ""), "fecha": str(r[8] or "")}] if (str(r[7] or "").strip() and str(r[8] or "").strip()) else [])),
+                "obra": r[9], "titulo": r[10], "cliente": r[11], "estado_ot": r[12], "fecha_entrega": r[13],
+                "avance": int(avance_live_by_ot.get(int(r[1] or 0), 0)),
+                "es_subcontrato": float(r[14] or 0) == 0 or int(r[5] or 0) == 0,
+            }
+        )
     if obra_fil:
         entradas = [e for e in entradas if obra_fil.lower() in (e.get("obra") or "").lower()]
+
+    # Avance vivo solo para OTs visibles en el rango actual.
+    ot_ids_visibles = {
+        int(e.get("ot_id") or 0)
+        for e in entradas
+        if e.get("_fi") and e.get("_ff") and e["_fi"] <= ff_vista and e["_ff"] >= fi_vista and int(e.get("ot_id") or 0) > 0
+    }
+    for ot_id_row in ot_ids_visibles:
+        avance_live_by_ot[ot_id_row] = _calcular_avance_cached(db, ot_id_row)
+    for e in entradas:
+        e["avance"] = int(avance_live_by_ot.get(int(e.get("ot_id") or 0), 0))
 
     def _lunes_semana(d):
         return d - timedelta(days=d.weekday())
@@ -1140,19 +1172,30 @@ def programacion_index():
 
     _logo_b64 = _get_logo_b64()
 
+    semana_key = semana_sel.strftime("%Y-%m-%d")
+
     cumplimiento_rows = db.execute(
         """
         SELECT ot_id, semana_inicio, COALESCE(pct_cumplido, 0), COALESCE(desvio_codigo, '')
         FROM programacion_cumplimiento
+        WHERE semana_inicio <= ?
         ORDER BY semana_inicio ASC, ot_id ASC
-        """
+        """,
+        (semana_key,),
     ).fetchall()
+
+    cumplimiento_semana_rows = db.execute(
+        """
+        SELECT ot_id, COALESCE(pct_cumplido, 0), COALESCE(desvio_codigo, '')
+        FROM programacion_cumplimiento
+        WHERE semana_inicio = ?
+        """,
+        (semana_key,),
+    ).fetchall()
+
     cumpl_idx = {}
-    for r in cumplimiento_rows:
-        sem_r = _parse_date(r[1])
-        if not sem_r:
-            continue
-        cumpl_idx[(int(r[0]), sem_r.strftime("%Y-%m-%d"))] = (float(r[2] or 0), str(r[3] or ""))
+    for r in cumplimiento_semana_rows:
+        cumpl_idx[(int(r[0]), semana_key)] = (float(r[1] or 0), str(r[2] or ""))
 
     # Cumplimiento: mostrar OTs con actividad en la semana seleccionada O con avance registrado.
     ots_activas_cumpl = db.execute("""
@@ -1176,8 +1219,8 @@ def programacion_index():
 
     ot_ids_con_actividad_semana = set()
     for e in entradas:
-        fi_e = _parse_date(e.get("fecha_inicio"))
-        ff_e = _parse_date(e.get("fecha_fin"))
+        fi_e = e.get("_fi")
+        ff_e = e.get("_ff")
         if not fi_e or not ff_e:
             continue
         if fi_e <= semana_fin and ff_e >= semana_sel:
@@ -1202,7 +1245,6 @@ def programacion_index():
     if obra_fil:
         entradas_semana = [e for e in entradas_semana if obra_fil.lower() in (e.get("obra") or "").lower()]
 
-    semana_key = semana_sel.strftime("%Y-%m-%d")
     cumplimiento_rows_html = ""
     pcts_semana = []
     oninput_cumplimiento = "" if es_obra else " oninput=\"toggleDesvio({ot_id}); calcCumplimientoKPIs();\""
@@ -1239,9 +1281,7 @@ def programacion_index():
 
     todas_hasta_semana = []
     for r in cumplimiento_rows:
-        sem = _parse_date(r[1])
-        if sem and sem <= semana_sel:
-            todas_hasta_semana.append(float(r[2] or 0))
+        todas_hasta_semana.append(float(r[2] or 0))
 
     pct_semanal = (sum(pcts_semana) / len(pcts_semana)) if pcts_semana else None
     pct_acumulado = (sum(todas_hasta_semana) / len(todas_hasta_semana)) if todas_hasta_semana else None
@@ -1249,9 +1289,6 @@ def programacion_index():
     desvio_stats = {}
     total_desv = 0
     for r in cumplimiento_rows:
-        sem = _parse_date(r[1])
-        if not sem or sem > semana_sel:
-            continue
         pct = float(r[2] or 0)
         cod = str(r[3] or "").strip()
         if pct < 100 and cod in _DESVIOS:
@@ -1288,16 +1325,15 @@ def programacion_index():
 
     week_map = {}
     for r in cumplimiento_rows:
-        sem = _parse_date(r[1])
-        if not sem or sem > semana_sel:
+        wk_key = str(r[1] or "").strip()
+        if not wk_key:
             continue
-        key = sem.strftime("%Y-%m-%d")
-        if key not in week_map:
-            week_map[key] = {"tot": 0, "desv": 0, "pct_sum": 0.0}
-        week_map[key]["tot"] += 1
-        week_map[key]["pct_sum"] += float(r[2] or 0)
+        if wk_key not in week_map:
+            week_map[wk_key] = {"tot": 0, "desv": 0, "pct_sum": 0.0}
+        week_map[wk_key]["tot"] += 1
+        week_map[wk_key]["pct_sum"] += float(r[2] or 0)
         if float(r[2] or 0) < 100:
-            week_map[key]["desv"] += 1
+            week_map[wk_key]["desv"] += 1
 
     weeks_sorted = sorted(week_map.keys())
     weeks_rows_html = ""
@@ -1380,19 +1416,18 @@ def programacion_index():
     ots_unicas = len({e["ot_id"] for e in entradas})
     en_curso = sum(
         1 for e in entradas
-        if _parse_date(e["fecha_inicio"]) and _parse_date(e["fecha_fin"])
-        and _parse_date(e["fecha_inicio"]) <= today <= _parse_date(e["fecha_fin"])
+        if e.get("_fi") and e.get("_ff") and e["_fi"] <= today <= e["_ff"]
     )
 
     # Table rows
     tabla_rows = ""
     for e in entradas:
-        fi = _parse_date(e["fecha_inicio"])
-        ff = _parse_date(e["fecha_fin"])
+        fi = e.get("_fi")
+        ff = e.get("_ff")
         dur = ((ff - fi).days + 1) if fi and ff else "—"
         hs = float(e["hs_programadas"] or 0)
         cant_rec = int(e["cantidad_recursos"] or 0)
-        fecha_nec = _parse_date(e.get("fecha_entrega"))
+        fecha_nec = e.get("_fecha_entrega")
         color = _color_ot(e["ot_id"])
         # Highlight if active today
         row_style = "background:#fff7ed;" if (fi and ff and fi <= today <= ff) else ""
