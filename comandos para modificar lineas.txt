@@ -1,0 +1,13 @@
+Tenés que ejecutar los tres comandos en orden, sin saltear ninguno:
+
+git add .
+
+git commit -m "HASTA PUNTO DE CONTROL"
+
+git push origin main
+
+antes de arrancar a implementar algo que puede romperse hace:
+git add . 
+git commit -m "empezando cambio X"
+Y si llegases a querer volver para atrás, guardás los archivos y pones:
+git restore .

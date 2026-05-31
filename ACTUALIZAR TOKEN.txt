@@ -1,0 +1,36 @@
+Sí, se puede actualizar y te voy a guiar paso a paso, bien simple. Antes te dejo un plan corto y después te doy exactamente qué tocar en Google y Railway.
+
+Sí, se puede actualizar.
+Y perfecto: de ahora en adelante te voy a guiar siempre paso a paso, sin asumir conocimientos técnicos.
+
+Vamos con el arreglo del refresh token:
+
+1-Abrí este link:
+https://developers.google.com/oauthplayground
+
+2-Arriba a la derecha hacé clic en el engranaje (Settings) y activá:
+
+Use your own OAuth credentials
+3-En esos campos pegá:
+OAuth Client ID (el mismo que tenés en Railway)
+OAuth Client Secret (el mismo que tenés en Railway)
+4-En el panel izquierdo, buscá y seleccioná este scope:
+https://www.googleapis.com/auth/drive
+5-Clic en:
+Authorize APIs
+Te va a pedir login de Google: entrá con la cuenta que tiene acceso a la carpeta de Drive.
+6-Luego clic en:
+Exchange authorization code for tokens
+7-Vas a ver dos tokens. Copiá el:
+refresh_token (solo ese)
+8-Andá a Railway > Variables y reemplazá:
+GOOGLE_OAUTH_REFRESH_TOKEN por el nuevo valor
+9-Guardá y reiniciá/redeploy del servicio (muy importante).
+
+10-Probá en tu sistema:
+
+/drive/status
+/drive/test-upload
+Si te aparece Drive OK y el test devuelve ok: true, quedó resuelto.
+
+Si querés, cuando hagas el paso 10 pegame el JSON que te devuelve y te confirmo en 1 minuto si está 100% correcto.

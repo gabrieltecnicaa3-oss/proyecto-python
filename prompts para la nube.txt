@@ -1,0 +1,9 @@
+limpiame todo este repo para que quede solamente el código fundamental y las carpetas necesarias para imprimir y chupar datos. borrame los tests y esas cosas
+
+decime los comandos de git necesarios para poder subir a este repo los cambios: https://github.com/gabrieltecnicaa3-oss/proyecto-python
+
+ahora los pasos son, guiame para migrar de sqlite a mysql, ensename a instarlo y todo
+
+y despues usa la api de google drive para guardar databooks en un repositorio de google drive
+
+decile que todas estas cosas te las explique como persona que no tiene conocimientos en sistemas
