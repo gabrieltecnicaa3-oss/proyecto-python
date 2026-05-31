@@ -4129,6 +4129,9 @@ def control_pintura_nuevo():
 
         ot_id_sel_txt = (request.args.get("ot_id") or "").strip()
         ot_id_sel = int(ot_id_sel_txt) if ot_id_sel_txt.isdigit() else None
+        fecha_sel = (request.args.get("fecha") or "").strip()
+        if not fecha_sel:
+            fecha_sel = date.today().isoformat()
         obra_sel = ""
         esquema_sel = ""
         espesor_sel = ""
@@ -4612,9 +4615,11 @@ def control_pintura_nuevo():
         function cargarPiezas() {{
             const otId = document.getElementById('ot_id').value;
             const etapa = document.getElementById('etapa').value;
+            const fecha = document.getElementById('fecha')?.value || '';
             if (!otId) return;
             let url = '?ot_id=' + encodeURIComponent(otId);
             if (etapa) url += '&etapa=' + encodeURIComponent(etapa);
+            if (fecha) url += '&fecha=' + encodeURIComponent(fecha);
             window.location.href = url;
         }}
 
@@ -4648,7 +4653,7 @@ def control_pintura_nuevo():
                     </div>
                     <div class="form-group">
                         <label for="fecha">Fecha *</label>
-                        <input type="date" id="fecha" name="fecha" value="{date.today().isoformat()}" required>
+                        <input type="date" id="fecha" name="fecha" value="{html_lib.escape(fecha_sel)}" required>
                     </div>
                 </div>
 

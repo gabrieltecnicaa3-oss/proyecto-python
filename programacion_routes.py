@@ -1222,6 +1222,7 @@ def programacion_index():
     except Exception:
         edit_pct = None
     edit_desvio = (request.args.get("edit_desvio") or "").strip()
+    _logo_b64 = _get_logo_b64()
 
     semana_key = semana_sel.strftime("%Y-%m-%d")
 
