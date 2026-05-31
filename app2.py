@@ -35,6 +35,7 @@ from db_utils import (
     _obtener_responsables_control as _db_obtener_responsables_control,
     _ruta_firma_responsable as _db_ruta_firma_responsable,
     _obtener_operarios_disponibles as _db_obtener_operarios_disponibles,
+    _obtener_operarios_con_puesto as _db_obtener_operarios_con_puesto,
 )
 from qr_utils import (
     load_clean_excel,
@@ -346,6 +347,10 @@ def _ruta_firma_responsable(responsables_control, responsable):
 
 def _obtener_operarios_disponibles(db):
     return _db_obtener_operarios_disponibles(db)
+
+
+def _obtener_operarios_con_puesto(db):
+    return _db_obtener_operarios_con_puesto(db)
 
 
 def obtener_firma_ok_path():
@@ -5002,13 +5007,17 @@ def cargar(pos):
     )
     procesos_hechos = obtener_procesos_completados(pos, obra_ot_actual if obra_ot_actual else None, ot_id_existente)
     try:
-        operarios_disponibles = _obtener_operarios_disponibles(db)
+        operarios_con_puesto = _obtener_operarios_con_puesto(db)
     except Exception as exc:
         print(f"[cargar] error obteniendo operarios: {exc}")
-        operarios_disponibles = []
+        operarios_con_puesto = []
     opciones_operarios = "".join(
-        f'<option value="{html_lib.escape(nombre)}">{html_lib.escape(nombre)}</option>'
-        for nombre in operarios_disponibles
+        f'<option value="{html_lib.escape(nombre)}" data-puesto="{html_lib.escape(puesto)}">{html_lib.escape(nombre)}</option>'
+        for nombre, puesto in operarios_con_puesto
+    )
+    operarios_json = json.dumps(
+        [{"nombre": nombre, "puesto": puesto} for nombre, puesto in operarios_con_puesto],
+        ensure_ascii=False,
     )
     opciones_ot = "".join(
         f'<option value="{int(ot_id)}" data-obra="{html_lib.escape(obra)}" {"selected" if ot_id_existente is not None and int(ot_id_existente) == int(ot_id) else ""}>OT {int(ot_id)} - {html_lib.escape(obra or "(sin obra)")}{(" - " + html_lib.escape(titulo)) if str(titulo or "").strip() else ""}</option>'
@@ -5271,7 +5280,31 @@ def cargar(pos):
         const reinspResponsableSel = document.getElementById('reinspeccion_responsable');
         const reinspFirmaInput = document.getElementById('reinspeccion_firma');
         const firmasResponsables = {json.dumps(firmas_responsables, ensure_ascii=False)};
+        const TODOS_OPERARIOS = {operarios_json};
+        const PROCESO_ROL = {{'ARMADO': 'armador', 'SOLDADURA': 'soldador', 'PINTURA': 'pintor', 'DESPACHO': 'pintor'}};
+        const procesoSel = document.getElementById('proceso_select');
+        const operarioSel = document.getElementById('operario_select');
         if (!sel || !responsableSel || !firmaInput) return;
+
+        function filtrarOperariosPorProceso() {{
+            if (!procesoSel || !operarioSel) return;
+            const proc = (procesoSel.value || '').toUpperCase().trim();
+            const rolFiltro = PROCESO_ROL[proc] || '';
+            const valorActual = operarioSel.value;
+            while (operarioSel.options.length > 1) operarioSel.remove(1);
+            TODOS_OPERARIOS.forEach(function(op) {{
+                if (!rolFiltro || op.puesto.includes(rolFiltro)) {{
+                    const opt = document.createElement('option');
+                    opt.value = op.nombre;
+                    opt.textContent = op.nombre;
+                    operarioSel.add(opt);
+                }}
+            }});
+            operarioSel.value = valorActual;
+        }}
+
+        if (procesoSel) procesoSel.addEventListener('change', filtrarOperariosPorProceso);
+        filtrarOperariosPorProceso();
 
         function syncOtMeta() {{
             if (!otSel) return;

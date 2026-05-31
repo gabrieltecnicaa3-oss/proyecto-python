@@ -21,6 +21,7 @@ from db_utils import (
     _obtener_responsables_control as _db_obtener_responsables_control,
     _ruta_firma_responsable as _db_ruta_firma_responsable,
     _obtener_operarios_disponibles as _db_obtener_operarios_disponibles,
+    _obtener_operarios_con_puesto as _db_obtener_operarios_con_puesto,
 )
 from proceso_utils import (
     _extraer_ciclos_reinspeccion,
@@ -65,6 +66,10 @@ def _ruta_firma_responsable(responsables_control, responsable):
 
 def _obtener_operarios_disponibles(db):
     return _db_obtener_operarios_disponibles(db)
+
+
+def _obtener_operarios_con_puesto(db):
+    return _db_obtener_operarios_con_puesto(db)
 
 
 calidad_bp = Blueprint("calidad", __name__)
@@ -1446,7 +1451,7 @@ def _render_form_produccion_manual(titulo, procesos_permitidos):
     obra_qs = request.args.get("obra", "").strip()
     db = get_db()
     responsables_control = _obtener_responsables_control(db)
-    operarios_disponibles = _obtener_operarios_disponibles(db)
+    operarios_con_puesto = _obtener_operarios_con_puesto(db)
     firmas_responsables = {k: v.get("firma", "") for k, v in responsables_control.items()}
     imagenes_responsables = {k: v.get("firma_url", "") for k, v in responsables_control.items()}
     opciones_responsables = "".join(
@@ -1454,8 +1459,12 @@ def _render_form_produccion_manual(titulo, procesos_permitidos):
         for nombre in sorted(responsables_control.keys(), key=lambda x: x.lower())
     )
     opciones_operarios = "".join(
-        f'<option value="{html_lib.escape(nombre)}">{html_lib.escape(nombre)}</option>'
-        for nombre in operarios_disponibles
+        f'<option value="{html_lib.escape(nombre)}" data-puesto="{html_lib.escape(puesto)}">{html_lib.escape(nombre)}</option>'
+        for nombre, puesto in operarios_con_puesto
+    )
+    operarios_json = json.dumps(
+        [{"nombre": nombre, "puesto": puesto} for nombre, puesto in operarios_con_puesto],
+        ensure_ascii=False,
     )
 
     if request.method == "POST":
@@ -1694,7 +1703,31 @@ def _render_form_produccion_manual(titulo, procesos_permitidos):
         const reinspFirmaPreview = document.getElementById('reinspeccion_firma_ok_preview');
         const firmasResponsables = {json.dumps(firmas_responsables, ensure_ascii=False)};
         const imagenesResponsables = {json.dumps(imagenes_responsables, ensure_ascii=False)};
+        const TODOS_OPERARIOS = {operarios_json};
+        const PROCESO_ROL = {{'ARMADO': 'armador', 'SOLDADURA': 'soldador', 'PINTURA': 'pintor', 'DESPACHO': 'pintor'}};
+        const procesoSel = document.querySelector('select[name="proceso"]');
+        const operarioSel = document.querySelector('select[name="operario"]');
         if (!sel || !firmaInput || !responsableSel) return;
+
+        function filtrarOperariosPorProceso() {{
+            if (!procesoSel || !operarioSel) return;
+            const proc = (procesoSel.value || '').toUpperCase().trim();
+            const rolFiltro = PROCESO_ROL[proc] || '';
+            const valorActual = operarioSel.value;
+            while (operarioSel.options.length > 1) operarioSel.remove(1);
+            TODOS_OPERARIOS.forEach(function(op) {{
+                if (!rolFiltro || op.puesto.includes(rolFiltro)) {{
+                    const opt = document.createElement('option');
+                    opt.value = op.nombre;
+                    opt.textContent = op.nombre;
+                    operarioSel.add(opt);
+                }}
+            }});
+            operarioSel.value = valorActual;
+        }}
+
+        if (procesoSel) procesoSel.addEventListener('change', filtrarOperariosPorProceso);
+        filtrarOperariosPorProceso();
 
         function setReinspeccionActiva(activa) {{
             if (reinspBlock) reinspBlock.style.opacity = activa ? '1' : '0.55';

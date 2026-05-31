@@ -747,3 +747,39 @@ def _obtener_operarios_disponibles(db):
         """
     ).fetchall()
     return [str(r[0]).strip() for r in rows if r and str(r[0]).strip()]
+
+
+def _obtener_operarios_con_puesto(db):
+    """Returns list of (nombre, puesto) sorted by nombre, for use in filtered dropdowns."""
+    rows = db.execute(
+        """
+        SELECT DISTINCT TRIM(COALESCE(nombre, '')) AS nombre,
+               LOWER(TRIM(COALESCE(puesto, ''))) AS puesto
+        FROM empleados_parte
+        WHERE (
+            LOWER(TRIM(COALESCE(puesto_tipo, ''))) = 'operario'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%operario%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%soldador%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%armador%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%medio%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%ayudante%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%pintor%'
+        )
+        AND TRIM(COALESCE(nombre, '')) <> ''
+        ORDER BY nombre ASC
+        """
+    ).fetchall()
+
+    result = [(str(r[0]).strip(), str(r[1]).strip()) for r in rows if r and str(r[0]).strip()]
+    if result:
+        return result
+
+    rows = db.execute(
+        """
+        SELECT DISTINCT TRIM(operario) AS operario
+        FROM procesos
+        WHERE TRIM(COALESCE(operario, '')) <> ''
+        ORDER BY operario
+        """
+    ).fetchall()
+    return [(str(r[0]).strip(), '') for r in rows if r and str(r[0]).strip()]
