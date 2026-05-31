@@ -1126,7 +1126,9 @@ def programacion_index():
         ff_vista = fi_vista + timedelta(days=89)
     obra_fil = (request.args.get("obra") or "").strip()
 
-    rows = db.execute("""
+    fi_vista_str = fi_vista.strftime("%Y-%m-%d")
+    ff_vista_str = ff_vista.strftime("%Y-%m-%d")
+    rows_sql = """
         SELECT p.id, p.ot_id, p.fecha_inicio, p.fecha_fin,
                COALESCE(p.hs_programadas, 0), COALESCE(p.cantidad_recursos, 0), COALESCE(p.observaciones, ''),
                COALESCE(p.hito_titulo, ''), COALESCE(p.hito_fecha, ''),
@@ -1135,8 +1137,25 @@ def programacion_index():
                COALESCE(ot.hs_previstas, 0), COALESCE(ot.estado_avance, 0)
         FROM programacion p
         LEFT JOIN ordenes_trabajo ot ON ot.id = p.ot_id
-        ORDER BY COALESCE(p.orden, p.id) ASC, p.id ASC
-    """).fetchall()
+        WHERE COALESCE(p.fecha_inicio, '') <= ?
+          AND COALESCE(p.fecha_fin, '') >= ?
+    """
+    rows_params = [ff_vista_str, fi_vista_str]
+    if obra_fil:
+        rows_sql += " AND LOWER(COALESCE(ot.obra, '')) LIKE ?"
+        rows_params.append(f"%{obra_fil.lower()}%")
+    rows_sql += " ORDER BY COALESCE(p.orden, p.id) ASC, p.id ASC"
+    rows = db.execute(rows_sql, tuple(rows_params)).fetchall()
+
+    obras_rows = db.execute(
+        """
+        SELECT DISTINCT TRIM(COALESCE(ot.obra, ''))
+        FROM programacion p
+        LEFT JOIN ordenes_trabajo ot ON ot.id = p.ot_id
+        WHERE TRIM(COALESCE(ot.obra, '')) <> ''
+        ORDER BY TRIM(COALESCE(ot.obra, '')) ASC
+        """
+    ).fetchall()
 
     avance_live_by_ot = {}
     for r in rows:
@@ -1181,9 +1200,6 @@ def programacion_index():
                 "es_subcontrato": float(r[14] or 0) == 0 or int(r[5] or 0) == 0,
             }
         )
-    if obra_fil:
-        entradas = [e for e in entradas if obra_fil.lower() in (e.get("obra") or "").lower()]
-
     # Avance vivo solo para OTs visibles en el rango actual.
     ot_ids_visibles = {
         int(e.get("ot_id") or 0)
@@ -1240,6 +1256,10 @@ def programacion_index():
             """,
             (semana_key,),
         ).fetchall()
+
+    cumpl_idx = {}
+    for r in cumplimiento_semana_rows:
+        cumpl_idx[int(r[0])] = (float(r[1] or 0), str(r[2] or ""))
 
         pct_acumulado_row = db.execute(
             """
@@ -1305,21 +1325,31 @@ def programacion_index():
             avance_live_by_ot[oid] = hot
 
     ot_ids_con_actividad_semana = set()
-    for e in entradas:
-        fi_e = e.get("_fi")
-        ff_e = e.get("_ff")
-        if not fi_e or not ff_e:
-            continue
-        if fi_e <= semana_fin and ff_e >= semana_sel:
-            try:
-                ot_ids_con_actividad_semana.add(int(e.get("ot_id") or 0))
-            except Exception:
-                continue
+    if cargar_cumplimiento:
+        semana_sel_str = semana_sel.strftime("%Y-%m-%d")
+        semana_fin_str = semana_fin.strftime("%Y-%m-%d")
+        actividad_sql = """
+            SELECT DISTINCT p.ot_id
+            FROM programacion p
+            LEFT JOIN ordenes_trabajo ot ON ot.id = p.ot_id
+            WHERE COALESCE(p.fecha_inicio, '') <= ?
+              AND COALESCE(p.fecha_fin, '') >= ?
+        """
+        actividad_params = [semana_fin_str, semana_sel_str]
+        if obra_fil:
+            actividad_sql += " AND LOWER(COALESCE(ot.obra, '')) LIKE ?"
+            actividad_params.append(f"%{obra_fil.lower()}%")
+        actividad_rows = db.execute(actividad_sql, tuple(actividad_params)).fetchall()
+        ot_ids_con_actividad_semana = {
+            int(r[0] or 0)
+            for r in actividad_rows
+            if int(r[0] or 0) > 0
+        }
 
     # Lista de obras para filtro (union de programadas + activas)
     obras_lista = sorted({
-        str(r[9] or "").strip() for r in rows
-        if str(r[9] or "").strip()
+        str(r[0] or "").strip() for r in obras_rows
+        if str(r[0] or "").strip()
     } | {
         str(r[1] or "").strip() for r in ots_activas_cumpl
         if str(r[1] or "").strip()
