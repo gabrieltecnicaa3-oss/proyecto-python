@@ -663,10 +663,10 @@ def _registrar_despacho_en_procesos(db, ot_id_doc, obra, fecha, responsable, fir
             """,
             (ot_id_doc, pos),
         ).fetchone()
-        cant_v   = prow[0] if prow else ""
-        perfil_v = prow[1] if prow else ""
-        peso_v   = prow[2] if prow else ""
-        desc_v   = prow[3] if prow else ""
+        cant_v   = (prow[0] or None) if prow else None
+        perfil_v = (prow[1] or None) if prow else None
+        peso_v   = (prow[2] or None) if prow else None
+        desc_v   = (prow[3] or None) if prow else None
 
         # Marcar como eliminado el DESPACHO anterior para esta pieza/OT (evita duplicados)
         db.execute(
