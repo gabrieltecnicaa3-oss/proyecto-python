@@ -593,7 +593,9 @@ def _avance_y_desglose_ot(db, ot_id):
     conteo = {"ARMADO": 0, "SOLDADURA": 0, "PINTURA": 0, "P/DESPACHO": 0}
     aprobados_por_pos: dict = {}
     for pos in valid_positions:
-        ap = set(_aprobados_de_filas(filas_por_pos.get(pos, []), orden_flujo=orden_flujo))
+        # Usar flujo por pieza: INSERTO → solo ARMADO→DESPACHO
+        flujo_pos = ["ARMADO", "DESPACHO"] if _es_inserto(desc_por_pos.get(pos, ""), pos=pos) else orden_flujo
+        ap = set(_aprobados_de_filas(filas_por_pos.get(pos, []), orden_flujo=flujo_pos))
         aprobados_por_pos[pos] = ap
         for proc in ("ARMADO", "SOLDADURA", "PINTURA"):
             if proc in ap:
@@ -620,7 +622,7 @@ def _avance_y_desglose_ot(db, ot_id):
                 for pos_real, filas in filas_por_pos.items():
                     base = _pos_base(pos_real)
                     ap = aprobados_por_pos.get(pos_real) or set(_aprobados_de_filas(filas, orden_flujo=orden_flujo))
-                    pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(pos_real_txt, ""), pesos, pos=pos_real_txt)
+                    pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(pos_real, ""), pesos, pos=pos_real)
                     ratio = _avance_ratio_desde_aprobados(ap, pesos_pos)
                     ratio_por_base[base] = max(ratio_por_base.get(base, 0.0), ratio)
 
