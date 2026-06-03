@@ -651,6 +651,13 @@ def api_piezas_listas_despacho():
           AND (
               UPPER(TRIM(COALESCE(p.descripcion, ''))) LIKE '%INSERTO%'
               OR UPPER(TRIM(COALESCE(p.posicion, ''))) LIKE 'INS%'
+              OR EXISTS (
+                  SELECT 1 FROM procesos p4
+                  WHERE p4.ot_id = p.ot_id
+                    AND TRIM(p4.posicion) = TRIM(p.posicion)
+                    AND UPPER(TRIM(COALESCE(p4.descripcion, ''))) LIKE '%INSERTO%'
+                    AND p4.eliminado = 0
+              )
           )
           AND p.id = (
               SELECT MAX(p2.id) FROM procesos p2
