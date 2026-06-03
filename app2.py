@@ -4395,13 +4395,14 @@ def pieza(pos):
                 else:
                     motivo_mostrar = "-"
 
+            operario_card = "N/A" if proc_u in ("DESPACHO", "P/DESPACHO") else (str(r[4] or "") or "-")
             html += f"""
             <div class="card">
                 <div class="card-info">
                     <div class="process-title">{titulo_proceso}</div>
                     {flujo_estado_html}<br>
                     <div class="meta-line"><span class="kv-label">Fecha:</span> {fecha_mostrar}</div>
-                    <div class="meta-line"><span class="kv-label">Operario:</span> {r[4]}</div>
+                    <div class="meta-line"><span class="kv-label">Operario:</span> {operario_card}</div>
                     <div class="kv-line"><span class="kv-label">Estado:</span> <span class="{estado_class}">{estado_mostrar}</span></div>
                     <div class="kv-line"><span class="kv-label">Motivo:</span> {motivo_mostrar}</div>
                     <div class="kv-line"><span class="kv-label">Responsable:</span> {responsable_txt if responsable_txt else '-'}</div>
@@ -4429,13 +4430,18 @@ def pieza(pos):
             """
 
     btn_agregar = "btn-add bloqueado" if es_completada else "btn-add"
-    btn_texto = "🔒 PIEZA COMPLETADA" if es_completada else "➕ CARGAR CONTROL"
     obra_url = obra if obra != '---' else (qr_obra or "")
     ot_qs = f"&ot_id={ot_scope_btn}" if ot_scope_btn is not None else ""
     procesos_completados_btn = obtener_procesos_completados(pos, obra_url if obra_url else None, ot_scope_btn)
     soldadura_aprobada = "SOLDADURA" in procesos_completados_btn
     pintura_aprobada = "PINTURA" in procesos_completados_btn
     ot_sin_pintura = _ot_no_requiere_pintura(db, obra=obra_url if obra_url else None, ot_id=ot_scope_btn)
+    if es_completada:
+        btn_texto = "🔒 PIEZA COMPLETADA"
+    elif pintura_aprobada or ot_sin_pintura:
+        btn_texto = "📦 CONTROL DESPACHO"
+    else:
+        btn_texto = "➕ CARGAR CONTROL"
     if ot_sin_pintura:
         pintura_aprobada = True
     # Si pintura ya está aprobada, el siguiente paso es despacho; si no, y soldadura está OK, va a pintura.
@@ -4448,21 +4454,23 @@ def pieza(pos):
     if es_completada:
         btn_href = "#"
     elif pintura_aprobada:
-        btn_href = f"/cargar/{quote(pos)}?obra={quote(obra_url)}{ot_qs}"
+        _ot_qs_d = f"&ot_id={ot_scope_btn}" if ot_scope_btn is not None else ""
+        btn_href = f"/modulo/calidad/despacho?obra={quote(obra_url)}{_ot_qs_d}" if obra_url else "/modulo/calidad/despacho"
     elif soldadura_aprobada and not ot_sin_pintura:
         btn_href = f"/modulo/calidad/escaneo/control-pintura?obra={quote(obra_url)}" + (f"&ot_id={ot_scope_btn}" if ot_scope_btn is not None else "")
     else:
         btn_href = f"/cargar/{quote(pos)}?obra={quote(obra_url)}{ot_qs}"
+    _home_back_qs = f"?ot_id={qr_ot_id}" if qr_ot_id is not None else ""
     historial_href = f"/pieza/{quote(pos)}/historial?obra={quote(obra_url)}" if obra_url else f"/pieza/{quote(pos)}/historial"
     export_href = f"/pieza/{quote(pos)}/historial/export.csv?obra={quote(obra_url)}" if obra_url else f"/pieza/{quote(pos)}/historial/export.csv"
 
     acciones_footer = [
+        f'<a class="btn" href="/home{_home_back_qs}" style="background: #16a34a;">⬅️ Volver</a>',
         f'<a class="btn" href="{historial_href}" style="background: #0ea5e9;">🕒 Historial ISO</a>',
-        f'<a class="btn" href="/home" style="background: #16a34a;">📊 Ver Reporte de Piezas</a>',
     ]
     if not es_obra:
-        acciones_footer.insert(0, f'<a class="btn {btn_agregar}" href="{btn_href}">{btn_texto}</a>')
-        acciones_footer.insert(2, f'<a class="btn" href="{export_href}" style="background: #2563eb;">⬇ Exportar CSV</a>')
+        acciones_footer.insert(1, f'<a class="btn {btn_agregar}" href="{btn_href}">{btn_texto}</a>')
+        acciones_footer.append(f'<a class="btn" href="{export_href}" style="background: #2563eb;">⬇ Exportar CSV</a>')
 
     html += f"""
     <div class="footer-actions">

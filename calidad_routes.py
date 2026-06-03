@@ -27,6 +27,7 @@ from proceso_utils import (
     _extraer_ciclos_reinspeccion,
     _estado_pieza_persistente,
     _proceso_aprobado,
+    _ot_no_requiere_pintura,
     _registrar_trazabilidad,
     _agregar_ciclo_reinspeccion,
     pieza_completada,
@@ -500,6 +501,9 @@ def calidad_recepcion():
     html += """
         </select>
 
+        <label>Fecha de Recepción:</label>
+        <input type="date" name="fecha" required>
+
         <label>Proveedor:</label>
         <input type="text" name="proveedor" placeholder="Nombre del proveedor" required>
 
@@ -511,10 +515,7 @@ def calidad_recepcion():
             <option value="">-- Seleccionar responsable --</option>
             {opciones_responsables}
         </select>
-
-        <label>Firma digital:</label>
-        <input type="text" id="firma_digital_input" name="firma_digital" placeholder="Se completa automaticamente al seleccionar responsable" readonly required>
-        <img id="firma_preview" src="" alt="Firma Responsable" style="display:none; margin-top:8px; max-width:280px; border:1px solid #ddd; border-radius:6px; background:white; padding:6px;" onerror="this.style.display='none';">
+        <input type="hidden" id="firma_digital_input" name="firma_digital">
 
         <div class="table-wrap">
         <table class="items-table">
@@ -526,9 +527,12 @@ def calidad_recepcion():
             </tr>
     """
 
+    _REC_NO_APLICA = {3, 8, 9, 10}
     for item in CONTROL_RECEPCION_ITEMS:
         index = item["n"]
         item_label = f"<b>{html_lib.escape(item['tipo'])}</b><br>{html_lib.escape(item['detalle'])}"
+        _sel_conf = " selected" if index not in _REC_NO_APLICA else ""
+        _sel_na   = " selected" if index in _REC_NO_APLICA else ""
         html += f"""
             <tr>
                 <td><b>{index}</b></td>
@@ -536,9 +540,9 @@ def calidad_recepcion():
                 <td>
                     <select name="estado_{index}" required>
                         <option value="">Seleccionar...</option>
-                        <option value="CONFORME">Conforme</option>
+                        <option value="CONFORME"{_sel_conf}>Conforme</option>
                         <option value="NO CONFORME">No conforme</option>
-                        <option value="NO APLICA">No aplica</option>
+                        <option value="NO APLICA"{_sel_na}>No aplica</option>
                     </select>
                 </td>
                 <td>
@@ -550,35 +554,23 @@ def calidad_recepcion():
     html += """
         </table>
         </div>
-        
-        <label>Fecha de Recepción:</label>
-        <input type="date" name="fecha" required>
 
-        <button type="submit">📄 Generar PDF Recepción</button>
+        <div style="display:flex;gap:10px;justify-content:space-between;align-items:center;flex-wrap:wrap;margin-top:20px;">
+            <button type="submit" style="flex:1;min-width:200px;margin-top:0;">📄 Cargar Control y Generar PDF</button>
+            <a href="/modulo/calidad" class="btn" style="white-space:nowrap;padding:12px 20px;font-size:14px;">⬅️ Volver</a>
+        </div>
     </form>
     <script>
     (function() {
         const responsableSel = document.getElementById('responsable_select');
         const firmaInput = document.getElementById('firma_digital_input');
-        const firmaPreview = document.getElementById('firma_preview');
         const firmasResponsables = {json.dumps(firmas_responsables, ensure_ascii=False)};
-        const imagenesResponsables = {json.dumps(imagenes_responsables, ensure_ascii=False)};
         if (!responsableSel || !firmaInput) return;
 
         function syncResponsable() {
             const responsable = responsableSel.value || '';
             const firma = firmasResponsables[responsable] || '';
-            const firmaUrl = imagenesResponsables[responsable] || '';
             firmaInput.value = firma;
-            firmaInput.readOnly = true;
-            if (firmaPreview) {
-                if (firmaUrl) {
-                    firmaPreview.src = firmaUrl;
-                    firmaPreview.style.display = 'block';
-                } else {
-                    firmaPreview.style.display = 'none';
-                }
-            }
         }
 
         responsableSel.addEventListener('change', syncResponsable);
@@ -595,46 +587,150 @@ def calidad_recepcion():
     """
     html = html.replace("{opciones_responsables}", opciones_responsables)
     html = html.replace("{json.dumps(firmas_responsables, ensure_ascii=False)}", json.dumps(firmas_responsables, ensure_ascii=False))
-    html = html.replace("{json.dumps(imagenes_responsables, ensure_ascii=False)}", json.dumps(imagenes_responsables, ensure_ascii=False))
     return html
 
 # ======================
 # SUB-MÁ“DULO CONTROL DE DESPACHO
 # ======================
+# API: Piezas listas para despacho
+# ======================
+@calidad_bp.route("/api/piezas-listas-despacho")
+def api_piezas_listas_despacho():
+    ot_id_txt = (request.args.get("ot_id") or "").strip()
+    if not ot_id_txt.isdigit():
+        return jsonify([])
+    ot_id = int(ot_id_txt)
+    db = get_db()
+    no_pintura = _ot_no_requiere_pintura(db, ot_id=ot_id)
+    proceso_obj = "SOLDADURA" if no_pintura else "PINTURA"
+    rows = db.execute(
+        """
+        SELECT p.posicion, p.estado, p.re_inspeccion,
+               COALESCE(p.descripcion, '') AS descripcion,
+               COALESCE(p.perfil, '') AS perfil,
+               COALESCE(p.cantidad, '') AS cantidad,
+               COALESCE(p.peso, '') AS peso
+        FROM procesos p
+        WHERE p.ot_id = ?
+          AND p.eliminado = 0
+          AND UPPER(TRIM(p.proceso)) = ?
+          AND p.id = (
+              SELECT MAX(p2.id) FROM procesos p2
+              WHERE p2.ot_id = p.ot_id
+                AND TRIM(p2.posicion) = TRIM(p.posicion)
+                AND UPPER(TRIM(p2.proceso)) = UPPER(TRIM(p.proceso))
+                AND p2.eliminado = 0
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM procesos p3
+              WHERE p3.ot_id = p.ot_id
+                AND TRIM(p3.posicion) = TRIM(p.posicion)
+                AND UPPER(TRIM(p3.proceso)) = 'DESPACHO'
+                AND p3.eliminado = 0
+          )
+        ORDER BY p.posicion
+        """,
+        (ot_id, proceso_obj),
+    ).fetchall()
+    resultado = []
+    for pos, estado, re_insp, desc, perfil, cant, peso in rows:
+        if _proceso_aprobado(estado, re_insp):
+            resultado.append({
+                "posicion": pos,
+                "descripcion": desc,
+                "perfil": perfil,
+                "cantidad": str(cant) if cant else "",
+                "peso": str(peso) if peso else "",
+            })
+    return jsonify(resultado)
+
+
+def _registrar_despacho_en_procesos(db, ot_id_doc, obra, fecha, responsable, firma_digital, piezas_sel):
+    """Inserta o actualiza registro DESPACHO/APROBADO en tabla procesos para cada pieza."""
+    for pos in piezas_sel:
+        pos = str(pos or "").strip()
+        if not pos:
+            continue
+        # Obtener metadatos de la pieza desde el ultimo registro
+        prow = db.execute(
+            """
+            SELECT COALESCE(cantidad,''), COALESCE(perfil,''),
+                   COALESCE(peso,''), COALESCE(descripcion,'')
+            FROM procesos
+            WHERE ot_id = ? AND TRIM(posicion) = TRIM(?)
+              AND eliminado = 0
+            ORDER BY id DESC LIMIT 1
+            """,
+            (ot_id_doc, pos),
+        ).fetchone()
+        cant_v   = prow[0] if prow else ""
+        perfil_v = prow[1] if prow else ""
+        peso_v   = prow[2] if prow else ""
+        desc_v   = prow[3] if prow else ""
+
+        # Marcar como eliminado el DESPACHO anterior para esta pieza/OT (evita duplicados)
+        db.execute(
+            """
+            UPDATE procesos SET eliminado = 1
+            WHERE ot_id = ? AND TRIM(posicion) = TRIM(?)
+              AND UPPER(TRIM(proceso)) = 'DESPACHO'
+              AND eliminado = 0
+            """,
+            (ot_id_doc, pos),
+        )
+        db.execute(
+            """
+            INSERT INTO procesos
+              (posicion, obra, cantidad, perfil, peso, descripcion,
+               proceso, fecha, operario, estado, firma_digital,
+               estado_pieza, escaneado_qr, ot_id, eliminado)
+            VALUES (?, ?, ?, ?, ?, ?, 'DESPACHO', ?, ?, 'APROBADO', ?,
+                    'APROBADA', 0, ?, 0)
+            """,
+            (pos, obra, cant_v, perfil_v, peso_v, desc_v,
+             fecha, "N/A", firma_digital, ot_id_doc),
+        )
+
+
+# ======================
+# SUB-MODULO CONTROL DE DESPACHO
+# ======================
 @calidad_bp.route("/modulo/calidad/despacho", methods=["GET", "POST"])
 def calidad_despacho():
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Image, Paragraph, PageBreak, Spacer
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Image, Paragraph, Spacer
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.units import mm, cm
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from io import BytesIO
     import os
-    
+    import datetime
+
     db = get_db()
     responsables_control = _obtener_responsables_control(db)
-    firmas_responsables = {k: v.get("firma", "") for k, v in responsables_control.items()}
+    firmas_responsables  = {k: v.get("firma", "") for k, v in responsables_control.items()}
     imagenes_responsables = {k: v.get("firma_url", "") for k, v in responsables_control.items()}
     opciones_responsables = "".join(
         f'<option value="{html_lib.escape(nombre)}">{html_lib.escape(nombre)}</option>'
         for nombre in sorted(responsables_control.keys(), key=lambda x: x.lower())
     )
-    
+
     if request.method == "POST":
-        obra = (request.form.get("obra") or "").strip()
-        responsable = (request.form.get("responsable") or "").strip()
-        firma_form = (request.form.get("firma_digital") or "").strip()
-        remito_asociado = (request.form.get("remito_asociado") or "").strip()
-        fecha = request.form.get("fecha")
-        ot_id_txt = (request.form.get("ot_id") or "").strip()
+        accion       = (request.form.get("accion") or "guardar").strip().lower()
+        obra         = (request.form.get("obra") or "").strip()
+        responsable  = (request.form.get("responsable") or "").strip()
+        firma_form   = (request.form.get("firma_digital") or "").strip()
+        fecha        = request.form.get("fecha")
+        ot_id_txt    = (request.form.get("ot_id") or "").strip()
+        piezas_sel   = request.form.getlist("pieza_sel")
         detalle_items = []
         conteo = {"CONFORME": 0, "NO CONFORME": 0, "NO APLICA": 0}
-        
-        if not all([obra, responsable, remito_asociado, fecha, ot_id_txt]):
+
+        if not all([obra, responsable, fecha, ot_id_txt]):
             return "Faltan datos requeridos", 400
 
         if not ot_id_txt.isdigit():
-            return "Seleccioná una OT válida", 400
+            return "Selecciona una OT valida", 400
 
         ot_id_doc = int(ot_id_txt)
         ot_valida = db.execute(
@@ -652,24 +748,24 @@ def calidad_despacho():
             return "La OT seleccionada no corresponde a la obra", 400
 
         if responsable not in firmas_responsables:
-            return "Seleccioná un responsable válido", 400
+            return "Selecciona un responsable valido", 400
 
         firma_digital = firmas_responsables.get(responsable, "")
         if not firma_digital or firma_form != firma_digital:
-            return "La firma es obligatoria y se completa automáticamente al seleccionar responsable", 400
+            return "La firma es obligatoria y se completa automaticamente al seleccionar responsable", 400
 
         firma_path_responsable = _ruta_firma_responsable(responsables_control, responsable)
 
         for index, item_label in enumerate(CONTROL_DESPACHO_ITEMS, start=1):
-            estado = (request.form.get(f"estado_{index}") or "").strip().upper()
+            estado_it   = (request.form.get(f"estado_{index}") or "").strip().upper()
             observacion = (request.form.get(f"observacion_{index}") or "").strip()
-            if estado not in ("CONFORME", "NO CONFORME", "NO APLICA"):
-                return f"Falta completar el estado del {item_label}", 400
-            conteo[estado] += 1
+            if estado_it not in ("CONFORME", "NO CONFORME", "NO APLICA"):
+                return f"Falta completar el estado del item {index}", 400
+            conteo[estado_it] += 1
             detalle_items.append({
                 "item": index,
                 "label": item_label,
-                "estado": estado,
+                "estado": estado_it,
                 "observacion": observacion,
             })
 
@@ -680,296 +776,350 @@ def calidad_despacho():
         else:
             resultado_general = "NO APLICA"
 
-        # Crear PDF directamente
+        # -- Guardar en DB siempre --
+        detalle_control_json = json.dumps(
+            {"resultado_general": resultado_general, "piezas_seleccionadas": piezas_sel, "items": detalle_items},
+            ensure_ascii=False,
+        )
+        control_id_guardado = None
+        try:
+            _ins_cur = db.execute(
+                """
+                INSERT INTO control_despacho (ot_id, obra, fecha, responsable, conforme, observaciones, detalle_control)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (ot_id_doc, obra, fecha, responsable, resultado_general, "", detalle_control_json),
+            )
+            control_id_guardado = getattr(_ins_cur, "lastrowid", None)
+            # Registrar DESPACHO en procesos para que aparezca en P/DESPACHO
+            if piezas_sel:
+                _registrar_despacho_en_procesos(db, ot_id_doc, obra, fecha, responsable, firma_digital, piezas_sel)
+            db.commit()
+        except Exception as exc:
+            print(f"[control_despacho] error guardando control: {exc}")
+
+        # -- Si solo guardar, volver con mensaje + boton PDF --
+        if accion == "guardar":
+            n = len(piezas_sel)
+            obra_qs = quote(str(obra))
+            btn_pdf_html = (
+                f'<a href="/modulo/calidad/despacho/pdf/{control_id_guardado}" '
+                'class="btn btn-azul" target="_blank">&#128196; Generar PDF</a>'
+                if control_id_guardado else ""
+            )
+            return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body{{font-family:Arial;background:#fff7ed;padding:20px;margin:0;}}
+.card{{max-width:600px;margin:40px auto;background:white;border-radius:12px;padding:24px;border:1px solid #fed7aa;}}
+.ok{{background:#dcfce7;color:#166534;border:1px solid #86efac;border-radius:8px;padding:14px;margin-bottom:16px;font-weight:bold;}}
+.btn{{display:inline-block;background:#f97316;color:white;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:700;margin-right:8px;margin-bottom:8px;}}
+.btn-verde{{background:#16a34a;}}.btn-azul{{background:#2563eb;}}.btn-sec{{background:#6b7280;}}
+</style></head><body>
+<div class="card">
+  <div class="ok">&#10003; Control guardado correctamente. {n} pieza(s) registradas como P/Despacho.</div>
+  {btn_pdf_html}
+  <a href="/modulo/calidad/despacho?obra={obra_qs}&ot_id={ot_id_doc}" class="btn btn-verde">&#8592; Volver a formulario</a>
+  <a href="/modulo/calidad/despacho" class="btn">Nuevo control</a>
+  <a href="/modulo/calidad/despacho/historial" class="btn btn-azul">&#128203; Historial de controles</a>
+  <a href="/home" class="btn btn-sec">Ver estado de piezas</a>
+</div>
+</body></html>"""
+
+        # -- Si accion=pdf, generar PDF --
         pdf_buffer = BytesIO()
         doc = SimpleDocTemplate(
             pdf_buffer,
             pagesize=letter,
-            topMargin=0.3*cm,
-            bottomMargin=0.5*cm,
-            leftMargin=0.5*cm,
-            rightMargin=0.5*cm
+            topMargin=0.3 * cm,
+            bottomMargin=0.5 * cm,
+            leftMargin=0.5 * cm,
+            rightMargin=0.5 * cm,
         )
-        
         elements = []
         styles = getSampleStyleSheet()
-        
-        # Estilos personalizados
+
         title_style = ParagraphStyle(
-            'TitleStyle',
-            parent=styles['Heading1'],
+            "TitleStyle",
+            parent=styles["Heading1"],
             fontSize=18,
-            textColor=colors.HexColor('#000000'),
+            textColor=colors.HexColor("#000000"),
             alignment=1,
             spaceAfter=0,
-            fontName='Helvetica-Bold'
+            fontName="Helvetica-Bold",
         )
-        
         cell_style = ParagraphStyle(
-            'CellStyle',
-            parent=styles['Normal'],
+            "CellStyle",
+            parent=styles["Normal"],
             fontSize=8.5,
-            textColor=colors.HexColor('#333333'),
+            textColor=colors.HexColor("#333333"),
             alignment=0,
-            leading=12
+            leading=12,
         )
-        
         header_cell_style = ParagraphStyle(
-            'HeaderCellStyle',
-            parent=styles['Normal'],
+            "HeaderCellStyle",
+            parent=styles["Normal"],
             fontSize=7,
-            textColor=colors.HexColor('#1f2937'),
+            textColor=colors.HexColor("#1f2937"),
             alignment=1,
             leading=9,
-            fontName='Helvetica-Bold'
+            fontName="Helvetica-Bold",
         )
-
         head_style = ParagraphStyle(
-            'HeadDesp',
-            parent=styles['Normal'],
+            "HeadDesp",
+            parent=styles["Normal"],
             fontSize=7.2,
             leading=8.2,
             alignment=1,
-            fontName='Helvetica-Bold',
+            fontName="Helvetica-Bold",
             textColor=colors.white,
         )
-        
-        # ====== ENCABEZADO DESDE IMAGEN (sin modificar diseño) ======
+        info_style = ParagraphStyle(
+            "InfoDespacho",
+            parent=styles["Normal"],
+            fontSize=9,
+            textColor=colors.HexColor("#1f2937"),
+            leading=11,
+        )
+
+        # Encabezado
         encabezado_path = None
-        posibles_encabezados = [
-            "encabezado_despacho.png",
-            "ENCABEZADO_DESPACHO.png",
-            "encabezado_despacho.jpg",
-            "ENCABEZADO_DESPACHO.jpg",
-            "encabezado_despacho.jpeg",
-            "ENCABEZADO_DESPACHO.jpeg",
-        ]
-        for nombre_archivo in posibles_encabezados:
+        for nombre_archivo in [
+            "encabezado_despacho.png", "ENCABEZADO_DESPACHO.png",
+            "encabezado_despacho.jpg", "ENCABEZADO_DESPACHO.jpg",
+            "encabezado_despacho.jpeg", "ENCABEZADO_DESPACHO.jpeg",
+        ]:
             candidato = os.path.join(_APP_DIR, nombre_archivo)
             if os.path.exists(candidato):
                 encabezado_path = candidato
                 break
 
         if encabezado_path:
-            encabezado_img = Image(encabezado_path)
-            max_width = 19.8 * cm
-            max_height = 3.2 * cm
-            if encabezado_img.drawWidth > max_width:
-                escala = max_width / float(encabezado_img.drawWidth)
-                encabezado_img.drawWidth = encabezado_img.drawWidth * escala
-                encabezado_img.drawHeight = encabezado_img.drawHeight * escala
-            if encabezado_img.drawHeight > max_height:
-                escala_h = max_height / float(encabezado_img.drawHeight)
-                encabezado_img.drawWidth = encabezado_img.drawWidth * escala_h
-                encabezado_img.drawHeight = encabezado_img.drawHeight * escala_h
-            elements.append(encabezado_img)
+            enc_img = Image(encabezado_path)
+            max_w, max_h = 19.8 * cm, 3.2 * cm
+            if enc_img.drawWidth > max_w:
+                s = max_w / float(enc_img.drawWidth)
+                enc_img.drawWidth *= s; enc_img.drawHeight *= s
+            if enc_img.drawHeight > max_h:
+                s = max_h / float(enc_img.drawHeight)
+                enc_img.drawWidth *= s; enc_img.drawHeight *= s
+            elements.append(enc_img)
         else:
-            # Fallback: mantener encabezado armado en tabla si la imagen aÁºn no existe en disco.
             logo_path = os.path.join(_APP_DIR, "LOGO.png")
-            logo_width = 2.5*cm
-            logo_height = 2*cm
-
-            logo_cell = ""
-            if os.path.exists(logo_path):
-                try:
-                    logo_cell = Image(logo_path, width=logo_width, height=logo_height)
-                except Exception:
-                    logo_cell = Paragraph("A3", header_cell_style)
-            else:
-                logo_cell = Paragraph("A3", header_cell_style)
-
-            title_cell = Paragraph("CONTROL FINAL DE DESPACHO", title_style)
-            codigo_cell = Paragraph("<b>Código<br/>7-9.5</b>", header_cell_style)
-
-            header_table_data = [[logo_cell, title_cell, codigo_cell]]
-            header_table = Table(header_table_data, colWidths=[2.8*cm, 11*cm, 2.5*cm])
+            logo_cell = (
+                Image(logo_path, width=2.5 * cm, height=2 * cm)
+                if os.path.exists(logo_path)
+                else Paragraph("A3", header_cell_style)
+            )
+            header_table = Table(
+                [[logo_cell, Paragraph("CONTROL FINAL DE DESPACHO", title_style),
+                  Paragraph("<b>Codigo<br/>7-9.5</b>", header_cell_style)]],
+                colWidths=[2.8 * cm, 11 * cm, 2.5 * cm],
+            )
             header_table.setStyle(TableStyle([
-                ('ALIGN', (0, 0), (0, 0), 'CENTER'),
-                ('ALIGN', (1, 0), (1, 0), 'CENTER'),
-                ('ALIGN', (2, 0), (2, 0), 'CENTER'),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('LEFTPADDING', (0, 0), (-1, -1), 3),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 3),
-                ('TOPPADDING', (0, 0), (-1, -1), 2),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
             ]))
             elements.append(header_table)
-
-            # Segunda fila: Revisó, Aprobó, Fecha, Revisión, Página
-            info_data = [[
-                Paragraph("<b>Revisó:<br/>MF</b>", header_cell_style),
-                Paragraph("<b>Aprobó:<br/>GI</b>", header_cell_style),
-                Paragraph("<b>Fecha:<br/>10/12/2025</b>", header_cell_style),
-                Paragraph("<b>Revisión:<br/>01</b>", header_cell_style),
-                Paragraph("<b>Página 1 de 1</b>", header_cell_style),
-            ]]
-            info_table = Table(info_data, colWidths=[2.3*cm, 2.3*cm, 2.6*cm, 2.3*cm, 2.9*cm])
-            info_table.setStyle(TableStyle([
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('LEFTPADDING', (0, 0), (-1, -1), 2),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 2),
-                ('TOPPADDING', (0, 0), (-1, -1), 2),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ('FONTSIZE', (0, 0), (-1, -1), 7),
-                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+            info_row = Table(
+                [[
+                    Paragraph("<b>Reviso:<br/>MF</b>", header_cell_style),
+                    Paragraph("<b>Aprobo:<br/>GI</b>", header_cell_style),
+                    Paragraph("<b>Fecha:<br/>10/12/2025</b>", header_cell_style),
+                    Paragraph("<b>Revision:<br/>01</b>", header_cell_style),
+                    Paragraph("<b>Pagina 1 de 1</b>", header_cell_style),
+                ]],
+                colWidths=[2.3 * cm, 2.3 * cm, 2.6 * cm, 2.3 * cm, 2.9 * cm],
+            )
+            info_row.setStyle(TableStyle([
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
             ]))
-            elements.append(info_table)
-        elements.append(Spacer(1, 0.28*cm))
+            elements.append(info_row)
 
-        # Datos básicos mejor distribuidos debajo del encabezado
-        info_style = ParagraphStyle(
-            'InfoDespacho',
-            parent=styles['Normal'],
-            fontSize=9,
-            textColor=colors.HexColor('#1f2937'),
-            leading=11
+        elements.append(Spacer(1, 0.28 * cm))
+
+        info_tbl = Table(
+            [
+                [Paragraph(f"<b>OBRA:</b> {obra}", info_style),
+                 Paragraph(f"<b>Fecha de Despacho:</b> {fecha}", info_style)],
+                [Paragraph(f"<b>OT:</b> {ot_id_doc}", info_style),
+                 Paragraph(f"<b>Responsable:</b> {responsable}", info_style)],
+            ],
+            colWidths=[8.2 * cm, 8.3 * cm],
         )
-        info_data = [
-            [Paragraph(f"<b>OBRA:</b> {obra}", info_style), Paragraph(f"<b>Responsable:</b> {responsable}", info_style)],
-            [Paragraph(f"<b>Remito asociado:</b> {remito_asociado}", info_style), Paragraph(f"<b>Fecha:</b> {fecha}", info_style)],
-        ]
-        info_table = Table(info_data, colWidths=[8.2*cm, 8.3*cm])
-        info_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fffaf5')),
-            ('BOX', (0, 0), (-1, -1), 0.6, colors.HexColor('#fed7aa')),
-            ('INNERGRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#fed7aa')),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 5),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        info_tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fffaf5")),
+            ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#fed7aa")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#fed7aa")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ]))
-        elements.append(info_table)
-        elements.append(Spacer(1, 0.35*cm))
-        
-        # Tabla de control con 10 items
-        table_data = [
-            [Paragraph("<b>N°</b>", head_style), 
-             Paragraph("<b>CONTROL DE DESPACHO</b>", head_style), 
-             Paragraph("<b>VERIFICA</b>", head_style), 
-             Paragraph("<b>OBSERVACIÁ“N</b>", head_style)]
-        ]
-        
+        elements.append(info_tbl)
+        elements.append(Spacer(1, 0.25 * cm))
+
+        if piezas_sel:
+            piezas_head_style = ParagraphStyle(
+                "PiezasHead", parent=styles["Normal"],
+                fontSize=7.2, leading=8.2, alignment=1,
+                fontName="Helvetica-Bold", textColor=colors.white,
+            )
+            cell_pieza = ParagraphStyle(
+                "CellPieza", parent=styles["Normal"], fontSize=7.5, leading=10
+            )
+            # Recolectar datos (solo posicion + descripcion)
+            _pieza_rows = []
+            for pos_pieza in piezas_sel:
+                prow = db.execute(
+                    """
+                    SELECT COALESCE(descripcion,'')
+                    FROM procesos
+                    WHERE ot_id = ? AND TRIM(posicion) = TRIM(?)
+                      AND eliminado = 0
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (ot_id_doc, pos_pieza),
+                ).fetchone()
+                _pieza_rows.append((str(pos_pieza), prow[0] if prow else ""))
+            # Distribuir en columnas lado a lado
+            _MAX_ROWS = 25
+            _n_cols = max(1, min(3, (len(_pieza_rows) + _MAX_ROWS - 1) // _MAX_ROWS))
+            _chunk = (len(_pieza_rows) + _n_cols - 1) // _n_cols
+            _total_w = 16.8 * cm
+            _pos_w = 2.5 * cm
+            _desc_w = (_total_w / _n_cols) - _pos_w
+            _header = []
+            for _ in range(_n_cols):
+                _header += [Paragraph("<b>POSICION</b>", piezas_head_style),
+                             Paragraph("<b>DESCRIPCION</b>", piezas_head_style)]
+            _max_r = max((len(_pieza_rows[i*_chunk:(i+1)*_chunk]) for i in range(_n_cols)), default=0)
+            _tbl_data = [_header]
+            for _r in range(_max_r):
+                _row = []
+                for _c in range(_n_cols):
+                    _idx = _c * _chunk + _r
+                    if _idx < len(_pieza_rows):
+                        _pos, _desc = _pieza_rows[_idx]
+                        _row += [Paragraph(_pos, cell_pieza), Paragraph(_desc, cell_pieza)]
+                    else:
+                        _row += [Paragraph("", cell_pieza), Paragraph("", cell_pieza)]
+                _tbl_data.append(_row)
+            _col_widths = [w for _ in range(_n_cols) for w in [_pos_w, _desc_w]]
+            piezas_table = Table(_tbl_data, colWidths=_col_widths)
+            # Estilo: header naranja, separador vertical entre grupos de columnas
+            _ts_cmds = [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f97316")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#fed7aa")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fff7ed")]),
+            ]
+            # Linea divisoria mas gruesa entre grupos de columnas
+            for _c in range(1, _n_cols):
+                _ci = _c * 2
+                _ts_cmds.append(("LINEBEFORE", (_ci, 0), (_ci, -1), 1.2, colors.HexColor("#f97316")))
+            piezas_table.setStyle(TableStyle(_ts_cmds))
+            elements.append(piezas_table)
+            elements.append(Spacer(1, 0.3 * cm))
+
+        table_data = [[
+            Paragraph("<b>N</b>", head_style),
+            Paragraph("<b>CONTROL DE DESPACHO</b>", head_style),
+            Paragraph("<b>VERIFICA</b>", head_style),
+            Paragraph("<b>OBSERVACION</b>", head_style),
+        ]]
         for item in detalle_items:
-            item_num = item.get("item", "")
-            label = item.get("label", "")
-            estado = item.get("estado", "")
-            
-            observacion = item.get("observacion", "")
-            
             table_data.append([
-                Paragraph(f"<b>{item_num}</b>", cell_style),
-                Paragraph(label, cell_style),
-                Paragraph(f"<b>{estado}</b>", ParagraphStyle('EstadoDespacho', parent=cell_style, alignment=1, fontName='Helvetica-Bold')),
-                Paragraph(observacion or "", cell_style)
+                Paragraph(f"<b>{item['item']}</b>", cell_style),
+                Paragraph(item["label"], cell_style),
+                Paragraph(
+                    f"<b>{item['estado']}</b>",
+                    ParagraphStyle("EstadoDespacho", parent=cell_style, alignment=1, fontName="Helvetica-Bold"),
+                ),
+                Paragraph(item.get("observacion") or "", cell_style),
             ])
-        
-        # Crear tabla
-        control_table = Table(table_data, colWidths=[0.7*cm, 8.8*cm, 2.9*cm, 4*cm])
+        control_table = Table(table_data, colWidths=[0.7 * cm, 8.8 * cm, 2.9 * cm, 4 * cm])
         control_table.setStyle(TableStyle([
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 8),
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f97316')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('LEFTPADDING', (0, 0), (-1, -1), 4),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 0), (-1, -1), 5),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-            ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#cbd5e1')),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#fff7ed')]),
-            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 8),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f97316")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fff7ed")]),
+            ("FONTSIZE", (0, 1), (-1, -1), 8),
         ]))
         elements.append(control_table)
-        elements.append(Spacer(1, 0.3*cm))
-        
-        # Firma fija al pie para liberar espacio Áºtil en la hoja
+        elements.append(Spacer(1, 0.3 * cm))
+
         def draw_footer_signature(canvas, doc_obj):
-            x_left = doc_obj.leftMargin
-            x_right = doc_obj.pagesize[0] - doc_obj.rightMargin
+            x_left   = doc_obj.leftMargin
+            x_right  = doc_obj.pagesize[0] - doc_obj.rightMargin
             x_center = (x_left + x_right) / 2
-
-            y_line = 2.2 * cm
-            y_text = 1.65 * cm
-            y_img = 2.55 * cm
-
+            y_line, y_text, y_img = 2.2 * cm, 1.65 * cm, 2.55 * cm
             canvas.saveState()
-            canvas.setStrokeColor(colors.HexColor('#333333'))
+            canvas.setStrokeColor(colors.HexColor("#333333"))
             canvas.setLineWidth(1)
             canvas.line(x_center - 42 * mm, y_line, x_center + 42 * mm, y_line)
-
             if firma_path_responsable and os.path.isfile(firma_path_responsable):
                 try:
                     canvas.drawImage(
                         firma_path_responsable,
-                        x_center - (52 * mm),
-                        y_img,
-                        width=104 * mm,
-                        height=20 * mm,
-                        preserveAspectRatio=True,
-                        mask='auto'
+                        x_center - 52 * mm, y_img,
+                        width=104 * mm, height=20 * mm,
+                        preserveAspectRatio=True, mask="auto",
                     )
                 except Exception:
                     pass
-
-            canvas.setFont('Helvetica-Bold', 9)
-            canvas.setFillColor(colors.HexColor('#333333'))
-            canvas.drawCentredString(x_center, y_text, f'Responsable: {responsable}')
+            canvas.setFont("Helvetica-Bold", 9)
+            canvas.setFillColor(colors.HexColor("#333333"))
+            canvas.drawCentredString(x_center, y_text, f"Responsable: {responsable}")
             canvas.restoreState()
-        
-        # Construir PDF
+
         doc.build(elements, onFirstPage=draw_footer_signature, onLaterPages=draw_footer_signature)
         pdf_buffer.seek(0)
-        
-        # Generar nombre de archivo
+
         filename = f"Despacho_OT_{ot_id_doc}_{obra}_{fecha}.pdf"
         filename = filename.replace(" ", "_").replace("/", "-")
-
         _guardar_pdf_databook(obra, "calidad_despacho", filename, pdf_buffer.getvalue(), ot_id=ot_id_doc)
-        try:
-            detalle_control_json = json.dumps({
-                "remito_asociado": remito_asociado,
-                "resultado_general": resultado_general,
-                "items": detalle_items,
-            }, ensure_ascii=False)
-            db.execute(
-                """
-                INSERT INTO control_despacho (ot_id, obra, fecha, responsable, conforme, observaciones, detalle_control)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    ot_id_doc,
-                    obra,
-                    fecha,
-                    responsable,
-                    resultado_general,
-                    remito_asociado,
-                    detalle_control_json,
-                ),
-            )
-            db.commit()
-        except Exception as exc:
-            print(f"[control_despacho] error guardando control: {exc}")
         pdf_buffer.seek(0)
-        
-        return send_file(
-            pdf_buffer,
-            mimetype='application/pdf',
-            as_attachment=True,
-            download_name=filename
-        )
-    
-    obras = db.execute("""
-        SELECT DISTINCT obra
-        FROM ordenes_trabajo
-                WHERE fecha_cierre IS NULL
-                    AND obra IS NOT NULL AND TRIM(obra) <> ''
+        return send_file(pdf_buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
+
+    # ---- GET ----
+    obras = db.execute(
+        """
+        SELECT DISTINCT obra FROM ordenes_trabajo
+        WHERE fecha_cierre IS NULL AND obra IS NOT NULL AND TRIM(obra) <> ''
         ORDER BY obra ASC
-    """).fetchall()
+        """
+    ).fetchall()
     ots_activas = db.execute(
         """
         SELECT id, TRIM(COALESCE(obra, '')) AS obra, TRIM(COALESCE(titulo, '')) AS titulo
@@ -982,180 +1132,695 @@ def calidad_despacho():
     ).fetchall()
     mapa_obra_ots = {}
     for ot_id_r, obra_r, titulo_r in ots_activas:
-        mapa_obra_ots.setdefault(str(obra_r), []).append({
-            "id": int(ot_id_r),
-            "titulo": str(titulo_r or "").strip(),
-        })
-    
-    html = """
-    <html>
-    <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta charset="UTF-8">
-    <meta charset="UTF-8">
-    <style>
-    * { box-sizing: border-box; }
-    body { font-family: Arial; padding: 15px; background: #fff7ed; margin: 0; }
-    h2 { color: #9a3412; border-bottom: 3px solid #f97316; padding-bottom: 10px; }
-    .btn { background: #f97316; color: white; padding: 10px 15px; text-decoration: none; border-radius: 6px; font-weight: 700; }
-    .btn:hover { background: #ea580c; }
-    .top-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .btn-remito { background: #c2410c; }
-    .btn-remito:hover { background: #9a3412; }
-    form { background: white; padding: 16px; border-radius: 10px; max-width: 1100px; margin: 16px 0; border: 1px solid #fed7aa; }
-    input, select, textarea { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #fdba74; border-radius: 6px; box-sizing: border-box; background: #fffaf5; }
-    label { display: block; font-weight: bold; margin-top: 12px; color: #7c2d12; }
-    button { width: 100%; padding: 12px; background: #f97316; color: white; border: none; border-radius: 6px; cursor: pointer; margin-top: 20px; font-weight: bold; font-size: 14px; }
-    button:hover { background: #ea580c; }
-    .table-wrap { overflow-x: auto; width: 100%; border-radius: 8px; border: 1px solid #fed7aa; }
-    .items-table { width: 100%; min-width: 760px; margin-top: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.08); border-collapse: collapse; }
-    .items-table th { background: #f97316; color: white; }
-    .items-table td, .items-table th { border-bottom: 1px solid #fed7aa; padding: 8px; vertical-align: top; }
-    .items-table td textarea { min-height: 44px; margin: 0; }
-    @media (max-width: 820px) {
-        body { padding: 10px; }
-        .top-actions { flex-direction: column; align-items: stretch; }
-        .top-actions .btn { width: 100%; text-align: center; }
-        form { padding: 12px; margin-top: 12px; }
-        h2 { font-size: 20px; }
-    }
-    </style>
-    </head>
-    <body>
-    <div class="top-actions">
-        <a href="/modulo/calidad" class="btn">⬅️ Volver</a>
-        <a href="/modulo/remito" class="btn btn-remito">🚚 Ir a Remitos</a>
-    </div>
-    <h2>📦¦ Control Despacho</h2>
-    
-    <form method="post">
-        <label>Obra:</label>
-        <select name="obra" id="obra_despacho" onchange="cargarOTsDespacho()" required>
-            <option value="">Seleccionar obra...</option>
-    """
-    
-    for obra in obras:
-        html += f'<option value="{obra[0]}">{obra[0]}</option>'
-    
-    html += """
-        </select>
+        mapa_obra_ots.setdefault(str(obra_r), []).append(
+            {"id": int(ot_id_r), "titulo": str(titulo_r or "").strip()}
+        )
 
-        <label>OT:</label>
-        <select name="ot_id" id="ot_id_despacho" required>
-            <option value="">Seleccionar OT...</option>
-        </select>
+    hoy = datetime.date.today().isoformat()
 
-        <label>Remito asociado:</label>
-        <input type="text" name="remito_asociado" placeholder="Ej: R-000123" required>
-        
-        <label>Responsable:</label>
-        <select name="responsable" id="responsable_select" required>
-            <option value="">-- Seleccionar responsable --</option>
-            {opciones_responsables}
-        </select>
+    obra_prefill   = request.args.get("obra", "").strip()
+    ot_prefill     = request.args.get("ot_id", "").strip()
+    prefill_obra_json   = json.dumps(obra_prefill)
+    prefill_ot_id_json  = json.dumps(ot_prefill)
 
-        <label>Firma digital:</label>
-        <input type="text" id="firma_digital_input" name="firma_digital" placeholder="Se completa automaticamente al seleccionar responsable" readonly required>
-        <img id="firma_preview" src="" alt="Firma Responsable" style="display:none; margin-top:8px; max-width:280px; border:1px solid #ddd; border-radius:6px; background:white; padding:6px;" onerror="this.style.display='none';">
-
-        <div class="table-wrap">
-        <table class="items-table">
-            <tr>
-                <th style="width: 80px;">N°</th>
-                <th>Control</th>
-                <th style="width: 220px;">Estado</th>
-                <th>Observación</th>
-            </tr>
-    """
-
+    _NA_DEFAULTS = {1, 9, 10}
+    items_html = ""
     for index, item_label in enumerate(CONTROL_DESPACHO_ITEMS, start=1):
-        html += f"""
+        _sel_conf = "" if index in _NA_DEFAULTS else " selected"
+        _sel_na   = " selected" if index in _NA_DEFAULTS else ""
+        items_html += f"""
             <tr>
                 <td><b>{index}</b></td>
-                <td>{item_label}</td>
+                <td>{html_lib.escape(item_label)}</td>
                 <td>
                     <select name="estado_{index}" required>
-                        <option value="">Seleccionar...</option>
-                        <option value="CONFORME">Conforme</option>
+                        <option value="CONFORME"{_sel_conf}>Conforme</option>
                         <option value="NO CONFORME">No conforme</option>
-                        <option value="NO APLICA">No aplica</option>
+                        <option value="NO APLICA"{_sel_na}>No aplica</option>
                     </select>
                 </td>
-                <td>
-                    <textarea name="observacion_{index}" rows="2" placeholder="Observación del item {index}..."></textarea>
-                </td>
+                <td><textarea name="observacion_{index}" rows="2" placeholder="Observacion..."></textarea></td>
             </tr>
         """
 
-    html += """
-        </table>
+    opciones_obras = "".join(
+        f'<option value="{html_lib.escape(str(o[0]))}" {"selected" if str(o[0]) == obra_prefill else ""}>{html_lib.escape(str(o[0]))}</option>'
+        for o in obras
+    )
+
+    mapa_json    = json.dumps(mapa_obra_ots,       ensure_ascii=False)
+    firmas_json  = json.dumps(firmas_responsables, ensure_ascii=False)
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="UTF-8">
+<title>Control Despacho</title>
+<style>
+* {{ box-sizing: border-box; }}
+body {{ font-family: Arial; padding: 15px; background: #fff7ed; margin: 0; }}
+h2 {{ color: #9a3412; border-bottom: 3px solid #f97316; padding-bottom: 10px; }}
+.btn {{ background: #f97316; color: white; padding: 10px 15px; text-decoration: none; border-radius: 6px; font-weight: 700; display:inline-block; }}
+.btn:hover {{ background: #ea580c; }}
+.btn-azul {{ background: #2563eb; }}
+.btn-azul:hover {{ background: #1d4ed8; }}
+.btn-remito {{ background: #c2410c; }}
+.btn-remito:hover {{ background: #9a3412; }}
+.top-actions {{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }}
+form {{ background:white; padding:16px; border-radius:10px; max-width:1100px; border:1px solid #fed7aa; }}
+input, select, textarea {{ width:100%; padding:10px; margin:6px 0 4px 0; border:1px solid #fdba74; border-radius:6px; background:#fffaf5; font-size:13px; }}
+label {{ display:block; font-weight:bold; margin-top:12px; color:#7c2d12; font-size:13px; }}
+.btn-guardar {{ width:100%; padding:13px; background:#16a34a; color:white; border:none; border-radius:6px; cursor:pointer; margin-top:12px; font-weight:bold; font-size:15px; }}
+.btn-guardar:hover {{ background:#15803d; }}
+.btn-pdf {{ width:100%; padding:13px; background:#f97316; color:white; border:none; border-radius:6px; cursor:pointer; margin-top:8px; font-weight:bold; font-size:15px; }}
+.btn-pdf:hover {{ background:#ea580c; }}
+.table-wrap {{ overflow-x:auto; border-radius:8px; border:1px solid #fed7aa; margin-top:6px; }}
+.items-table {{ width:100%; min-width:720px; border-collapse:collapse; }}
+.items-table th {{ background:#f97316; color:white; padding:9px 8px; text-align:left; }}
+.items-table td {{ border-bottom:1px solid #fed7aa; padding:7px 8px; vertical-align:top; }}
+.items-table td textarea {{ min-height:40px; margin:0; }}
+.piezas-wrap {{ background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:12px; margin-top:8px; }}
+.piezas-wrap h4 {{ margin:0 0 8px 0; color:#9a3412; font-size:13px; font-weight:bold; }}
+.piezas-table {{ width:100%; border-collapse:collapse; font-size:12px; }}
+.piezas-table th {{ background:#f97316; color:white; padding:6px 8px; text-align:left; }}
+.piezas-table td {{ padding:6px 8px; border-bottom:1px solid #fed7aa; vertical-align:middle; }}
+.piezas-table tr:nth-child(even) td {{ background:#fffaf5; }}
+.loading {{ color:#6b7280; font-size:13px; padding:8px 0; }}
+.no-piezas {{ color:#dc2626; font-size:13px; background:#fef2f2; border-radius:6px; padding:8px 12px; }}
+.sel-actions {{ display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; }}
+.sel-btn {{ background:#f97316; color:white; border:none; border-radius:5px; padding:5px 12px; cursor:pointer; font-size:12px; font-weight:600; }}
+.sel-btn:hover {{ background:#ea580c; }}
+hr.div {{ border:none; border-top:2px solid #fed7aa; margin:14px 0; }}
+@media (max-width:820px) {{
+    body {{ padding:10px; }}
+    .top-actions {{ flex-direction:column; align-items:stretch; }}
+    form {{ padding:12px; }}
+}}
+</style>
+</head>
+<body>
+<div class="top-actions">
+    <a href="/modulo/calidad" class="btn">&#8592; Volver</a>
+    <a href="/modulo/calidad/despacho/historial" class="btn btn-azul">&#128203; Historial de controles</a>
+    <a href="/modulo/remito" class="btn btn-remito">&#128666; Ir a Remitos</a>
+</div>
+<h2>&#128230; Control Despacho</h2>
+
+<form method="post" id="form_despacho">
+    <input type="hidden" name="accion" id="accion_input" value="guardar">
+
+    <label>Fecha de despacho:</label>
+    <input type="date" name="fecha" id="fecha_despacho" value="{hoy}" required>
+
+    <hr class="div">
+
+    <label>Obra:</label>
+    <select name="obra" id="obra_despacho" required>
+        <option value="">Seleccionar obra...</option>
+        {opciones_obras}
+    </select>
+
+    <label>OT:</label>
+    <select name="ot_id" id="ot_id_despacho" required>
+        <option value="">Seleccionar OT...</option>
+    </select>
+
+    <div id="piezas_section" style="display:none; margin-top:10px;">
+        <div class="piezas-wrap">
+            <h4>Piezas listas para despacho</h4>
+            <div id="piezas_loading" class="loading" style="display:none;">Cargando piezas...</div>
+            <div id="piezas_container"></div>
         </div>
-        
-        <label>Fecha de Despacho:</label>
-        <input type="date" name="fecha" required>
-        
-        <button type="submit">	📄 Generar PDF Despacho</button>
-    </form>
-    <script>
-    (function() {
-        const obraSel = document.getElementById('obra_despacho');
-        const otSel = document.getElementById('ot_id_despacho');
-        const responsableSel = document.getElementById('responsable_select');
-        const firmaInput = document.getElementById('firma_digital_input');
-        const firmaPreview = document.getElementById('firma_preview');
-        const mapaObraOts = {json.dumps(mapa_obra_ots, ensure_ascii=False)};
-        const firmasResponsables = {json.dumps(firmas_responsables, ensure_ascii=False)};
-        const imagenesResponsables = {json.dumps(imagenes_responsables, ensure_ascii=False)};
-        if (!responsableSel || !firmaInput) return;
+    </div>
 
-        function cargarOTsDespacho() {
-            if (!obraSel || !otSel) return;
-            const obra = obraSel.value || '';
-            const lista = mapaObraOts[obra] || [];
-            otSel.innerHTML = '<option value="">Seleccionar OT...</option>';
-            for (const ot of lista) {
-                const opt = document.createElement('option');
-                opt.value = String(ot.id || '');
-                const titulo = String(ot.titulo || '').trim();
-                opt.textContent = titulo ? `OT ${ot.id} - ${titulo}` : `OT ${ot.id}`;
-                otSel.appendChild(opt);
-            }
-        }
+    <hr class="div">
 
-        function syncResponsable() {
-            const responsable = responsableSel.value || '';
-            const firma = firmasResponsables[responsable] || '';
-            const firmaUrl = imagenesResponsables[responsable] || '';
-            firmaInput.value = firma;
-            firmaInput.readOnly = true;
-            if (firmaPreview) {
-                if (firmaUrl) {
-                    firmaPreview.src = firmaUrl;
-                    firmaPreview.style.display = 'block';
-                } else {
-                    firmaPreview.style.display = 'none';
-                }
-            }
-        }
+    <label>Responsable:</label>
+    <select name="responsable" id="responsable_select" required>
+        <option value="">-- Seleccionar responsable --</option>
+        {opciones_responsables}
+    </select>
 
-        window.cargarOTsDespacho = cargarOTsDespacho;
-        if (obraSel) obraSel.addEventListener('change', cargarOTsDespacho);
-        cargarOTsDespacho();
-        responsableSel.addEventListener('change', syncResponsable);
-        syncResponsable();
-    })();
-    </script>
-    </body>
-    </html>
-    """
-    html = html.replace("{opciones_responsables}", opciones_responsables)
-    html = html.replace("{json.dumps(firmas_responsables, ensure_ascii=False)}", json.dumps(firmas_responsables, ensure_ascii=False))
-    html = html.replace("{json.dumps(imagenes_responsables, ensure_ascii=False)}", json.dumps(imagenes_responsables, ensure_ascii=False))
-    html = html.replace("{json.dumps(mapa_obra_ots, ensure_ascii=False)}", json.dumps(mapa_obra_ots, ensure_ascii=False))
+    <label>Firma digital:</label>
+    <input type="text" id="firma_digital_input" name="firma_digital"
+           placeholder="Se completa automaticamente al seleccionar responsable" readonly required>
+
+    <hr class="div">
+
+    <label>Control de despacho:</label>
+    <div class="table-wrap">
+    <table class="items-table">
+        <thead><tr>
+            <th style="width:44px;">N&#176;</th>
+            <th>Control</th>
+            <th style="width:190px;">Estado</th>
+            <th>Observacion</th>
+        </tr></thead>
+        <tbody>
+        {items_html}
+        </tbody>
+    </table>
+    </div>
+
+    <button type="submit" class="btn-guardar" onclick="document.getElementById('accion_input').value='guardar'">
+        &#10003; Guardar control
+    </button>
+    <button type="submit" class="btn-pdf" onclick="document.getElementById('accion_input').value='pdf'">
+        &#128196; Generar PDF Despacho
+    </button>
+</form>
+
+<script>
+(function() {{
+    const obraSel    = document.getElementById('obra_despacho');
+    const otSel      = document.getElementById('ot_id_despacho');
+    const respSel    = document.getElementById('responsable_select');
+    const firmaInput = document.getElementById('firma_digital_input');
+    const piezasSec  = document.getElementById('piezas_section');
+    const piezasLoad = document.getElementById('piezas_loading');
+    const piezasCont = document.getElementById('piezas_container');
+
+    const mapaObraOts = {mapa_json};
+    const firmasResp  = {firmas_json};
+
+    function esc(s) {{
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }}
+
+    function cargarOTs() {{
+        const obra  = obraSel.value || '';
+        const lista = mapaObraOts[obra] || [];
+        otSel.innerHTML = '<option value="">Seleccionar OT...</option>';
+        for (const ot of lista) {{
+            const opt = document.createElement('option');
+            opt.value = String(ot.id || '');
+            const t = String(ot.titulo || '').trim();
+            opt.textContent = t ? ('OT ' + ot.id + ' - ' + t) : ('OT ' + ot.id);
+            otSel.appendChild(opt);
+        }}
+        piezasSec.style.display = 'none';
+        piezasCont.innerHTML = '';
+    }}
+
+    function selTodas(val) {{
+        document.querySelectorAll('input.pieza-chk').forEach(c => c.checked = !!val);
+        const chkAll = document.getElementById('chk_todas');
+        if (chkAll) chkAll.checked = !!val;
+    }}
+    window.selTodas = selTodas;
+
+    function cargarPiezas() {{
+        const otId = otSel.value || '';
+        if (!otId) {{ piezasSec.style.display = 'none'; piezasCont.innerHTML = ''; return; }}
+        piezasSec.style.display = 'block';
+        piezasLoad.style.display = 'block';
+        piezasCont.innerHTML = '';
+        fetch('/api/piezas-listas-despacho?ot_id=' + encodeURIComponent(otId))
+            .then(r => r.json())
+            .then(piezas => {{
+                piezasLoad.style.display = 'none';
+                if (!piezas || piezas.length === 0) {{
+                    piezasCont.innerHTML = '<div class="no-piezas">No hay piezas con control aprobado para esta OT.</div>';
+                    return;
+                }}
+                let h = '<div class="sel-actions">';
+                h += '<button type="button" class="sel-btn" onclick="selTodas(true)">Seleccionar todas</button>';
+                h += '<button type="button" class="sel-btn" onclick="selTodas(false)">Deseleccionar todas</button>';
+                h += '</div>';
+                h += '<table class="piezas-table"><thead><tr>';
+                h += '<th style="width:36px;text-align:center;"><input type="checkbox" id="chk_todas" checked onchange="selTodas(this.checked)" style="width:16px;height:16px;cursor:pointer;"></th>';
+                h += '<th>Posicion</th><th>Descripcion</th><th>Perfil</th><th>Cant.</th><th>Peso (kg)</th>';
+                h += '</tr></thead><tbody>';
+                for (const p of piezas) {{
+                    const pos = (p.posicion || '').replace(/"/g, '&quot;');
+                    h += '<tr>';
+                    h += '<td style="text-align:center;"><input type="checkbox" class="pieza-chk" name="pieza_sel" value="' + pos + '" checked></td>';
+                    h += '<td><b>' + esc(p.posicion || '') + '</b></td>';
+                    h += '<td>' + esc(p.descripcion || '') + '</td>';
+                    h += '<td>' + esc(p.perfil || '') + '</td>';
+                    h += '<td>' + esc(p.cantidad || '') + '</td>';
+                    h += '<td>' + esc(p.peso || '') + '</td>';
+                    h += '</tr>';
+                }}
+                h += '</tbody></table>';
+                piezasCont.innerHTML = h;
+            }})
+            .catch(() => {{
+                piezasLoad.style.display = 'none';
+                piezasCont.innerHTML = '<div class="no-piezas">Error al cargar piezas.</div>';
+            }});
+    }}
+
+    function syncResponsable() {{
+        const r = respSel.value || '';
+        firmaInput.value = firmasResp[r] || '';
+        firmaInput.readOnly = true;
+    }}
+
+    obraSel.addEventListener('change', cargarOTs);
+    otSel.addEventListener('change', cargarPiezas);
+    respSel.addEventListener('change', syncResponsable);
+    syncResponsable();
+
+    // Prefill desde query params
+    const _prefillObra  = {prefill_obra_json};
+    const _prefillOtId  = {prefill_ot_id_json};
+    if (_prefillObra) {{
+        obraSel.value = _prefillObra;
+        cargarOTs();
+        if (_prefillOtId) {{
+            // Esperar un tick para que cargarOTs() llene el select
+            setTimeout(function() {{
+                otSel.value = _prefillOtId;
+                cargarPiezas();
+            }}, 0);
+        }}
+    }}
+}})();
+</script>
+</body>
+</html>"""
     return html
 
+
 # ======================
-@calidad_bp.route("/modulo/calidad/escaneo", methods=["GET"])
+# RUTA: PDF de control de despacho desde registro guardado
+# ======================
+@calidad_bp.route("/modulo/calidad/despacho/pdf/<int:control_id>")
+def calidad_despacho_pdf_guardado(control_id):
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Image, Paragraph, Spacer
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import mm, cm
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from io import BytesIO
+    import os as _os
+
+    db = get_db()
+    ctrl = db.execute(
+        "SELECT ot_id, obra, fecha, responsable, detalle_control FROM control_despacho WHERE id = ? LIMIT 1",
+        (control_id,),
+    ).fetchone()
+    if not ctrl:
+        return "Control no encontrado", 404
+
+    ot_id_doc   = ctrl[0]
+    obra        = ctrl[1] or ""
+    fecha       = ctrl[2] or ""
+    responsable = ctrl[3] or ""
+    detalle_json = ctrl[4] or "{}"
+
+    try:
+        detalle = json.loads(detalle_json)
+    except Exception:
+        detalle = {}
+
+    piezas_sel   = detalle.get("piezas_seleccionadas", [])
+    detalle_items = detalle.get("items", [])
+
+    responsables_control = _obtener_responsables_control(db)
+    firma_path_responsable = _ruta_firma_responsable(responsables_control, responsable)
+
+    pdf_buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        pdf_buffer,
+        pagesize=letter,
+        topMargin=0.3 * cm,
+        bottomMargin=0.5 * cm,
+        leftMargin=0.5 * cm,
+        rightMargin=0.5 * cm,
+    )
+    elements = []
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        "TitleStyleD2", parent=styles["Heading1"],
+        fontSize=18, textColor=colors.HexColor("#000000"),
+        alignment=1, spaceAfter=0, fontName="Helvetica-Bold",
+    )
+    cell_style = ParagraphStyle(
+        "CellStyleD2", parent=styles["Normal"],
+        fontSize=8.5, textColor=colors.HexColor("#333333"), alignment=0, leading=12,
+    )
+    header_cell_style = ParagraphStyle(
+        "HeaderCellStyleD2", parent=styles["Normal"],
+        fontSize=7, textColor=colors.HexColor("#1f2937"),
+        alignment=1, leading=9, fontName="Helvetica-Bold",
+    )
+    head_style = ParagraphStyle(
+        "HeadDespD2", parent=styles["Normal"],
+        fontSize=7.2, leading=8.2, alignment=1,
+        fontName="Helvetica-Bold", textColor=colors.white,
+    )
+    info_style = ParagraphStyle(
+        "InfoDespachoD2", parent=styles["Normal"],
+        fontSize=9, textColor=colors.HexColor("#1f2937"), leading=11,
+    )
+
+    encabezado_path = None
+    for nombre_archivo in [
+        "encabezado_despacho.png", "ENCABEZADO_DESPACHO.png",
+        "encabezado_despacho.jpg", "ENCABEZADO_DESPACHO.jpg",
+        "encabezado_despacho.jpeg", "ENCABEZADO_DESPACHO.jpeg",
+    ]:
+        candidato = _os.path.join(_APP_DIR, nombre_archivo)
+        if _os.path.exists(candidato):
+            encabezado_path = candidato
+            break
+
+    if encabezado_path:
+        enc_img = Image(encabezado_path)
+        max_w, max_h = 19.8 * cm, 3.2 * cm
+        if enc_img.drawWidth > max_w:
+            s = max_w / float(enc_img.drawWidth)
+            enc_img.drawWidth *= s; enc_img.drawHeight *= s
+        if enc_img.drawHeight > max_h:
+            s = max_h / float(enc_img.drawHeight)
+            enc_img.drawWidth *= s; enc_img.drawHeight *= s
+        elements.append(enc_img)
+    else:
+        logo_path = _os.path.join(_APP_DIR, "LOGO.png")
+        logo_cell = (
+            Image(logo_path, width=2.5 * cm, height=2 * cm)
+            if _os.path.exists(logo_path)
+            else Paragraph("A3", header_cell_style)
+        )
+        header_table = Table(
+            [[logo_cell, Paragraph("CONTROL FINAL DE DESPACHO", title_style),
+              Paragraph("<b>Codigo<br/>7-9.5</b>", header_cell_style)]],
+            colWidths=[2.8 * cm, 11 * cm, 2.5 * cm],
+        )
+        header_table.setStyle(TableStyle([
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("GRID", (0, 0), (-1, -1), 1, colors.black),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        elements.append(header_table)
+        info_row = Table(
+            [[
+                Paragraph("<b>Reviso:<br/>MF</b>", header_cell_style),
+                Paragraph("<b>Aprobo:<br/>GI</b>", header_cell_style),
+                Paragraph("<b>Fecha:<br/>10/12/2025</b>", header_cell_style),
+                Paragraph("<b>Revision:<br/>01</b>", header_cell_style),
+                Paragraph("<b>Pagina 1 de 1</b>", header_cell_style),
+            ]],
+            colWidths=[2.3 * cm, 2.3 * cm, 2.6 * cm, 2.3 * cm, 2.9 * cm],
+        )
+        info_row.setStyle(TableStyle([
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("GRID", (0, 0), (-1, -1), 1, colors.black),
+            ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ("LEFTPADDING", (0, 0), (-1, -1), 2),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        elements.append(info_row)
+
+    elements.append(Spacer(1, 0.28 * cm))
+
+    info_tbl = Table(
+        [
+            [Paragraph(f"<b>OBRA:</b> {obra}", info_style),
+             Paragraph(f"<b>Fecha de Despacho:</b> {fecha}", info_style)],
+            [Paragraph(f"<b>OT:</b> {ot_id_doc}", info_style),
+             Paragraph(f"<b>Responsable:</b> {responsable}", info_style)],
+        ],
+        colWidths=[8.2 * cm, 8.3 * cm],
+    )
+    info_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fffaf5")),
+        ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#fed7aa")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#fed7aa")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    elements.append(info_tbl)
+    elements.append(Spacer(1, 0.25 * cm))
+
+    if piezas_sel:
+        piezas_head_style = ParagraphStyle(
+            "PiezasHeadD2", parent=styles["Normal"],
+            fontSize=7.2, leading=8.2, alignment=1,
+            fontName="Helvetica-Bold", textColor=colors.white,
+        )
+        cell_pieza = ParagraphStyle(
+            "CellPiezaD2", parent=styles["Normal"], fontSize=7.5, leading=10
+        )
+        # Recolectar datos (solo posicion + descripcion)
+        _pieza_rows = []
+        for pos_pieza in piezas_sel:
+            prow = db.execute(
+                """
+                SELECT COALESCE(descripcion,'')
+                FROM procesos
+                WHERE ot_id = ? AND TRIM(posicion) = TRIM(?)
+                  AND eliminado = 0
+                ORDER BY id DESC LIMIT 1
+                """,
+                (ot_id_doc, pos_pieza),
+            ).fetchone()
+            _pieza_rows.append((str(pos_pieza), prow[0] if prow else ""))
+        # Distribuir en columnas lado a lado
+        _MAX_ROWS = 25
+        _n_cols = max(1, min(3, (len(_pieza_rows) + _MAX_ROWS - 1) // _MAX_ROWS))
+        _chunk = (len(_pieza_rows) + _n_cols - 1) // _n_cols
+        _total_w = 16.8 * cm
+        _pos_w = 2.5 * cm
+        _desc_w = (_total_w / _n_cols) - _pos_w
+        _header = []
+        for _ in range(_n_cols):
+            _header += [Paragraph("<b>POSICION</b>", piezas_head_style),
+                         Paragraph("<b>DESCRIPCION</b>", piezas_head_style)]
+        _max_r = max((len(_pieza_rows[i*_chunk:(i+1)*_chunk]) for i in range(_n_cols)), default=0)
+        _tbl_data = [_header]
+        for _r in range(_max_r):
+            _row = []
+            for _c in range(_n_cols):
+                _idx = _c * _chunk + _r
+                if _idx < len(_pieza_rows):
+                    _pos, _desc = _pieza_rows[_idx]
+                    _row += [Paragraph(_pos, cell_pieza), Paragraph(_desc, cell_pieza)]
+                else:
+                    _row += [Paragraph("", cell_pieza), Paragraph("", cell_pieza)]
+            _tbl_data.append(_row)
+        _col_widths = [w for _ in range(_n_cols) for w in [_pos_w, _desc_w]]
+        piezas_table = Table(_tbl_data, colWidths=_col_widths)
+        _ts_cmds = [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f97316")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#fed7aa")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fff7ed")]),
+        ]
+        for _c in range(1, _n_cols):
+            _ci = _c * 2
+            _ts_cmds.append(("LINEBEFORE", (_ci, 0), (_ci, -1), 1.2, colors.HexColor("#f97316")))
+        piezas_table.setStyle(TableStyle(_ts_cmds))
+        elements.append(piezas_table)
+        elements.append(Spacer(1, 0.3 * cm))
+
+    table_data = [[
+        Paragraph("<b>N</b>", head_style),
+        Paragraph("<b>CONTROL DE DESPACHO</b>", head_style),
+        Paragraph("<b>VERIFICA</b>", head_style),
+        Paragraph("<b>OBSERVACION</b>", head_style),
+    ]]
+    for item in detalle_items:
+        table_data.append([
+            Paragraph(f"<b>{item['item']}</b>", cell_style),
+            Paragraph(item["label"], cell_style),
+            Paragraph(
+                f"<b>{item['estado']}</b>",
+                ParagraphStyle("EstadoDespD2", parent=cell_style, alignment=1, fontName="Helvetica-Bold"),
+            ),
+            Paragraph(item.get("observacion") or "", cell_style),
+        ])
+    control_table = Table(table_data, colWidths=[0.7 * cm, 8.8 * cm, 2.9 * cm, 4 * cm])
+    control_table.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f97316")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fff7ed")]),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+    ]))
+    elements.append(control_table)
+    elements.append(Spacer(1, 0.3 * cm))
+
+    def _draw_footer_d2(canvas, doc_obj):
+        x_left   = doc_obj.leftMargin
+        x_right  = doc_obj.pagesize[0] - doc_obj.rightMargin
+        x_center = (x_left + x_right) / 2
+        y_line, y_text, y_img = 2.2 * cm, 1.65 * cm, 2.55 * cm
+        canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor("#333333"))
+        canvas.setLineWidth(1)
+        canvas.line(x_center - 42 * mm, y_line, x_center + 42 * mm, y_line)
+        if firma_path_responsable and _os.path.isfile(firma_path_responsable):
+            try:
+                canvas.drawImage(
+                    firma_path_responsable,
+                    x_center - 52 * mm, y_img,
+                    width=104 * mm, height=20 * mm,
+                    preserveAspectRatio=True, mask="auto",
+                )
+            except Exception:
+                pass
+        canvas.setFont("Helvetica-Bold", 9)
+        canvas.setFillColor(colors.HexColor("#333333"))
+        canvas.drawCentredString(x_center, y_text, f"Responsable: {responsable}")
+        canvas.restoreState()
+
+    doc.build(elements, onFirstPage=_draw_footer_d2, onLaterPages=_draw_footer_d2)
+    pdf_buffer.seek(0)
+
+    filename = f"Despacho_OT_{ot_id_doc}_{obra}_{fecha}.pdf"
+    filename = filename.replace(" ", "_").replace("/", "-")
+    return send_file(pdf_buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
+
+
+# ======================
+# RUTA: Historial de controles de despacho
+# ======================
+@calidad_bp.route("/modulo/calidad/despacho/historial")
+def calidad_despacho_historial():
+    db = get_db()
+    page = max(1, int((request.args.get("page") or 1)))
+    per_page = 25
+    obra_f = (request.args.get("obra") or "").strip()
+
+    base_where = "WHERE 1=1"
+    params = []
+    if obra_f:
+        base_where += " AND LOWER(TRIM(obra)) = LOWER(TRIM(?))"
+        params.append(obra_f)
+
+    total = db.execute(
+        f"SELECT COUNT(1) FROM control_despacho {base_where}", params
+    ).fetchone()[0]
+    total_pages = max(1, (int(total) + per_page - 1) // per_page)
+    offset = (page - 1) * per_page
+
+    rows = db.execute(
+        f"""SELECT id, ot_id, obra, fecha, responsable, fecha_creacion
+            FROM control_despacho {base_where}
+            ORDER BY id DESC LIMIT ? OFFSET ?""",
+        params + [per_page, offset],
+    ).fetchall()
+
+    obras_disp = db.execute(
+        "SELECT DISTINCT TRIM(obra) FROM control_despacho WHERE obra IS NOT NULL ORDER BY obra"
+    ).fetchall()
+    opciones_obra = '<option value="">Todas las obras</option>'
+    for (o,) in obras_disp:
+        sel = " selected" if o == obra_f else ""
+        opciones_obra += f'<option value="{html_lib.escape(o)}"{sel}>{html_lib.escape(o)}</option>'
+
+    filas_html = ""
+    for ctrl_id, ot_id_r, obra_r, fecha_r, resp_r, fecha_crea in rows:
+        filas_html += f"""
+        <tr>
+            <td style="text-align:center;">{ctrl_id}</td>
+            <td>{html_lib.escape(str(obra_r or '-'))}</td>
+            <td style="text-align:center;">{html_lib.escape(str(ot_id_r or '-'))}</td>
+            <td style="text-align:center;">{html_lib.escape(str(fecha_r or '-'))}</td>
+            <td>{html_lib.escape(str(resp_r or '-'))}</td>
+            <td style="text-align:center;">{html_lib.escape(str(fecha_crea or '-')[:16])}</td>
+            <td style="text-align:center;">
+                <a href="/modulo/calidad/despacho/pdf/{ctrl_id}" target="_blank"
+                   style="display:inline-block;padding:6px 14px;background:#2563eb;color:#fff;border-radius:6px;
+                          text-decoration:none;font-weight:700;font-size:13px;">&#128196; PDF</a>
+            </td>
+        </tr>"""
+
+    # Paginación
+    pag_html = ""
+    if total_pages > 1:
+        obra_qs = f"&obra={quote(obra_f)}" if obra_f else ""
+        pag_html = '<div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap;">'
+        for p in range(1, total_pages + 1):
+            act = 'background:#0f766e;' if p == page else 'background:#2563eb;'
+            pag_html += f'<a href="?page={p}{obra_qs}" style="{act}color:#fff;padding:6px 12px;border-radius:6px;text-decoration:none;font-weight:700;">{p}</a>'
+        pag_html += "</div>"
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{{box-sizing:border-box;}}
+body{{font-family:Arial;background:#fff7ed;padding:16px;margin:0;color:#111827;}}
+h2{{color:#9a3412;border-bottom:3px solid #f97316;padding-bottom:8px;}}
+.actions{{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}}
+.btn{{display:inline-block;padding:10px 16px;background:#f97316;color:#fff;border-radius:6px;
+       text-decoration:none;font-weight:700;}}
+.btn-sec{{background:#6b7280;}}
+table{{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;
+        border:1px solid #fed7aa;}}
+th{{background:#f97316;color:#fff;padding:10px 8px;font-size:13px;text-align:left;}}
+td{{border-bottom:1px solid #fed7aa;padding:9px 8px;font-size:13px;vertical-align:middle;}}
+tr:last-child td{{border-bottom:none;}}
+tr:nth-child(even) td{{background:#fff7ed;}}
+select,input{{padding:8px 10px;border:1px solid #fdba74;border-radius:6px;background:#fffaf5;}}
+.filtros{{background:#fff;border:1px solid #fed7aa;border-radius:8px;padding:12px;margin-bottom:14px;
+           display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;}}
+</style></head><body>
+<div class="actions" style="justify-content:space-between;">
+    <a href="/modulo/calidad/despacho" class="btn">&#43; Nuevo Control</a>
+    <a href="/modulo/calidad" class="btn btn-sec">&#8592; Volver</a>
+</div>
+<h2>&#128203; Historial de Controles de Despacho</h2>
+<p style="color:#6b7280;margin-bottom:12px;">Total registros: <b>{total}</b> &nbsp;|&nbsp; Página {page} de {total_pages}</p>
+
+<form method="get" class="filtros">
+    <div><label style="display:block;font-weight:700;color:#7c2d12;margin-bottom:4px;">Obra</label>
+        <select name="obra" onchange="this.form.submit()">{opciones_obra}</select></div>
+    <button type="submit" style="padding:8px 14px;background:#f97316;color:#fff;border:none;border-radius:6px;
+             cursor:pointer;font-weight:700;">Filtrar</button>
+    {'<a href="/modulo/calidad/despacho/historial" style="padding:8px 14px;background:#6b7280;color:#fff;border-radius:6px;text-decoration:none;font-weight:700;">Limpiar</a>' if obra_f else ''}
+</form>
+
+<div style="overflow-x:auto;">
+<table>
+    <tr>
+        <th style="width:60px;">ID</th>
+        <th>Obra</th>
+        <th style="width:60px;">OT</th>
+        <th style="width:100px;">Fecha</th>
+        <th>Responsable</th>
+        <th style="width:130px;">Registrado el</th>
+        <th style="width:90px;">Acción</th>
+    </tr>
+    {filas_html if filas_html else '<tr><td colspan="7" style="text-align:center;padding:20px;color:#6b7280;">No hay controles registrados.</td></tr>'}
+</table>
+</div>
+{pag_html}
+</body></html>"""
+
+
+
 def calidad_escaneo():
     html = """
     <html>
@@ -3594,6 +4259,7 @@ def listar_controles_pintura():
 
     <div class="actions">
         <a href="/modulo/calidad/escaneo/control-pintura" class="btn btn-blue">➕ Nuevo Control</a>
+        <a href="/home" class="btn btn-blue">📊 Estado de piezas por proceso</a>
         <a href="/modulo/calidad/escaneo" class="btn btn-blue">⬅️ Volver a Sub Módulos</a>
     </div>
     </body>
