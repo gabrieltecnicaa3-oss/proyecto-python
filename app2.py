@@ -711,6 +711,10 @@ def init_db():
         ("programacion", "hito_titulo", "TEXT"),
         ("programacion", "hito_fecha", "DATE"),
         ("programacion", "orden", "INTEGER DEFAULT 0"),
+        # control_despacho: columnas añadidas — PRAGMA falla en MySQL, usar ALTER directo
+        ("control_despacho", "obra", "TEXT"),
+        ("control_despacho", "detalle_control", "TEXT"),
+        ("control_despacho", "fecha_creacion", "DATETIME"),
     ]
     for _tabla, _col, _def in columnas_criticas:
         try:

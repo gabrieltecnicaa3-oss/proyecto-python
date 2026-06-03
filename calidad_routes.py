@@ -782,6 +782,7 @@ def calidad_despacho():
             ensure_ascii=False,
         )
         control_id_guardado = None
+        _error_guardado = None
         try:
             _ins_cur = db.execute(
                 """
@@ -796,7 +797,24 @@ def calidad_despacho():
                 _registrar_despacho_en_procesos(db, ot_id_doc, obra, fecha, responsable, firma_digital, piezas_sel)
             db.commit()
         except Exception as exc:
+            _error_guardado = str(exc)
             print(f"[control_despacho] error guardando control: {exc}")
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
+        if _error_guardado:
+            return f"""<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{{font-family:Arial;background:#fff7ed;padding:20px;margin:0;}}
+.card{{max-width:600px;margin:40px auto;background:white;border-radius:12px;padding:24px;border:1px solid #fca5a5;}}
+.err{{background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:8px;padding:14px;margin-bottom:16px;font-weight:bold;}}
+.btn{{display:inline-block;background:#f97316;color:white;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:700;margin-right:8px;}}
+</style></head><body><div class="card">
+<div class="err">&#10007; Error al guardar el control: {html_lib.escape(_error_guardado)}</div>
+<a href="/modulo/calidad/despacho" class="btn">&#8592; Volver al formulario</a>
+</div></body></html>""", 500
 
         # -- Si solo guardar, volver con mensaje + boton PDF --
         if accion == "guardar":
