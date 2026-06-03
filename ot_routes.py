@@ -1097,7 +1097,9 @@ def ot_reabrir(ot_id):
 def historial_ots():
     db = get_db()
     ots_cerradas = db.execute("""
-        SELECT * FROM ordenes_trabajo 
+        SELECT id, cliente, obra, titulo, fecha_entrega, estado,
+               tipo_estructura, fecha_cierre
+        FROM ordenes_trabajo 
         WHERE fecha_cierre IS NOT NULL AND (es_mantenimiento IS NULL OR es_mantenimiento = 0)
         ORDER BY fecha_cierre DESC
     """).fetchall()
@@ -1174,17 +1176,17 @@ def historial_ots():
             </tr>
         """
         for ot in ots_cerradas:
-            cierre_txt = (str(ot[12])[:16] if (len(ot) > 12 and ot[12]) else "-")
+            cierre_txt = (str(ot[7])[:16] if ot[7] else "-")
             html += f"""
             <tr style="background:#f0f0f0;">
                 <td><b>{ot[0]}</b></td>
-                <td>{ot[1]}</td>
-                <td>{ot[2]}</td>
-                <td>{ot[3]}</td>
-                <td>{ot[9] or '---'}</td>
-                <td>{ot[4]}</td>
-                <td>{ot[5]}</td>
-                <td><b>🔒 {cierre_txt}</b></td>
+                <td>{html_lib.escape(str(ot[1] or ''))}</td>
+                <td>{html_lib.escape(str(ot[2] or ''))}</td>
+                <td>{html_lib.escape(str(ot[3] or ''))}</td>
+                <td>{html_lib.escape(str(ot[6] or '---'))}</td>
+                <td>{html_lib.escape(str(ot[4] or ''))}</td>
+                <td>{html_lib.escape(str(ot[5] or ''))}</td>
+                <td><b>🔒 {html_lib.escape(cierre_txt)}</b></td>
                 <td>
                     <a href="/modulo/ot/editar/{ot[0]}" class="btn" style="background: #4facfe;">Ver</a>
                     <form method="post" action="/modulo/ot/reabrir/{ot[0]}" style="display:inline;">
