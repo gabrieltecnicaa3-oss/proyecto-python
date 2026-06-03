@@ -232,8 +232,15 @@ def _es_descripcion_inserto(descripcion):
     return "INSERTO" in str(descripcion or "").strip().upper()
 
 
-def _pesos_avance_por_pieza(desc_pieza, pesos_ot):
+def _es_inserto(desc_pieza, pos=None):
+    """Retorna True si la pieza es un inserto (por descripción o por código de posición)."""
     if _es_descripcion_inserto(desc_pieza):
+        return True
+    return str(pos or "").strip().upper().startswith("INS")
+
+
+def _pesos_avance_por_pieza(desc_pieza, pesos_ot, pos=None):
+    if _es_inserto(desc_pieza, pos=pos):
         return {
             "ARMADO": 90.0,
             "SOLDADURA": 0.0,
@@ -293,7 +300,7 @@ def _avance_estimado_excel_sin_total(db, ot_id, excel_path):
         for pos_real_txt, filas in filas_por_pos.items():
             base = _pos_base(pos_real_txt)
             aprobados = set(_aprobados_de_filas(filas, orden_flujo=orden_flujo))
-            pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(pos_real_txt, ""), pesos)
+            pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(pos_real_txt, ""), pesos, pos=pos_real_txt)
             ratio = _avance_ratio_desde_aprobados(aprobados, pesos_pos)
             ratio_por_base[base] = max(ratio_por_base.get(base, 0.0), ratio)
 
@@ -390,7 +397,7 @@ def calcular_avance_ot(db, ot_id):
         avance_sum = 0.0
         for posicion in posiciones:
             procesos_aprobados = set(obtener_procesos_completados(posicion, ot_id=ot_id))
-            pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(str(posicion), ""), pesos)
+            pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(str(posicion), ""), pesos, pos=posicion)
             avance_pieza = 0.0
             if "ARMADO" in procesos_aprobados:
                 avance_pieza += pesos_pos["ARMADO"]
@@ -416,7 +423,7 @@ def calcular_avance_ot(db, ot_id):
         total_kg += kg_pieza
 
         procesos_aprobados = set(obtener_procesos_completados(posicion, ot_id=ot_id))
-        pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(str(posicion), ""), pesos)
+        pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(str(posicion), ""), pesos, pos=posicion)
         avance_pieza = 0.0
         if "ARMADO" in procesos_aprobados:
             avance_pieza += pesos_pos["ARMADO"]
@@ -587,7 +594,7 @@ def _avance_y_desglose_ot(db, ot_id):
                 for pos_real, filas in filas_por_pos.items():
                     base = _pos_base(pos_real)
                     ap = aprobados_por_pos.get(pos_real) or set(_aprobados_de_filas(filas, orden_flujo=orden_flujo))
-                    pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(pos_real, ""), pesos)
+                    pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(pos_real_txt, ""), pesos, pos=pos_real_txt)
                     ratio = _avance_ratio_desde_aprobados(ap, pesos_pos)
                     ratio_por_base[base] = max(ratio_por_base.get(base, 0.0), ratio)
 
@@ -620,7 +627,7 @@ def _avance_y_desglose_ot(db, ot_id):
         avance_sum = 0.0
         for pos in valid_positions:
             ap = aprobados_por_pos.get(pos, set())
-            pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(pos, ""), pesos)
+            pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(pos, ""), pesos, pos=pos)
             avance_sum += _avance_ratio_desde_aprobados(ap, pesos_pos)
         pct = max(0, min(100, round((avance_sum / len(valid_positions)) * 100)))
         _avance_cache[ot_id] = (max_proc_id, pct, total_piezas, conteo, now, 0.0, 0.0)
@@ -633,7 +640,7 @@ def _avance_y_desglose_ot(db, ot_id):
             continue
         total_kg += kg_pieza
         ap = aprobados_por_pos.get(posicion, set())
-        pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(posicion, ""), pesos)
+        pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(posicion, ""), pesos, pos=posicion)
         av = 0.0
         if "ARMADO" in ap:
             av += pesos_pos["ARMADO"]

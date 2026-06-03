@@ -65,6 +65,10 @@ def _pieza_es_inserto(db, pos, obra=None, ot_id=None):
     if not pos_txt:
         return False
 
+    # Si la posición empieza con "INS" es inserto directamente (sin consultar BD)
+    if pos_txt.upper().startswith("INS"):
+        return True
+
     row = None
     if ot_id is not None:
         row = db.execute(
