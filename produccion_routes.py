@@ -301,8 +301,14 @@ def _avance_estimado_excel_sin_total(db, ot_id, excel_path):
         ratio_por_base = {}
         for pos_real_txt, filas in filas_por_pos.items():
             base = _pos_base(pos_real_txt)
-            aprobados = set(_aprobados_de_filas(filas, orden_flujo=orden_flujo))
-            pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(pos_real_txt, ""), pesos, pos=pos_real_txt)
+            desc_pos = desc_por_pos.get(pos_real_txt, "")
+            # Usar flujo específico por pieza: INSERTO → solo ARMADO→DESPACHO
+            if _es_inserto(desc_pos, pos=pos_real_txt):
+                orden_flujo_pos = ["ARMADO", "DESPACHO"]
+            else:
+                orden_flujo_pos = orden_flujo
+            aprobados = set(_aprobados_de_filas(filas, orden_flujo=orden_flujo_pos))
+            pesos_pos = _pesos_avance_por_pieza(desc_pos, pesos, pos=pos_real_txt)
             ratio = _avance_ratio_desde_aprobados(aprobados, pesos_pos)
             ratio_por_base[base] = max(ratio_por_base.get(base, 0.0), ratio)
 
