@@ -96,6 +96,19 @@ def _pieza_es_inserto(db, pos, obra=None, ot_id=None):
             """,
             (pos_txt, obra),
         ).fetchone()
+    else:
+        # Fallback: buscar por posicion solamente (cuando no hay obra ni ot_id disponibles)
+        row = db.execute(
+            """
+            SELECT COALESCE(descripcion, '')
+            FROM procesos
+            WHERE TRIM(COALESCE(posicion, '')) = TRIM(?)
+              AND TRIM(COALESCE(descripcion, '')) <> ''
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (pos_txt,),
+        ).fetchone()
 
     desc_u = str(row[0] or "").strip().upper() if row else ""
     return "INSERTO" in desc_u

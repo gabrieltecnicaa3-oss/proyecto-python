@@ -4440,11 +4440,19 @@ def pieza(pos):
     soldadura_aprobada = "SOLDADURA" in procesos_completados_btn
     pintura_aprobada = "PINTURA" in procesos_completados_btn
     ot_sin_pintura = _ot_no_requiere_pintura(db, obra=obra_url if obra_url else None, ot_id=ot_scope_btn)
+    # Detectar si es pieza INSERTO directamente desde las filas ya cargadas (funciona aunque obra esté vacía)
+    _desc_btn = ""
+    if datos_iniciales and len(datos_iniciales) > 12:
+        _desc_btn = str(datos_iniciales[12] or "").strip().upper()
+    if not _desc_btn:
+        for _r in todas_filas:
+            if len(_r) > 12 and _r[12]:
+                _desc_btn = str(_r[12] or "").strip().upper()
+                break
+    es_inserto_btn = "INSERTO" in _desc_btn or pos.upper().startswith("INS")
     # Para piezas INSERTO (flujo ARMADO→DESPACHO): si ARMADO está hecho, va directo a DESPACHO
-    orden_procesos_btn = obtener_orden_procesos_ot(db, obra=obra_url if obra_url else None, ot_id=ot_scope_btn, pos=pos)
-    if "SOLDADURA" not in orden_procesos_btn and "PINTURA" not in orden_procesos_btn:
-        if "ARMADO" in procesos_completados_btn:
-            pintura_aprobada = True
+    if es_inserto_btn and "ARMADO" in procesos_completados_btn:
+        pintura_aprobada = True
     if es_completada:
         btn_texto = "🔒 PIEZA COMPLETADA"
     elif pintura_aprobada or ot_sin_pintura:
