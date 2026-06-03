@@ -52,6 +52,8 @@ def _aprobados_de_filas(filas, orden_flujo=None):
     aprobados = set()
     for proceso, estado, re_inspeccion, reproceso in filas:
         proc = (proceso or "").strip().upper()
+        if proc == "P/DESPACHO":
+            proc = "DESPACHO"
         if proc not in ORDEN_PROCESOS:
             continue
         if proc == "PINTURA":

@@ -261,6 +261,8 @@ def obtener_procesos_completados(pos, obra=None, ot_id=None):
     aprobados = set()
     for proceso, estado, reinspeccion, reproceso in rows:
         proc = (proceso or "").strip().upper()
+        if proc == "P/DESPACHO":
+            proc = "DESPACHO"
         if proc not in ORDEN_PROCESOS:
             continue
 
