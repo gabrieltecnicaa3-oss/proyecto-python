@@ -377,7 +377,32 @@ def calcular_avance_ot(db, ot_id):
                 kg_por_pos[str(pos)] = kg
 
     if not kg_por_pos:
-        return 0
+        # Sin datos de peso: calcula avance ponderado por conteo de piezas
+        posiciones_row = db.execute(
+            "SELECT DISTINCT TRIM(COALESCE(posicion,'')) FROM procesos"
+            " WHERE ot_id=? AND COALESCE(eliminado,0)=0 AND TRIM(COALESCE(posicion,''))<>''",
+            (ot_id,),
+        ).fetchall()
+        posiciones = [r[0] for r in posiciones_row if r[0]]
+        if not posiciones:
+            return 0
+        desc_por_pos = _descripciones_por_pos_ot(db, ot_id)
+        avance_sum = 0.0
+        for posicion in posiciones:
+            procesos_aprobados = set(obtener_procesos_completados(posicion, ot_id=ot_id))
+            pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(str(posicion), ""), pesos)
+            avance_pieza = 0.0
+            if "ARMADO" in procesos_aprobados:
+                avance_pieza += pesos_pos["ARMADO"]
+            if "SOLDADURA" in procesos_aprobados:
+                avance_pieza += pesos_pos["SOLDADURA"]
+            if "PINTURA" in procesos_aprobados:
+                avance_pieza += pesos_pos["PINTURA"]
+            if "P/DESPACHO" in procesos_aprobados or "DESPACHO" in procesos_aprobados:
+                avance_pieza += pesos_pos["DESPACHO"]
+            avance_sum += avance_pieza / 100.0
+        porcentaje = round((avance_sum / len(posiciones)) * 100)
+        return max(0, min(100, porcentaje))
 
     total_kg = 0.0
     avance_kg = 0.0
@@ -588,8 +613,18 @@ def _avance_y_desglose_ot(db, ot_id):
 
     # 7. Avance — path 3: fallback con metadatos de cantidad/peso de procesos
     if not kg_por_pos_meta:
-        _avance_cache[ot_id] = (max_proc_id, 0, total_piezas, conteo, now, 0.0, 0.0)
-        return 0, total_piezas, conteo, 0.0, 0.0
+        # Sin datos de peso: calcula avance ponderado por conteo de piezas (igual peso para cada una)
+        if not valid_positions:
+            _avance_cache[ot_id] = (max_proc_id, 0, total_piezas, conteo, now, 0.0, 0.0)
+            return 0, total_piezas, conteo, 0.0, 0.0
+        avance_sum = 0.0
+        for pos in valid_positions:
+            ap = aprobados_por_pos.get(pos, set())
+            pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(pos, ""), pesos)
+            avance_sum += _avance_ratio_desde_aprobados(ap, pesos_pos)
+        pct = max(0, min(100, round((avance_sum / len(valid_positions)) * 100)))
+        _avance_cache[ot_id] = (max_proc_id, pct, total_piezas, conteo, now, 0.0, 0.0)
+        return pct, total_piezas, conteo, 0.0, 0.0
 
     total_kg = 0.0
     avance_kg = 0.0
