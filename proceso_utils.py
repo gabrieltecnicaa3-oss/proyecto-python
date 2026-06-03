@@ -70,6 +70,7 @@ def _pieza_es_inserto(db, pos, obra=None, ot_id=None):
         return True
 
     row = None
+    _fallback_pos = False
     if ot_id is not None:
         row = db.execute(
             """
@@ -83,6 +84,8 @@ def _pieza_es_inserto(db, pos, obra=None, ot_id=None):
             """,
             (pos_txt, ot_id),
         ).fetchone()
+        if row is None:
+            _fallback_pos = True
     elif obra:
         row = db.execute(
             """
@@ -97,7 +100,10 @@ def _pieza_es_inserto(db, pos, obra=None, ot_id=None):
             (pos_txt, obra),
         ).fetchone()
     else:
-        # Fallback: buscar por posicion solamente (cuando no hay obra ni ot_id disponibles)
+        _fallback_pos = True
+
+    if _fallback_pos:
+        # Fallback: buscar por posicion sola (sin filtro de obra/ot_id)
         row = db.execute(
             """
             SELECT COALESCE(descripcion, '')

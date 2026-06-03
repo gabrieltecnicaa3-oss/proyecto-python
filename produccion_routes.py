@@ -227,6 +227,24 @@ def _descripciones_por_pos_ot(db, ot_id):
         if not pos_txt or pos_txt in desc_por_pos:
             continue
         desc_por_pos[pos_txt] = str(desc or "").strip()
+
+    # Fallback: para posiciones sin descripcion en filas con ot_id, buscar en toda la tabla
+    posiciones_sin_desc = [p for p, d in desc_por_pos.items() if not d]
+    for pos_txt in posiciones_sin_desc:
+        row_fb = db.execute(
+            """
+            SELECT TRIM(COALESCE(descripcion,''))
+            FROM procesos
+            WHERE TRIM(COALESCE(posicion,'')) = TRIM(?)
+              AND TRIM(COALESCE(descripcion,'')) <> ''
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (pos_txt,),
+        ).fetchone()
+        if row_fb and row_fb[0]:
+            desc_por_pos[pos_txt] = str(row_fb[0]).strip()
+
     return desc_por_pos
 
 
