@@ -3282,7 +3282,7 @@ def home(page=1):
             # Obtener descripción de la pieza
             desc_raw = str(desc_por_pieza.get((pos, obra_key, ot_key), '') or '').strip()
             desc_pieza = html_lib.escape(desc_raw)
-            es_pieza_inserto = 'INSERTO' in desc_raw.upper()
+            es_pieza_inserto = 'INSERTO' in desc_raw.upper() or str(pos).upper().startswith('INS')
 
             obra_raw = str(obra_key or '').strip()
             
@@ -4440,6 +4440,11 @@ def pieza(pos):
     soldadura_aprobada = "SOLDADURA" in procesos_completados_btn
     pintura_aprobada = "PINTURA" in procesos_completados_btn
     ot_sin_pintura = _ot_no_requiere_pintura(db, obra=obra_url if obra_url else None, ot_id=ot_scope_btn)
+    # Para piezas INSERTO (flujo ARMADO→DESPACHO): si ARMADO está hecho, va directo a DESPACHO
+    orden_procesos_btn = obtener_orden_procesos_ot(db, obra=obra_url if obra_url else None, ot_id=ot_scope_btn, pos=pos)
+    if "SOLDADURA" not in orden_procesos_btn and "PINTURA" not in orden_procesos_btn:
+        if "ARMADO" in procesos_completados_btn:
+            pintura_aprobada = True
     if es_completada:
         btn_texto = "🔒 PIEZA COMPLETADA"
     elif pintura_aprobada or ot_sin_pintura:

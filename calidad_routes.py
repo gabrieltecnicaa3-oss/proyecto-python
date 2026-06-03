@@ -603,6 +603,8 @@ def api_piezas_listas_despacho():
     db = get_db()
     no_pintura = _ot_no_requiere_pintura(db, ot_id=ot_id)
     proceso_obj = "SOLDADURA" if no_pintura else "PINTURA"
+
+    # Query principal: piezas que completaron el último proceso antes de DESPACHO
     rows = db.execute(
         """
         SELECT p.posicion, p.estado, p.re_inspeccion,
@@ -625,16 +627,56 @@ def api_piezas_listas_despacho():
               SELECT 1 FROM procesos p3
               WHERE p3.ot_id = p.ot_id
                 AND TRIM(p3.posicion) = TRIM(p.posicion)
-                AND UPPER(TRIM(p3.proceso)) = 'DESPACHO'
+                AND UPPER(TRIM(p3.proceso)) IN ('DESPACHO', 'P/DESPACHO')
                 AND p3.eliminado = 0
           )
         ORDER BY p.posicion
         """,
         (ot_id, proceso_obj),
     ).fetchall()
+
+    # Query adicional: piezas INSERTO (por descripción o posición) que tienen ARMADO
+    # aprobado pero aún no tienen DESPACHO — su flujo es ARMADO→DESPACHO directamente
+    inserto_rows = db.execute(
+        """
+        SELECT p.posicion, p.estado, p.re_inspeccion,
+               COALESCE(p.descripcion, '') AS descripcion,
+               COALESCE(p.perfil, '') AS perfil,
+               COALESCE(p.cantidad, '') AS cantidad,
+               COALESCE(p.peso, '') AS peso
+        FROM procesos p
+        WHERE p.ot_id = ?
+          AND p.eliminado = 0
+          AND UPPER(TRIM(p.proceso)) = 'ARMADO'
+          AND (
+              UPPER(TRIM(COALESCE(p.descripcion, ''))) LIKE '%INSERTO%'
+              OR UPPER(TRIM(COALESCE(p.posicion, ''))) LIKE 'INS%'
+          )
+          AND p.id = (
+              SELECT MAX(p2.id) FROM procesos p2
+              WHERE p2.ot_id = p.ot_id
+                AND TRIM(p2.posicion) = TRIM(p.posicion)
+                AND UPPER(TRIM(p2.proceso)) = 'ARMADO'
+                AND p2.eliminado = 0
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM procesos p3
+              WHERE p3.ot_id = p.ot_id
+                AND TRIM(p3.posicion) = TRIM(p.posicion)
+                AND UPPER(TRIM(p3.proceso)) IN ('DESPACHO', 'P/DESPACHO')
+                AND p3.eliminado = 0
+          )
+        ORDER BY p.posicion
+        """,
+        (ot_id,),
+    ).fetchall()
+
     resultado = []
+    posiciones_agregadas = set()
+
     for pos, estado, re_insp, desc, perfil, cant, peso in rows:
         if _proceso_aprobado(estado, re_insp):
+            posiciones_agregadas.add(str(pos or "").strip())
             resultado.append({
                 "posicion": pos,
                 "descripcion": desc,
@@ -642,6 +684,19 @@ def api_piezas_listas_despacho():
                 "cantidad": str(cant) if cant else "",
                 "peso": str(peso) if peso else "",
             })
+
+    for pos, estado, re_insp, desc, perfil, cant, peso in inserto_rows:
+        pos_limpia = str(pos or "").strip()
+        if pos_limpia not in posiciones_agregadas and _proceso_aprobado(estado, re_insp):
+            resultado.append({
+                "posicion": pos,
+                "descripcion": desc,
+                "perfil": perfil,
+                "cantidad": str(cant) if cant else "",
+                "peso": str(peso) if peso else "",
+            })
+
+    resultado.sort(key=lambda x: str(x.get("posicion") or ""))
     return jsonify(resultado)
 
 
