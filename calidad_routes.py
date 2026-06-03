@@ -1728,11 +1728,11 @@ def calidad_despacho_historial():
     base_where = "WHERE 1=1"
     params = []
     if obra_f:
-        base_where += " AND LOWER(TRIM(obra)) = LOWER(TRIM(?))"
+        base_where += " AND LOWER(TRIM(COALESCE(obra,''))) = LOWER(TRIM(?))"
         params.append(obra_f)
 
     total = db.execute(
-        f"SELECT COUNT(1) FROM control_despacho {base_where}", params
+        f"SELECT COUNT(1) FROM control_despacho {base_where}", tuple(params)
     ).fetchone()[0]
     total_pages = max(1, (int(total) + per_page - 1) // per_page)
     offset = (page - 1) * per_page
@@ -1741,7 +1741,7 @@ def calidad_despacho_historial():
         f"""SELECT id, ot_id, obra, fecha, responsable, fecha_creacion
             FROM control_despacho {base_where}
             ORDER BY id DESC LIMIT ? OFFSET ?""",
-        params + [per_page, offset],
+        tuple(params) + (per_page, offset),
     ).fetchall()
 
     obras_disp = db.execute(
