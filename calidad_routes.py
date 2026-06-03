@@ -1343,8 +1343,6 @@ hr.div {{ border:none; border-top:2px solid #fed7aa; margin:14px 0; }}
 
     function selTodas(val) {{
         document.querySelectorAll('input.pieza-chk').forEach(c => c.checked = !!val);
-        const chkAll = document.getElementById('chk_todas');
-        if (chkAll) chkAll.checked = !!val;
     }}
     window.selTodas = selTodas;
 
@@ -1363,25 +1361,21 @@ hr.div {{ border:none; border-top:2px solid #fed7aa; margin:14px 0; }}
                     return;
                 }}
                 let h = '<div class="sel-actions">';
+                h += '<span style="font-size:12px;color:#7c2d12;margin-right:8px;"><b>' + piezas.length + '</b> pieza(s)</span>';
                 h += '<button type="button" class="sel-btn" onclick="selTodas(true)">Seleccionar todas</button>';
                 h += '<button type="button" class="sel-btn" onclick="selTodas(false)">Deseleccionar todas</button>';
                 h += '</div>';
-                h += '<table class="piezas-table"><thead><tr>';
-                h += '<th style="width:36px;text-align:center;"><input type="checkbox" id="chk_todas" checked onchange="selTodas(this.checked)" style="width:16px;height:16px;cursor:pointer;"></th>';
-                h += '<th>Posicion</th><th>Descripcion</th><th>Perfil</th><th>Cant.</th><th>Peso (kg)</th>';
-                h += '</tr></thead><tbody>';
+                h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;">';
                 for (const p of piezas) {{
                     const pos = (p.posicion || '').replace(/"/g, '&quot;');
-                    h += '<tr>';
-                    h += '<td style="text-align:center;"><input type="checkbox" class="pieza-chk" name="pieza_sel" value="' + pos + '" checked></td>';
-                    h += '<td><b>' + esc(p.posicion || '') + '</b></td>';
-                    h += '<td>' + esc(p.descripcion || '') + '</td>';
-                    h += '<td>' + esc(p.perfil || '') + '</td>';
-                    h += '<td>' + esc(p.cantidad || '') + '</td>';
-                    h += '<td>' + esc(p.peso || '') + '</td>';
-                    h += '</tr>';
+                    const desc = esc(p.descripcion || '');
+                    h += '<label style="display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:5px;border:1px solid #fed7aa;background:#fffaf5;cursor:pointer;min-width:0;">';
+                    h += '<input type="checkbox" class="pieza-chk" name="pieza_sel" value="' + pos + '" checked style="width:15px;height:15px;flex-shrink:0;cursor:pointer;">';
+                    h += '<span style="font-weight:700;color:#9a3412;white-space:nowrap;">' + esc(p.posicion || '') + '</span>';
+                    if (desc) h += '<span style="color:#374151;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + desc + '">' + desc + '</span>';
+                    h += '</label>';
                 }}
-                h += '</tbody></table>';
+                h += '</div>';
                 piezasCont.innerHTML = h;
             }})
             .catch(() => {{
