@@ -1894,7 +1894,7 @@ select,input{{padding:8px 10px;border:1px solid #fdba74;border-radius:6px;backgr
 </body></html>"""
 
 
-
+@calidad_bp.route("/modulo/calidad/escaneo", methods=["GET"])
 def calidad_escaneo():
     html = """
     <html>
