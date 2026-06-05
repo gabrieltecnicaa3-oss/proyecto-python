@@ -3440,10 +3440,17 @@ def calidad_escaneo_form_pintura():
             if not sup_resp:
                 fila_incompleta = True
 
+            # El espesor es obligatorio siempre (tanto fondo como terminación)
+            if fondo_espesor <= 0:
+                fila_incompleta = True
+            if term_espesor <= 0:
+                fila_incompleta = True
+
+            # Otros campos obligatorios solo si el estado de superficie no es "NO APLICA"
             if sup_estado != "NO APLICA":
-                if fondo_espesor <= 0 or not fondo_fecha or not fondo_resp:
+                if not fondo_fecha or not fondo_resp:
                     fila_incompleta = True
-                if term_espesor <= 0 or not term_fecha or not term_resp:
+                if not term_fecha or not term_resp:
                     fila_incompleta = True
 
             if fila_incompleta:
@@ -3758,15 +3765,20 @@ def calidad_escaneo_form_pintura():
                 step="0.1"
                 name="fondo_espesor[]"
                 class="fondo-espesor"
-                data-idx="{idx}"></td>
+                data-idx="{idx}"
+                required
+                min="0.01"
+                placeholder="Obligatorio"></td>
             <td><input type="date"
                 name="fondo_fecha[]"
                 class="fondo-fecha"
-                data-idx="{idx}"></td>
+                data-idx="{idx}"
+                required></td>
             <td>
                 <select name="fondo_responsable[]"
                     class="fondo-resp"
-                    data-idx="{idx}">
+                    data-idx="{idx}"
+                    required>
                     {opciones_responsables}
                 </select>
                 <input type="text"
@@ -3782,15 +3794,20 @@ def calidad_escaneo_form_pintura():
                 step="0.1"
                 name="term_espesor[]"
                 class="term-espesor"
-                data-idx="{idx}"></td>
+                data-idx="{idx}"
+                required
+                min="0.01"
+                placeholder="Obligatorio"></td>
             <td><input type="date"
                 name="term_fecha[]"
                 class="term-fecha"
-                data-idx="{idx}"></td>
+                data-idx="{idx}"
+                required></td>
             <td>
                 <select name="term_responsable[]"
                     class="term-resp"
-                    data-idx="{idx}">
+                    data-idx="{idx}"
+                    required>
                     {opciones_responsables}
                 </select>
                 <input type="text"
