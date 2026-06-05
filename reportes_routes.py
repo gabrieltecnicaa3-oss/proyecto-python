@@ -201,14 +201,29 @@ def _collect(db, obra, year, week, week_start, week_end):
         f"SELECT MIN(fecha) FROM procesos WHERE ot_id IN ({ph}) AND eliminado=0", ot_ids
     ).fetchone()[0]
 
-    # Programación (Gantt)
+    # Programación (Gantt): respetar orden manual del módulo Programación.
     prog_rows = db.execute(
-        f"SELECT p.ot_id, p.fecha_inicio, p.fecha_fin "
+        f"SELECT p.ot_id, p.fecha_inicio, p.fecha_fin, COALESCE(p.orden, p.id) AS orden_prog, p.id "
         f"FROM programacion p "
         f"WHERE p.ot_id IN ({ph}) "
-        f"ORDER BY p.fecha_inicio ASC",
+        f"ORDER BY COALESCE(p.orden, p.id) ASC, p.id ASC",
         ot_ids
     ).fetchall()
+
+    # Avance para Gantt de Reportes: usar estado_avance guardado (mismo criterio que Programación).
+    avance_gantt_by_ot = {}
+    try:
+      av_rows = db.execute(
+        f"SELECT id, COALESCE(estado_avance, 0) FROM ordenes_trabajo WHERE id IN ({ph})",
+        ot_ids,
+      ).fetchall()
+      for _ot_id, _av in av_rows:
+        try:
+          avance_gantt_by_ot[int(_ot_id)] = max(0, min(100, int(round(float(_av or 0)))))
+        except Exception:
+          avance_gantt_by_ot[int(_ot_id)] = 0
+    except Exception:
+      avance_gantt_by_ot = {}
 
     # Estado por OT: cumplido / en término / atrasado
     today_d = date.today()
@@ -313,7 +328,7 @@ def _collect(db, obra, year, week, week_start, week_end):
         first_fecha=first_fecha, n_prev=n_prev, n_this=n_this,
         year=year, week=week, week_start=week_start, week_end=week_end,
         n_cumplido=n_cumplido, n_en_termino=n_en_termino, n_atrasado=n_atrasado,
-        prog_rows=prog_rows, avance_by_ot=avance_by_ot,
+        prog_rows=prog_rows, avance_by_ot=avance_by_ot, avance_gantt_by_ot=avance_gantt_by_ot,
     )
 
 
@@ -335,14 +350,17 @@ def _svg_gantt(prog_rows, ots, avance_by_ot=None):
 
     fechas_i, fechas_f, valid_rows = [], [], []
     for r in prog_rows:
-        try:
-            fi = datetime.strptime(str(r[1])[:10], "%Y-%m-%d").date()
-            ff = datetime.strptime(str(r[2])[:10], "%Y-%m-%d").date()
-            fechas_i.append(fi)
-            fechas_f.append(ff)
-            valid_rows.append((r[0], fi, ff))
-        except Exception:
-            pass
+      try:
+        fi = datetime.strptime(str(r[1])[:10], "%Y-%m-%d").date()
+        ff = datetime.strptime(str(r[2])[:10], "%Y-%m-%d").date()
+        fechas_i.append(fi)
+        fechas_f.append(ff)
+        # r esperado: (ot_id, fecha_inicio, fecha_fin, orden_prog?, prog_id?)
+        orden_prog = r[3] if len(r) > 3 else len(valid_rows)
+        prog_id = r[4] if len(r) > 4 else len(valid_rows)
+        valid_rows.append((r[0], fi, ff, orden_prog, prog_id))
+      except Exception:
+        pass
 
     if not fechas_i:
         return '<p style="color:#9ca3af;font-size:.85rem;margin:12px 0">Sin datos de programación para esta obra.</p>'
@@ -357,22 +375,17 @@ def _svg_gantt(prog_rows, ots, avance_by_ot=None):
 
     date_min = min(fechas_i) - timedelta(days=3)
     date_max = max(fechas_f) + timedelta(days=10)
-    total_days = max((date_max - date_min).days, 1)
+    total_days = max((date_max - date_min).days + 1, 1)
 
     ROW_H, LABEL_W, CHART_W, HEADER_H = 30, 180, 680, 28
     COLORS = ["#3b82f6", "#f97316", "#22c55e", "#a855f7", "#ec4899", "#14b8a6", "#f59e0b", "#6366f1"]
 
-    by_ot = {}
-    for ot_id, fi, ff in valid_rows:
-        by_ot.setdefault(ot_id, []).append((fi, ff))
-    ot_order = sorted(by_ot.keys(), key=lambda oid: min(fi for fi, _ in by_ot[oid]))
-
-    n_rows = len(ot_order)
+    n_rows = len(valid_rows)
     H = HEADER_H + n_rows * ROW_H + 24
     W = LABEL_W + CHART_W
 
     def day_x(d):
-        return LABEL_W + int((d - date_min).days / total_days * CHART_W)
+      return LABEL_W + int((d - date_min).days / total_days * CHART_W)
 
     grid = ""
     cur = date(date_min.year, date_min.month, 1)
@@ -395,7 +408,7 @@ def _svg_gantt(prog_rows, ots, avance_by_ot=None):
     # Definir patrón rayado para subcontratos en <defs> del SVG
     defs = '<defs><pattern id="subhatch" x="0" y="0" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#e2e8f0"/><line x1="0" y1="0" x2="8" y2="8" stroke="#94a3b8" stroke-width="1.5"/></pattern></defs>'
 
-    for i, ot_id in enumerate(ot_order):
+    for i, (ot_id, fi_row, ff_row, _orden_prog, _prog_id) in enumerate(valid_rows):
         y_base = HEADER_H + i * ROW_H
         ot     = ot_info.get(ot_id)
         titulo = _e(ot[1])[:28] if ot else f"OT {ot_id}"
@@ -406,29 +419,28 @@ def _svg_gantt(prog_rows, ots, avance_by_ot=None):
         bars += (f'<text x="4" y="{y_base + 13}" font-size="10" fill="#e36c09" font-weight="700">OT {ot_id}</text>'
                  f'<text x="4" y="{y_base + 24}" font-size="8" fill="#6b7280">{titulo}</text>')
 
-        for fi, ff in by_ot[ot_id]:
-            x1 = day_x(fi)
-            x2 = day_x(ff)
-            bw = max(x2 - x1, 6)
-            # Barra de programación (parte superior de la fila)
-            bar_y   = y_base + 4
-            bar_h   = 13
-            prog_y  = y_base + 19  # barra de avance debajo
-            prog_h  = 7
-            if es_subcontrato:
-                bars += f'<rect x="{x1}" y="{bar_y}" width="{bw}" height="{bar_h}" fill="url(#subhatch)" rx="3" stroke="#94a3b8" stroke-width="1"/>'
-            else:
-                bars += f'<rect x="{x1}" y="{bar_y}" width="{bw}" height="{bar_h}" fill="{clr}" rx="3" opacity="0.82"/>'
+        x1 = day_x(fi_row)
+        x2 = day_x(ff_row + timedelta(days=1))
+        bw = max(x2 - x1, 6)
+        # Barra de programación (parte superior de la fila)
+        bar_y   = y_base + 4
+        bar_h   = 13
+        prog_y  = y_base + 19  # barra de avance debajo
+        prog_h  = 7
+        if es_subcontrato:
+          bars += f'<rect x="{x1}" y="{bar_y}" width="{bw}" height="{bar_h}" fill="url(#subhatch)" rx="3" stroke="#94a3b8" stroke-width="1"/>'
+        else:
+          bars += f'<rect x="{x1}" y="{bar_y}" width="{bw}" height="{bar_h}" fill="{clr}" rx="3" opacity="0.82"/>'
 
-            # Barra de avance debajo de la barra de programación
-            avance = avance_by_ot.get(ot_id, 0)
-            # Track gris
-            bars += f'<rect x="{x1}" y="{prog_y}" width="{bw}" height="{prog_h}" fill="#e5e7eb" rx="2"/>'
-            if avance > 0:
-                bw_avance = max(int(bw * avance / 100), 4)
-                bars += f'<rect x="{x1}" y="{prog_y}" width="{bw_avance}" height="{prog_h}" fill="#22c55e" rx="2"/>'
-                if bw_avance >= 18:
-                    bars += f'<text x="{x1 + bw_avance/2}" y="{prog_y + prog_h - 1}" text-anchor="middle" font-size="7" fill="#fff" font-weight="700">{int(avance)}%</text>'
+        # Barra de avance debajo de la barra de programación
+        avance = avance_by_ot.get(ot_id, 0)
+        # Track gris
+        bars += f'<rect x="{x1}" y="{prog_y}" width="{bw}" height="{prog_h}" fill="#e5e7eb" rx="2"/>'
+        if avance > 0:
+          bw_avance = max(int(bw * avance / 100), 4)
+          bars += f'<rect x="{x1}" y="{prog_y}" width="{bw_avance}" height="{prog_h}" fill="#22c55e" rx="2"/>'
+          if bw_avance >= 18:
+            bars += f'<text x="{x1 + bw_avance/2}" y="{prog_y + prog_h - 1}" text-anchor="middle" font-size="7" fill="#fff" font-weight="700">{int(avance)}%</text>'
 
         if ot and ot[3]:
             try:
@@ -1382,7 +1394,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 
     # Sección Gantt
     h_gantt   = next_sec("PROGRAMACIÓN DE FABRICACIÓN – DIAGRAMA GANTT")
-    gantt_svg = _svg_gantt(d.get("prog_rows", []), ots, d.get("avance_by_ot", {}))
+    gantt_svg = _svg_gantt(d.get("prog_rows", []), ots, d.get("avance_gantt_by_ot", d.get("avance_by_ot", {})))
     gantt_html = f"""
 <div class="section">
   <div class="section-header">{h_gantt}</div>
