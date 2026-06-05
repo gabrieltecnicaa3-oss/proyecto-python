@@ -2675,6 +2675,26 @@ def home(page=1):
             (pos_sel, obra_sel or '', ot_id_sel, ot_id_sel)
         ).fetchall()
 
+        if not rows and pos_sel:
+            # Fallback para registros legacy que quedaron sin ot_id/obra pero sí tienen la posición.
+            rows = db.execute(
+                """
+                            SELECT UPPER(TRIM(proceso)), UPPER(TRIM(COALESCE(estado, ''))), COALESCE(re_inspeccion, ''), COALESCE(firma_digital, ''), COALESCE(fecha, ''), COALESCE(estado_pieza, ''), COALESCE(reproceso, '')
+                FROM procesos
+                WHERE TRIM(COALESCE(posicion, '')) = TRIM(?)
+                  AND eliminado = 0
+                  AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('ARMADO','SOLDADURA','DESPACHO','P/DESPACHO')
+                ORDER BY
+                    CASE
+                        WHEN COALESCE(ot_id, -1) = COALESCE(?, -1) THEN 0
+                        WHEN TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, '')) THEN 1
+                        ELSE 2
+                    END,
+                    id DESC
+                """,
+                (pos_sel, ot_id_sel, obra_sel or ''),
+            ).fetchall()
+
         latest = {}
         firmas_faltantes = 0
         nc_total = 0
