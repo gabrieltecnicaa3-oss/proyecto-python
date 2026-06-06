@@ -1125,7 +1125,9 @@ def programacion_index():
     if ff_vista <= fi_vista:
         ff_vista = fi_vista + timedelta(days=89)
     obra_fil = (request.args.get("obra") or "").strip()
-    recalcular_avance_vivo = (request.args.get("avance_vivo") or "").strip() == "1"
+    # Por defecto usamos avance real de Producción para evitar desvíos por valores viejos en OT.
+    recalcular_param = (request.args.get("avance_vivo") or "").strip().lower()
+    recalcular_avance_vivo = recalcular_param != "0"
 
     fi_vista_str = fi_vista.strftime("%Y-%m-%d")
     ff_vista_str = ff_vista.strftime("%Y-%m-%d")
@@ -1209,12 +1211,13 @@ def programacion_index():
     }
     if recalcular_avance_vivo:
         live_calculados = 0
-        for ot_id_row in ot_ids_visibles:
+        max_live_por_request = max(_MAX_LIVE_AVANCE_POR_REQUEST, min(len(ot_ids_visibles), 25))
+        for ot_id_row in sorted(ot_ids_visibles):
             hot = _get_avance_cache_hot(ot_id_row)
             if hot is not None:
                 avance_live_by_ot[ot_id_row] = hot
                 continue
-            if live_calculados < _MAX_LIVE_AVANCE_POR_REQUEST:
+            if live_calculados < max_live_por_request:
                 avance_live_by_ot[ot_id_row] = _calcular_avance_cached(db, ot_id_row)
                 live_calculados += 1
     else:
@@ -1566,6 +1569,17 @@ def programacion_index():
 
     fi_str = fi_vista.strftime("%Y-%m-%d")
     ff_str = ff_vista.strftime("%Y-%m-%d")
+
+    def _shift_month(dt, months):
+        m = dt.month - 1 + months
+        y = dt.year + (m // 12)
+        m = (m % 12) + 1
+        dmax = monthrange(y, m)[1]
+        d = min(dt.day, dmax)
+        return date(y, m, d)
+
+    fi_prev_str = _shift_month(fi_vista, -1).strftime("%Y-%m-%d")
+    ff_prev_str = _shift_month(ff_vista, -1).strftime("%Y-%m-%d")
     obra_qs = ("&obra=" + html_lib.escape(obra_fil)) if obra_fil else ""
     _qs_refresh = [f"fi={fi_str}", f"ff={ff_str}", "avance_vivo=1"]
     if obra_fil:
@@ -1573,6 +1587,13 @@ def programacion_index():
     if vista:
         _qs_refresh.append("vista=" + quote(vista))
     _url_refresh_avance = "/modulo/programacion?" + "&".join(_qs_refresh)
+
+    _qs_prev_month = [f"fi={fi_prev_str}", f"ff={ff_prev_str}"]
+    if obra_fil:
+        _qs_prev_month.append("obra=" + quote(obra_fil))
+    if vista:
+        _qs_prev_month.append("vista=" + quote(vista))
+    _url_prev_month = "/modulo/programacion?" + "&".join(_qs_prev_month)
     _btn_active = "background:#6366f1;color:#fff;border-color:#6366f1;"
     btn_trimestral_active = _btn_active if vista in ("", "trimestral") else ""
     btn_semana_active    = _btn_active if vista == "semana"    else ""
@@ -1869,6 +1890,7 @@ function printCumplimiento() {{
             <a href="/modulo/programacion?vista=trimestral{obra_qs}" class="btn btn-sm" style="{btn_trimestral_active}">📊 Trimestral</a>
             <a href="/modulo/programacion?vista=mensual{obra_qs}" class="btn btn-sm" style="{btn_mensual_active}">📅 Mensual</a>
             <a href="/modulo/programacion?vista=semana{obra_qs}" class="btn btn-sm" style="{btn_semana_active}">📆 Semana</a>
+            <a href="{_url_prev_month}" class="btn btn-sec btn-sm">⬅️ 1 mes atrás</a>
             <a href="{_url_refresh_avance}" class="btn btn-sec btn-sm">🔄 Actualizar avance real</a>
         </div>
             {'' if es_obra else '<button onclick="printGantt()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>'}
