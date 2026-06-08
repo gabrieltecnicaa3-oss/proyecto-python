@@ -23,6 +23,32 @@ import io
 import re
 import base64
 
+
+def _format_drive_exception(exc):
+    parts = [f"{type(exc).__name__}"]
+    msg = str(exc).strip()
+    if msg:
+        parts.append(msg)
+    elif getattr(exc, "args", None):
+        parts.append(repr(exc.args))
+    else:
+        parts.append(repr(exc))
+
+    status_code = getattr(getattr(exc, "resp", None), "status", None)
+    if status_code is not None:
+        parts.append(f"status={status_code}")
+
+    content = getattr(exc, "content", None)
+    if isinstance(content, bytes):
+        try:
+            content = content.decode("utf-8", errors="replace")
+        except Exception:
+            content = repr(content)
+    if content:
+        parts.append(f"content={content}")
+
+    return " | ".join(part for part in parts if part)
+
 _drive_service = None
 _drive_init_attempted = False
 _drive_last_error = None
@@ -261,28 +287,40 @@ def subir_pdf_a_drive(pdf_bytes, filename, obra, seccion_nombre, ot_subfolder=No
         uploaded = service.files().create(
             body=file_metadata,
             media_body=media,
-            fields="id, webViewLink",
+            fields="id",
             supportsAllDrives=True,
         ).execute()
 
-        link = uploaded.get("webViewLink", "")
+        file_id = uploaded.get("id", "")
+        link = ""
+        if file_id:
+            try:
+                file_meta = service.files().get(
+                    fileId=file_id,
+                    fields="id, webViewLink",
+                    supportsAllDrives=True,
+                ).execute()
+                link = file_meta.get("webViewLink", "")
+            except Exception as link_exc:
+                print(f"[Drive] Archivo creado pero no se pudo leer webViewLink: {_format_drive_exception(link_exc)}")
         print(f"[Drive] Subido: {filename} → {link}")
         _drive_last_upload_ok = {
             "filename": str(filename or ""),
             "bytes": len(pdf_bytes),
             "folder_id": destino_folder_id,
-            "file_id": uploaded.get("id", ""),
+            "file_id": file_id,
             "webViewLink": link,
             "trace": _drive_last_upload_trace,
         }
-        return link
+        return link or file_id
 
     except Exception as e:
-        print(f"[Drive] Error subiendo '{filename}': {e}")
+        err_txt = _format_drive_exception(e)
+        print(f"[Drive] Error subiendo '{filename}': {err_txt}")
         trace_txt = ""
         if _drive_last_upload_trace:
             trace_txt = f" | trace={_drive_last_upload_trace}"
-        _drive_last_upload_error = f"{e}{trace_txt}"
+        _drive_last_upload_error = f"{err_txt}{trace_txt}"
         return None
 
 
