@@ -6096,6 +6096,7 @@ def drive_status():
     if not _is_admin_session():
         return jsonify({"error": "no autorizado"}), 403
     import os as _os
+    import socket as _socket
     try:
         import drive_utils as _du
         # Forzar reintento de inicialización para diagnóstico
@@ -6113,6 +6114,12 @@ def drive_status():
         oauth_client_id_len = len(_os.environ.get("GOOGLE_OAUTH_CLIENT_ID", ""))
         oauth_secret_len = len(_os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", ""))
         oauth_token_len = len(_os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN", ""))
+        google_env_keys = sorted(k for k in _os.environ.keys() if k.startswith("GOOGLE_"))
+        deployment_commit = (
+            _os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")
+            or _os.environ.get("SOURCE_VERSION", "")
+            or _os.environ.get("GIT_COMMIT", "")
+        )
         msg = "Drive OK" if disponible else "Drive NO disponible"
         if disponible and folder_id:
             try:
@@ -6130,6 +6137,12 @@ def drive_status():
             "upload_trace": getattr(_du, "_drive_last_upload_trace", None),
             "auth_mode": getattr(_du, "_drive_last_auth_mode", None),
             "credentials_source": getattr(_du, "_drive_last_credentials_source", None),
+            "google_env_keys": google_env_keys,
+            "hostname": _socket.gethostname(),
+            "railway_service_name": _os.environ.get("RAILWAY_SERVICE_NAME", ""),
+            "railway_environment_name": _os.environ.get("RAILWAY_ENVIRONMENT_NAME", ""),
+            "railway_project_name": _os.environ.get("RAILWAY_PROJECT_NAME", ""),
+            "deployment_commit": deployment_commit[:12] if deployment_commit else "",
             "folder_id_set": bool(folder_id),
             "folder_id_value": folder_id[:12] + "..." if len(folder_id) > 12 else folder_id,
             "google_credentials_json_len": creds_json_len,
