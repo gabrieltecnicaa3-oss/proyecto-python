@@ -6102,10 +6102,14 @@ def drive_status():
         _du._drive_service = None
         _du._drive_init_attempted = False
         _du._drive_last_error = None
+        _du._drive_last_auth_mode = None
+        _du._drive_last_credentials_source = None
         svc = _du._get_drive_service()
         disponible = svc is not None
         folder_id = _os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
         creds_json_len = len(_os.environ.get("GOOGLE_CREDENTIALS_JSON", ""))
+        service_account_json_len = len(_os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", ""))
+        credentials_base64_len = len(_os.environ.get("GOOGLE_CREDENTIALS_BASE64", ""))
         oauth_client_id_len = len(_os.environ.get("GOOGLE_OAUTH_CLIENT_ID", ""))
         oauth_secret_len = len(_os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", ""))
         oauth_token_len = len(_os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN", ""))
@@ -6124,9 +6128,14 @@ def drive_status():
             "upload_error_detalle": getattr(_du, "_drive_last_upload_error", None),
             "upload_last_ok": getattr(_du, "_drive_last_upload_ok", None),
             "upload_trace": getattr(_du, "_drive_last_upload_trace", None),
+            "auth_mode": getattr(_du, "_drive_last_auth_mode", None),
+            "credentials_source": getattr(_du, "_drive_last_credentials_source", None),
             "folder_id_set": bool(folder_id),
             "folder_id_value": folder_id[:12] + "..." if len(folder_id) > 12 else folder_id,
-            "service_account_json_len": creds_json_len,
+            "google_credentials_json_len": creds_json_len,
+            "google_service_account_json_len": service_account_json_len,
+            "google_credentials_base64_len": credentials_base64_len,
+            "service_account_json_len": max(creds_json_len, service_account_json_len, credentials_base64_len),
             "oauth_client_id_len": oauth_client_id_len,
             "oauth_client_secret_len": oauth_secret_len,
             "oauth_refresh_token_len": oauth_token_len,

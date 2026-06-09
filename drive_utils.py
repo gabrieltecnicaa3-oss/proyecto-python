@@ -55,6 +55,8 @@ _drive_last_error = None
 _drive_last_upload_error = None
 _drive_last_upload_ok = None
 _drive_last_upload_trace = None
+_drive_last_auth_mode = None
+_drive_last_credentials_source = None
 
 
 def _normalizar_credentials_json(raw_value):
@@ -111,16 +113,28 @@ def _extraer_drive_folder_id(value):
 
 def _get_drive_service():
     global _drive_service, _drive_init_attempted, _drive_last_error
+    global _drive_last_auth_mode, _drive_last_credentials_source
     if _drive_init_attempted:
         return _drive_service
     _drive_init_attempted = True
     _drive_last_error = None
+    _drive_last_auth_mode = None
+    _drive_last_credentials_source = None
 
-    credentials_json = _normalizar_credentials_json(
-        os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
-        or os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-        or os.environ.get("GOOGLE_CREDENTIALS_BASE64", "")
-    )
+    credentials_source = ""
+    credentials_raw = ""
+    for env_key in (
+        "GOOGLE_CREDENTIALS_JSON",
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+        "GOOGLE_CREDENTIALS_BASE64",
+    ):
+        env_value = os.environ.get(env_key, "")
+        if str(env_value or "").strip():
+            credentials_source = env_key
+            credentials_raw = env_value
+            break
+
+    credentials_json = _normalizar_credentials_json(credentials_raw)
     oauth_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
     oauth_client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
     oauth_refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN", "").strip()
@@ -143,6 +157,8 @@ def _get_drive_service():
                 scopes=scopes,
             )
             _drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
+            _drive_last_auth_mode = "oauth"
+            _drive_last_credentials_source = "GOOGLE_OAUTH_*"
             return _drive_service
 
         if not credentials_json:
@@ -156,6 +172,8 @@ def _get_drive_service():
         info = json.loads(credentials_json)
         creds = service_account.Credentials.from_service_account_info(info, scopes=scopes)
         _drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
+        _drive_last_auth_mode = "service_account"
+        _drive_last_credentials_source = credentials_source or "unknown"
     except Exception as e:
         _drive_last_error = str(e)
         print(f"[Drive] No se pudo inicializar el servicio: {e}")
