@@ -2684,15 +2684,18 @@ def home(page=1):
                 WHERE TRIM(COALESCE(posicion, '')) = TRIM(?)
                   AND eliminado = 0
                   AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('ARMADO','SOLDADURA','DESPACHO','P/DESPACHO')
+                  AND (
+                        COALESCE(ot_id, -1) = COALESCE(?, -1)
+                        OR (
+                            ot_id IS NULL
+                            AND TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, ''))
+                            AND TRIM(COALESCE(?, '')) <> ''
+                        )
+                  )
                 ORDER BY
-                    CASE
-                        WHEN COALESCE(ot_id, -1) = COALESCE(?, -1) THEN 0
-                        WHEN TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, '')) THEN 1
-                        ELSE 2
-                    END,
                     id DESC
                 """,
-                (pos_sel, ot_id_sel, obra_sel or ''),
+                (pos_sel, ot_id_sel, obra_sel or '', obra_sel or ''),
             ).fetchall()
 
         latest = {}
