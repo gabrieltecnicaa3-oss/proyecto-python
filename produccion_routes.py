@@ -501,20 +501,26 @@ def _desglose_ot(db, ot_id):
         "SOLDADURA": 0,
         "PINTURA": 0,
         "P/DESPACHO": 0,
+        "DESPACHADAS": 0,
     }
     if total == 0:
         return total, conteo
 
     # Batch: una sola consulta para todos los procesos de la OT.
     all_rows = db.execute(
-        "SELECT TRIM(COALESCE(posicion,'')), proceso, estado, re_inspeccion, reproceso"
+        "SELECT TRIM(COALESCE(posicion,'')), proceso, estado, re_inspeccion, reproceso, COALESCE(estado_pieza,'')"
         " FROM procesos WHERE ot_id=? ORDER BY id",
         (ot_id,),
     ).fetchall()
     filas_por_pos: dict = {}
-    for _pos, _proc, _est, _reinsp, _repro in all_rows:
+    despachadas_pos = set()
+    for _pos, _proc, _est, _reinsp, _repro, _estado_pieza in all_rows:
         if _pos:
             filas_por_pos.setdefault(_pos, []).append((_proc, _est, _reinsp, _repro))
+            proc_u = str(_proc or "").strip().upper()
+            estado_pieza_u = str(_estado_pieza or "").strip().upper()
+            if proc_u in ("DESPACHO", "P/DESPACHO") and estado_pieza_u == "DESPACHADO":
+                despachadas_pos.add(_pos)
 
     for pos in posiciones:
         aprobados = set(_aprobados_de_filas(filas_por_pos.get(pos, []), orden_flujo=orden_flujo))
@@ -523,6 +529,8 @@ def _desglose_ot(db, ot_id):
                 conteo[proceso] += 1
         if "P/DESPACHO" in aprobados or "DESPACHO" in aprobados:
             conteo["P/DESPACHO"] += 1
+
+    conteo["DESPACHADAS"] = len(despachadas_pos)
 
     return total, conteo
 
@@ -569,7 +577,7 @@ def _avance_y_desglose_ot(db, ot_id):
     # 3. Batch: todos los procesos de la OT en una sola query (incluye cantidad/peso para fallback)
     all_rows = db.execute(
         "SELECT TRIM(COALESCE(posicion,'')), proceso, estado, re_inspeccion, reproceso,"
-        " COALESCE(eliminado,0), COALESCE(cantidad,0), COALESCE(peso,0)"
+        " COALESCE(eliminado,0), COALESCE(cantidad,0), COALESCE(peso,0), COALESCE(estado_pieza,'')"
         " FROM procesos WHERE ot_id=? ORDER BY id",
         (ot_id,),
     ).fetchall()
@@ -577,8 +585,9 @@ def _avance_y_desglose_ot(db, ot_id):
     filas_por_pos: dict = {}
     valid_positions: set = set()
     kg_por_pos_meta: dict = {}
+    despachadas_pos: set = set()
 
-    for _pos, _proc, _est, _reinsp, _repro, _elim, _cant, _peso in all_rows:
+    for _pos, _proc, _est, _reinsp, _repro, _elim, _cant, _peso, _estado_pieza in all_rows:
         if not _pos:
             continue
         filas_por_pos.setdefault(_pos, []).append((_proc, _est, _reinsp, _repro))
@@ -587,10 +596,14 @@ def _avance_y_desglose_ot(db, ot_id):
             kg = _to_float(_cant, 0.0) * _to_float(_peso, 0.0)
             if kg > 0:
                 kg_por_pos_meta[_pos] = max(kg_por_pos_meta.get(_pos, 0.0), kg)
+            proc_u = str(_proc or "").strip().upper()
+            estado_pieza_u = str(_estado_pieza or "").strip().upper()
+            if proc_u in ("DESPACHO", "P/DESPACHO") and estado_pieza_u == "DESPACHADO":
+                despachadas_pos.add(_pos)
 
     # 4. Desglose (conteo por proceso y posiciones totales)
     total_piezas = len(valid_positions)
-    conteo = {"ARMADO": 0, "SOLDADURA": 0, "PINTURA": 0, "P/DESPACHO": 0}
+    conteo = {"ARMADO": 0, "SOLDADURA": 0, "PINTURA": 0, "P/DESPACHO": 0, "DESPACHADAS": 0}
     aprobados_por_pos: dict = {}
     for pos in valid_positions:
         # Usar flujo por pieza: INSERTO → solo ARMADO→DESPACHO
@@ -602,6 +615,7 @@ def _avance_y_desglose_ot(db, ot_id):
                 conteo[proc] += 1
         if "P/DESPACHO" in ap or "DESPACHO" in ap:
             conteo["P/DESPACHO"] += 1
+    conteo["DESPACHADAS"] = len(despachadas_pos)
 
     # 5. Avance — path 1: Excel con columna TOTAL exacta
     total_excel, procesado_excel, tiene_total_excel = _avance_desde_excel_armado(excel_path)
@@ -900,6 +914,7 @@ def produccion():
                 <th style="text-align:center;">Soldadura</th>
                 <th style="text-align:center;">Pintura</th>
                 <th style="text-align:center;">P/Desp</th>
+                <th style="text-align:center;">Despachadas</th>
                 <th>Fecha Entrega</th>
                 <th>Estado</th>
             </tr>
@@ -935,6 +950,7 @@ def produccion():
                 <td style="text-align:center;">{_chip_proceso(conteo['SOLDADURA'], total_piezas)}</td>
                 <td style="text-align:center;">{_chip_proceso(conteo['PINTURA'], total_piezas)}</td>
                 <td style="text-align:center;">{_chip_proceso(conteo['P/DESPACHO'], total_piezas)}</td>
+                <td style="text-align:center;">{_chip_proceso(conteo['DESPACHADAS'], total_piezas)}</td>
                 <td>{fila['fecha_entrega']}</td>
                 <td>{fila['estado']}</td>
             </tr>
