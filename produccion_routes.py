@@ -832,9 +832,9 @@ def produccion():
     .table-wrap { width: 100%; overflow-x: auto; border-radius: 8px; }
     table { width: 100%; min-width: 1080px; border-collapse: collapse; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.08); table-layout: fixed; }
     th, td { padding: 10px; border-bottom: 1px solid #fed7aa; text-align: left; }
-    th { background: #f97316; color: white; font-weight: bold; }
+    th { background: #f97316; color: white; font-weight: 600; }
     .th-proc { font-size: 16px; }
-    .td-proc { font-size: 16px; font-weight: 700; }
+    .td-proc { font-size: 16px; font-weight: 400; }
     .td-proc .chip { font-size: 14px; }
     .th-id, .td-id { width: 72px; }
     .th-cliente, .td-cliente { width: 180px; }
@@ -852,10 +852,31 @@ def produccion():
     .chip { font-size: 11px; border-radius: 999px; padding: 3px 8px; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; }
     .sin-datos { text-align: center; padding: 30px; color: #9a3412; }
     .nota { margin: 0 0 12px 0; color: #7c2d12; font-size: 13px; }
+    @media (max-width: 1200px) {
+        table { min-width: 940px; }
+        .th-proc, .td-proc { font-size: 14px; }
+        .td-proc .chip { font-size: 12px; }
+    }
     @media (max-width: 900px) {
         .filters { grid-template-columns: 1fr; }
         .header { flex-direction: column; align-items: stretch; }
         .header .btn { text-align: center; }
+        table { min-width: 760px; }
+        .th-cliente, .td-cliente,
+        .th-titulo, .td-titulo,
+        .th-tipo, .td-tipo,
+        .th-fecha, .td-fecha {
+            display: none;
+        }
+    }
+    @media (max-width: 640px) {
+        body { padding: 10px; }
+        .panel { padding: 10px; }
+        table { min-width: 0; }
+        th, td { padding: 8px 6px; }
+        .th-avance, .td-avance { width: 120px; }
+        .th-proc, .td-proc { font-size: 13px; }
+        .td-proc .chip { font-size: 11px; padding: 2px 6px; }
     }
     </style>
     </head>
@@ -948,7 +969,7 @@ def produccion():
 
             html += f"""
             <tr>
-                <td class="td-id"><b>{ot_id}</b></td>
+                <td class="td-id">{ot_id}</td>
                 <td class="td-cliente td-text-ellipsis" title="{fila['cliente']}">{fila['cliente']}</td>
                 <td class="td-obra td-text-ellipsis" title="{fila['obra']}">{fila['obra']}</td>
                 <td class="td-titulo td-text-ellipsis" title="{fila['titulo']}">{fila['titulo']}</td>
