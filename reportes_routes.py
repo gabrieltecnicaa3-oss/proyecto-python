@@ -932,7 +932,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
             n   = appr[ot_id][stage]
             pct = _pct(n, total)
             clr = _pct_clr(pct)
-          cells += f'<td class="proc-frac">{n}/{total}</td><td style="color:{clr};font-weight:700">{pct}%</td>'
+            cells += f'<td class="proc-frac">{n}/{total}</td><td style="color:{clr};font-weight:700">{pct}%</td>'
         pct_av_ot = max(0, min(100, int(d.get("avance_by_ot", {}).get(ot_id, 0))))
         av_clr = _pct_clr(pct_av_ot)
         fe_fmt = _fd(fe)
@@ -952,7 +952,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         nt  = sum(appr[oid][stage] for oid in d["ot_ids"])
         pt  = _pct(nt, total_g)
         clr = _pct_clr(pt)
-      tot_cells += f'<td><b>{nt}/{total_g}</b></td><td style="color:{clr};font-weight:700"><b>{pt}%</b></td>'
+        tot_cells += f'<td><b>{nt}/{total_g}</b></td><td style="color:{clr};font-weight:700"><b>{pt}%</b></td>'
     # Avance global alineado con Producción por KG.
     pct_av_g = max(0, min(100, int(avance_pct)))
     av_g_clr = _pct_clr(pct_av_g)
