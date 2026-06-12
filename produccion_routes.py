@@ -830,9 +830,20 @@ def produccion():
     .obra-card .nombre { font-weight: 700; color: #9a3412; }
     .obra-card .avance { font-size: 22px; font-weight: 700; color: #ea580c; }
     .table-wrap { width: 100%; overflow-x: auto; border-radius: 8px; }
-    table { width: 100%; min-width: 1080px; border-collapse: collapse; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    table { width: 100%; min-width: 1080px; border-collapse: collapse; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.08); table-layout: fixed; }
     th, td { padding: 10px; border-bottom: 1px solid #fed7aa; text-align: left; }
     th { background: #f97316; color: white; font-weight: bold; }
+    .th-proc { font-size: 16px; }
+    .td-proc { font-size: 16px; font-weight: 700; }
+    .td-proc .chip { font-size: 14px; }
+    .th-id, .td-id { width: 72px; }
+    .th-cliente, .td-cliente { width: 180px; }
+    .th-obra, .td-obra { width: 200px; }
+    .th-titulo, .td-titulo { width: 220px; }
+    .th-tipo, .td-tipo { width: 130px; max-width: 130px; }
+    .th-fecha, .td-fecha { width: 130px; }
+    .th-avance, .td-avance { width: 150px; }
+    .td-text-ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     tr:hover { background: #fff7ed; }
     .progress { width: 100%; height: 20px; background: #ffedd5; border-radius: 10px; overflow: hidden; border: 1px solid #fdba74; }
     .progress-bar { height: 100%; background: linear-gradient(90deg, #f97316, #fb923c); text-align: center;
@@ -903,21 +914,20 @@ def produccion():
         <div class="table-wrap">
         <table>
             <tr>
-                <th>ID</th>
-                <th>Cliente</th>
-                <th>Obra</th>
-                <th>Título</th>
-                <th>Tipo de Estructura</th>
-                <th>% Avance</th>
-                <th style="text-align:center;">Pzas</th>
-                <th style="text-align:center;">Armado</th>
-                <th style="text-align:center;">Soldadura</th>
-                <th style="text-align:center;">Pintura</th>
-                <th style="text-align:center;">P/Desp</th>
-                <th style="text-align:center;">% P/Desp</th>
-                <th style="text-align:center;">Despachadas</th>
-                <th>Fecha Entrega</th>
-                <th>Estado</th>
+                <th class="th-id">ID</th>
+                <th class="th-cliente">Cliente</th>
+                <th class="th-obra">Obra</th>
+                <th class="th-titulo">Título</th>
+                <th class="th-tipo">Tipo de Estructura</th>
+                <th class="th-avance">% Avance</th>
+                <th class="th-proc" style="text-align:center;">Pzas</th>
+                <th class="th-proc" style="text-align:center;">Armado</th>
+                <th class="th-proc" style="text-align:center;">Soldadura</th>
+                <th class="th-proc" style="text-align:center;">Pintura</th>
+                <th class="th-proc" style="text-align:center;">P/Desp</th>
+                <th class="th-proc" style="text-align:center;">% P/Desp</th>
+                <th class="th-proc" style="text-align:center;">Despachado</th>
+                <th class="th-fecha">Fecha Entrega</th>
             </tr>
         """
 
@@ -938,25 +948,24 @@ def produccion():
 
             html += f"""
             <tr>
-                <td><b>{ot_id}</b></td>
-                <td>{fila['cliente']}</td>
-                <td>{fila['obra']}</td>
-                <td>{fila['titulo']}</td>
-                <td>{fila['tipo_estructura']}</td>
-                <td>
+                <td class="td-id"><b>{ot_id}</b></td>
+                <td class="td-cliente td-text-ellipsis" title="{fila['cliente']}">{fila['cliente']}</td>
+                <td class="td-obra td-text-ellipsis" title="{fila['obra']}">{fila['obra']}</td>
+                <td class="td-titulo td-text-ellipsis" title="{fila['titulo']}">{fila['titulo']}</td>
+                <td class="td-tipo td-text-ellipsis" title="{fila['tipo_estructura']}">{fila['tipo_estructura']}</td>
+                <td class="td-avance">
                     <div class="progress">
                         <div class="progress-bar" style="width: {progreso}%">{progreso}%</div>
                     </div>
                 </td>
-                <td style="text-align:center;"><span class="chip">{total_piezas}</span></td>
-                <td style="text-align:center;">{_chip_proceso(conteo['ARMADO'], total_piezas)}</td>
-                <td style="text-align:center;">{_chip_proceso(conteo['SOLDADURA'], total_piezas)}</td>
-                <td style="text-align:center;">{_chip_proceso(conteo['PINTURA'], total_piezas)}</td>
-                <td style="text-align:center;">{_chip_proceso(conteo['P/DESPACHO'], total_piezas)}</td>
-                <td style="text-align:center;"><span class="chip">{p_despacho_pct}%</span></td>
-                <td style="text-align:center;">{_chip_proceso(conteo['DESPACHADAS'], total_piezas)}</td>
-                <td>{fila['fecha_entrega']}</td>
-                <td>{fila['estado']}</td>
+                <td class="td-proc" style="text-align:center;"><span class="chip">{total_piezas}</span></td>
+                <td class="td-proc" style="text-align:center;">{_chip_proceso(conteo['ARMADO'], total_piezas)}</td>
+                <td class="td-proc" style="text-align:center;">{_chip_proceso(conteo['SOLDADURA'], total_piezas)}</td>
+                <td class="td-proc" style="text-align:center;">{_chip_proceso(conteo['PINTURA'], total_piezas)}</td>
+                <td class="td-proc" style="text-align:center;">{_chip_proceso(conteo['P/DESPACHO'], total_piezas)}</td>
+                <td class="td-proc" style="text-align:center;"><span class="chip">{p_despacho_pct}%</span></td>
+                <td class="td-proc" style="text-align:center;">{_chip_proceso(conteo['DESPACHADAS'], total_piezas)}</td>
+                <td class="td-fecha">{fila['fecha_entrega']}</td>
             </tr>
             """
 
