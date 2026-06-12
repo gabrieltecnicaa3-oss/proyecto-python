@@ -397,7 +397,7 @@ def ot_lista():
                     <a href="/modulo/ot/editar/{ot[0]}" class="btn" style="background: #ea580c;">Editar</a>
                     <a href="/modulo/ot/eliminar/{ot[0]}" class="btn" style="background: #c2410c;" onclick="return confirm('¿Eliminar?')">Eliminar</a>
                     <form method="post" action="/modulo/ot/cerrar/{ot[0]}" style="display:inline;">
-                        <button type="submit" class="btn" style="background:#fb923c;color:#fff;" onclick="return confirm('¿Cerrar esta OT? Se moverá a Historial y se quitarán sus piezas del estado de piezas por proceso.')">Cerrar OT</button>
+                        <button type="submit" class="btn" style="background:#fb923c;color:#fff;" onclick="return confirm('¿Cerrar esta OT? Se moverá a Historial. Las piezas y controles quedan guardados y se recuperan si se reabre.')">Cerrar OT</button>
                     </form>
                 </td>
                 """
@@ -998,7 +998,7 @@ def ot_editar(ot_id):
             <p style="margin:8px 0; font-size:13px;">
             {"🔒 <b>CERRADA</b> el " + str(fecha_cierre_ot)[:16] if fecha_cierre_ot else "✅ ACTIVA"}
             </p>
-            {"<button type='submit' formaction='/modulo/ot/reabrir/" + str(ot[0]) + "' formmethod='post' formnovalidate style='width:auto; background:#e5a3a3; padding:8px 12px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top:0;'>🔓 Reabrir OT</button>" if fecha_cierre_ot else "<button type='submit' formaction='/modulo/ot/cerrar/" + str(ot[0]) + "' formmethod='post' formnovalidate style='width:auto; background:#667eea; padding:8px 12px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top:0;' onclick='return confirm(\"¿Cerrar esta OT? Se ocultarán todas sus piezas y procesos.\");'>🔒 Cerrar OT</button>"}
+            {"<button type='submit' formaction='/modulo/ot/reabrir/" + str(ot[0]) + "' formmethod='post' formnovalidate style='width:auto; background:#e5a3a3; padding:8px 12px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top:0;'>🔓 Reabrir OT</button>" if fecha_cierre_ot else "<button type='submit' formaction='/modulo/ot/cerrar/" + str(ot[0]) + "' formmethod='post' formnovalidate style='width:auto; background:#667eea; padding:8px 12px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top:0;' onclick='return confirm(\"¿Cerrar esta OT? Se moverá a Historial. Las piezas y controles quedan guardados y se recuperan si se reabre.\");'>🔒 Cerrar OT</button>"}
         </div>
         
         <label>Esquema de pintura:</label>
@@ -1072,10 +1072,12 @@ def cerrar_ot(ot_id):
     ot = db.execute("SELECT obra FROM ordenes_trabajo WHERE id=?", (ot_id,)).fetchone()
     if not ot:
         return redirect("/modulo/ot?mensaje=OT no encontrada")
-    obra = ot[0]
+    # Solo se actualiza el estado y la fecha de cierre.
+    # NO se eliminan los procesos: las vistas activas ya filtran por fecha_cierre IS NULL,
+    # por lo que las piezas dejan de verse en produccion/calidad sin borrar datos.
+    # Esto evita que cerrar una OT elimine piezas de otras OTs de la misma obra,
+    # y preserva el historial de controles al reabrir.
     db.execute("UPDATE ordenes_trabajo SET fecha_cierre=CURRENT_TIMESTAMP, estado='Finalizada' WHERE id=?", (ot_id,))
-    if obra:
-        db.execute("DELETE FROM procesos WHERE obra=?", (obra,))
     db.commit()
     return redirect("/modulo/ot?mensaje=OT cerrada y movida a Historial")
 

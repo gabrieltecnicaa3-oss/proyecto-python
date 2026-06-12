@@ -914,6 +914,7 @@ def produccion():
                 <th style="text-align:center;">Soldadura</th>
                 <th style="text-align:center;">Pintura</th>
                 <th style="text-align:center;">P/Desp</th>
+                <th style="text-align:center;">% P/Desp</th>
                 <th style="text-align:center;">Despachadas</th>
                 <th>Fecha Entrega</th>
                 <th>Estado</th>
@@ -925,6 +926,8 @@ def produccion():
             progreso = fila["progreso"]
             total_piezas = fila["total_piezas"]
             conteo = fila["conteo"]
+            p_despacho = int(conteo.get("P/DESPACHO", 0) or 0)
+            p_despacho_pct = int(round((p_despacho / total_piezas) * 100, 0)) if total_piezas > 0 else 0
             def _chip_proceso(count, total):
                 if total == 0:
                     return '<span class="chip">-</span>'
@@ -950,6 +953,7 @@ def produccion():
                 <td style="text-align:center;">{_chip_proceso(conteo['SOLDADURA'], total_piezas)}</td>
                 <td style="text-align:center;">{_chip_proceso(conteo['PINTURA'], total_piezas)}</td>
                 <td style="text-align:center;">{_chip_proceso(conteo['P/DESPACHO'], total_piezas)}</td>
+                <td style="text-align:center;"><span class="chip">{p_despacho_pct}%</span></td>
                 <td style="text-align:center;">{_chip_proceso(conteo['DESPACHADAS'], total_piezas)}</td>
                 <td>{fila['fecha_entrega']}</td>
                 <td>{fila['estado']}</td>
