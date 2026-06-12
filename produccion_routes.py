@@ -829,13 +829,13 @@ def produccion():
     .obra-card { background: #fffaf5; border: 1px solid #fed7aa; border-left: 4px solid #f97316; border-radius: 8px; padding: 10px; }
     .obra-card .nombre { font-weight: 700; color: #9a3412; }
     .obra-card .avance { font-size: 22px; font-weight: 700; color: #ea580c; }
-    .table-wrap { width: 100%; overflow-x: auto; border-radius: 8px; }
+    .table-wrap { width: 100%; overflow-x: auto; border-radius: 8px; -webkit-overflow-scrolling: touch; }
     table { width: 100%; min-width: 1080px; border-collapse: collapse; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.08); table-layout: fixed; }
     th, td { padding: 10px; border-bottom: 1px solid #fed7aa; text-align: left; }
     th { background: #f97316; color: white; font-weight: 600; }
     .th-proc { font-size: 16px; }
     .td-proc { font-size: 16px; font-weight: 400; }
-    .td-proc .chip { font-size: 14px; }
+    .td-proc .chip { font-size: 14px; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; max-width: 100%; }
     .th-id, .td-id { width: 72px; }
     .th-cliente, .td-cliente { width: 180px; }
     .th-obra, .td-obra { width: 200px; }
@@ -861,7 +861,7 @@ def produccion():
         .filters { grid-template-columns: 1fr; }
         .header { flex-direction: column; align-items: stretch; }
         .header .btn { text-align: center; }
-        table { min-width: 760px; }
+        table { min-width: 820px; table-layout: auto; }
         .th-cliente, .td-cliente,
         .th-titulo, .td-titulo,
         .th-tipo, .td-tipo,
@@ -872,7 +872,7 @@ def produccion():
     @media (max-width: 640px) {
         body { padding: 10px; }
         .panel { padding: 10px; }
-        table { min-width: 0; }
+        table { min-width: 820px; }
         th, td { padding: 8px 6px; }
         .th-avance, .td-avance { width: 120px; }
         .th-proc, .td-proc { font-size: 13px; }
