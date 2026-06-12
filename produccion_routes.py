@@ -509,7 +509,7 @@ def _desglose_ot(db, ot_id):
     # Batch: una sola consulta para todos los procesos de la OT.
     all_rows = db.execute(
         "SELECT TRIM(COALESCE(posicion,'')), proceso, estado, re_inspeccion, reproceso, COALESCE(estado_pieza,'')"
-        " FROM procesos WHERE ot_id=? ORDER BY id",
+        " FROM procesos WHERE ot_id=? AND COALESCE(eliminado,0)=0 ORDER BY id",
         (ot_id,),
     ).fetchall()
     filas_por_pos: dict = {}
@@ -578,7 +578,7 @@ def _avance_y_desglose_ot(db, ot_id):
     all_rows = db.execute(
         "SELECT TRIM(COALESCE(posicion,'')), proceso, estado, re_inspeccion, reproceso,"
         " COALESCE(eliminado,0), COALESCE(cantidad,0), COALESCE(peso,0), COALESCE(estado_pieza,'')"
-        " FROM procesos WHERE ot_id=? ORDER BY id",
+        " FROM procesos WHERE ot_id=? AND COALESCE(eliminado,0)=0 ORDER BY id",
         (ot_id,),
     ).fetchall()
 
@@ -591,15 +591,14 @@ def _avance_y_desglose_ot(db, ot_id):
         if not _pos:
             continue
         filas_por_pos.setdefault(_pos, []).append((_proc, _est, _reinsp, _repro))
-        if not _elim:
-            valid_positions.add(_pos)
-            kg = _to_float(_cant, 0.0) * _to_float(_peso, 0.0)
-            if kg > 0:
-                kg_por_pos_meta[_pos] = max(kg_por_pos_meta.get(_pos, 0.0), kg)
-            proc_u = str(_proc or "").strip().upper()
-            estado_pieza_u = str(_estado_pieza or "").strip().upper()
-            if proc_u in ("DESPACHO", "P/DESPACHO") and estado_pieza_u == "DESPACHADO":
-                despachadas_pos.add(_pos)
+        valid_positions.add(_pos)
+        kg = _to_float(_cant, 0.0) * _to_float(_peso, 0.0)
+        if kg > 0:
+            kg_por_pos_meta[_pos] = max(kg_por_pos_meta.get(_pos, 0.0), kg)
+        proc_u = str(_proc or "").strip().upper()
+        estado_pieza_u = str(_estado_pieza or "").strip().upper()
+        if proc_u in ("DESPACHO", "P/DESPACHO") and estado_pieza_u == "DESPACHADO":
+            despachadas_pos.add(_pos)
 
     # 4. Desglose (conteo por proceso y posiciones totales)
     total_piezas = len(valid_positions)
@@ -672,9 +671,8 @@ def _avance_y_desglose_ot(db, ot_id):
             if not ap:
                 # Fallback: calcular aprobados para esta posición con flujo específico
                 flujo_pos = ["ARMADO", "DESPACHO"] if _es_inserto(desc_por_pos.get(pos, ""), pos=pos) else orden_flujo
-                permitir_saltos = flujo_pos == ["ARMADO", "DESPACHO"]
                 filas_pos = filas_por_pos.get(pos, [])
-                ap = set(_aprobados_de_filas(filas_pos, orden_flujo=flujo_pos, permitir_saltos=permitir_saltos))
+                ap = set(_aprobados_de_filas(filas_pos, orden_flujo=flujo_pos))
             pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(pos, ""), pesos, pos=pos)
             avance_sum += _avance_ratio_desde_aprobados(ap, pesos_pos)
         pct = max(0, min(100, round((avance_sum / len(valid_positions)) * 100)))
@@ -693,9 +691,8 @@ def _avance_y_desglose_ot(db, ot_id):
         ap = aprobados_por_pos.get(posicion)
         if ap is None:
             flujo_pos = ["ARMADO", "DESPACHO"] if _es_inserto(desc_por_pos.get(posicion, ""), pos=posicion) else orden_flujo
-            permitir_saltos = flujo_pos == ["ARMADO", "DESPACHO"]
             filas_pos = filas_por_pos.get(posicion, [])
-            ap = set(_aprobados_de_filas(filas_pos, orden_flujo=flujo_pos, permitir_saltos=permitir_saltos))
+            ap = set(_aprobados_de_filas(filas_pos, orden_flujo=flujo_pos))
         
         pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(posicion, ""), pesos, pos=posicion)
         av = 0.0

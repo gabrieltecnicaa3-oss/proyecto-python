@@ -266,16 +266,19 @@ def obtener_procesos_completados(pos, obra=None, ot_id=None):
 
     if ot_id is not None:
         rows = db.execute(
-            "SELECT proceso, estado, re_inspeccion, reproceso FROM procesos WHERE posicion=? AND ot_id=? ORDER BY id",
+            "SELECT proceso, estado, re_inspeccion, reproceso FROM procesos WHERE posicion=? AND ot_id=? AND COALESCE(eliminado, 0)=0 ORDER BY id",
             (pos, ot_id)
         ).fetchall()
     elif obra:
         rows = db.execute(
-            "SELECT proceso, estado, re_inspeccion, reproceso FROM procesos WHERE posicion=? AND obra=? ORDER BY id",
+            "SELECT proceso, estado, re_inspeccion, reproceso FROM procesos WHERE posicion=? AND obra=? AND COALESCE(eliminado, 0)=0 ORDER BY id",
             (pos, obra)
         ).fetchall()
     else:
-        rows = db.execute("SELECT proceso, estado, re_inspeccion, reproceso FROM procesos WHERE posicion=? ORDER BY id", (pos,)).fetchall()
+        rows = db.execute(
+            "SELECT proceso, estado, re_inspeccion, reproceso FROM procesos WHERE posicion=? AND COALESCE(eliminado, 0)=0 ORDER BY id",
+            (pos,),
+        ).fetchall()
 
     aprobados = set()
     for proceso, estado, reinspeccion, reproceso in rows:
