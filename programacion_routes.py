@@ -1094,10 +1094,12 @@ calcHoras();
 # ── Routes ─────────────────────────────────────────────────────────────────────
 @programacion_bp.route("/modulo/programacion")
 @programacion_bp.route("/modulo/programacion/detalle")
+@programacion_bp.route("/modulo/programacion/submodulos")
 def programacion_index():
     es_obra = _es_usuario_obra()
-    es_vista_detalle = request.path.rstrip("/").endswith("/detalle")
-    base_path = "/modulo/programacion/detalle" if es_vista_detalle else "/modulo/programacion"
+    path_actual = request.path.rstrip("/")
+    es_vista_detalle = path_actual.endswith("/detalle") or path_actual.endswith("/submodulos")
+    base_path = "/modulo/programacion/submodulos" if es_vista_detalle else "/modulo/programacion"
     db = get_db()
     today = date.today()
 
@@ -1128,9 +1130,9 @@ def programacion_index():
     if ff_vista <= fi_vista:
         ff_vista = fi_vista + timedelta(days=89)
     obra_fil = (request.args.get("obra") or "").strip()
-    # Por defecto usamos avance real de Producción para evitar desvíos por valores viejos en OT.
+    # Por performance, el avance vivo se calcula bajo demanda (botón "Actualizar avance real").
     recalcular_param = (request.args.get("avance_vivo") or "").strip().lower()
-    recalcular_avance_vivo = recalcular_param != "0"
+    recalcular_avance_vivo = recalcular_param == "1"
 
     fi_vista_str = fi_vista.strftime("%Y-%m-%d")
     ff_vista_str = ff_vista.strftime("%Y-%m-%d")
@@ -1602,7 +1604,7 @@ def programacion_index():
         _qs_toggle.append("obra=" + quote(obra_fil))
     if vista:
         _qs_toggle.append("vista=" + quote(vista))
-    _url_ir_detalle = "/modulo/programacion/detalle" + ("?" + "&".join(_qs_toggle) if _qs_toggle else "")
+    _url_ir_detalle = "/modulo/programacion/submodulos" + ("?" + "&".join(_qs_toggle) if _qs_toggle else "")
     _url_ir_resumen = "/modulo/programacion" + ("?" + "&".join(_qs_toggle) if _qs_toggle else "")
     _btn_active = "background:#6366f1;color:#fff;border-color:#6366f1;"
     btn_trimestral_active = _btn_active if vista in ("", "trimestral") else ""
@@ -1871,7 +1873,7 @@ function printCumplimiento() {{
     </div>
     <div class="hdr-actions">
         <a href="/modulo/programacion/nueva" class="btn">➕ Nueva Programación</a>
-        {f'<a href="{_url_ir_resumen}" class="btn btn-sec">⚡ Vista rápida</a>' if es_vista_detalle else f'<a href="{_url_ir_detalle}" class="btn btn-sec">📊 Cumplimiento y Detalle</a>'}
+        {f'<a href="{_url_ir_resumen}" class="btn btn-sec">⚡ Vista rápida</a>' if es_vista_detalle else f'<a href="{_url_ir_detalle}" class="btn btn-sec">🧩 Submódulos</a>'}
         <a href="/" class="btn btn-sec">⬅️ Volver</a>
     </div>
 </div>
@@ -1929,11 +1931,11 @@ function printCumplimiento() {{
 {'' if es_vista_detalle else f'''
 <div class="panel" id="detalle-wrapper-lite">
     <div class="collapsible-header" style="cursor:default;">
-        <h3>📊 Cumplimiento y detalle</h3>
+        <h3>🧩 Submódulos de Programación</h3>
         <a class="collapsible-toggle" href="{_url_ir_detalle}" style="text-decoration:none;">Abrir</a>
     </div>
     <div style="padding:8px 0 2px;color:#9a3412;font-size:13px;">
-        Se movieron a una vista separada para acelerar la carga inicial de Programación.
+        Cumplimiento de objetivos y resumen detallado se abren en una pantalla separada.
     </div>
 </div>
 '''}
@@ -2038,7 +2040,7 @@ def programacion_cumplimiento():
     if ff:
         qs.append(f"ff={ff}")
     qs.append(f"semana={semana_key}")
-    return redirect("/modulo/programacion" + ("?" + "&".join(qs) if qs else ""))
+    return redirect("/modulo/programacion/submodulos" + ("?" + "&".join(qs) if qs else ""))
 
 
 @programacion_bp.route("/modulo/programacion/nueva", methods=["GET", "POST"])

@@ -3614,42 +3614,84 @@ def pieza(pos):
 
     # Si viene obra por QR/query, todo se resuelve por POS+OBRA.
     if qr_obra:
-        datos_iniciales = db.execute("""
-            SELECT
-                """ + procesos_cols + """
-            FROM procesos
-            WHERE posicion=? AND obra=?
-              AND COALESCE(eliminado, 0) = 0
-            LIMIT 1
-        """, (pos, qr_obra)).fetchone()
+        if qr_ot_id is not None:
+            datos_iniciales = db.execute("""
+                SELECT
+                    """ + procesos_cols + """
+                FROM procesos
+                WHERE posicion=? AND obra=?
+                  AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                  AND COALESCE(eliminado, 0) = 0
+                LIMIT 1
+            """, (pos, qr_obra, qr_ot_id)).fetchone()
 
-        todas_filas = db.execute("""
-            SELECT
-                """ + procesos_cols + """
-            FROM procesos
-            WHERE posicion=? AND obra=?
-              AND COALESCE(eliminado, 0) = 0
-            ORDER BY id
-        """, (pos, qr_obra)).fetchall()
+            todas_filas = db.execute("""
+                SELECT
+                    """ + procesos_cols + """
+                FROM procesos
+                WHERE posicion=? AND obra=?
+                  AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                  AND COALESCE(eliminado, 0) = 0
+                ORDER BY id
+            """, (pos, qr_obra, qr_ot_id)).fetchall()
+        else:
+            datos_iniciales = db.execute("""
+                SELECT
+                    """ + procesos_cols + """
+                FROM procesos
+                WHERE posicion=? AND obra=?
+                  AND COALESCE(eliminado, 0) = 0
+                LIMIT 1
+            """, (pos, qr_obra)).fetchone()
+
+            todas_filas = db.execute("""
+                SELECT
+                    """ + procesos_cols + """
+                FROM procesos
+                WHERE posicion=? AND obra=?
+                  AND COALESCE(eliminado, 0) = 0
+                ORDER BY id
+            """, (pos, qr_obra)).fetchall()
     else:
         # Compatibilidad con URLs antiguas sin obra
-        datos_iniciales = db.execute("""
-            SELECT
-                """ + procesos_cols + """
-            FROM procesos
-            WHERE posicion=? AND obra IS NOT NULL 
-              AND COALESCE(eliminado, 0) = 0
-            LIMIT 1
-        """, (pos,)).fetchone()
+        if qr_ot_id is not None:
+            datos_iniciales = db.execute("""
+                SELECT
+                    """ + procesos_cols + """
+                FROM procesos
+                WHERE posicion=? AND obra IS NOT NULL
+                  AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                  AND COALESCE(eliminado, 0) = 0
+                LIMIT 1
+            """, (pos, qr_ot_id)).fetchone()
 
-        todas_filas = db.execute("""
-            SELECT
-                """ + procesos_cols + """
-            FROM procesos
-            WHERE posicion=? 
-              AND COALESCE(eliminado, 0) = 0
-            ORDER BY id
-        """, (pos,)).fetchall()
+            todas_filas = db.execute("""
+                SELECT
+                    """ + procesos_cols + """
+                FROM procesos
+                WHERE posicion=?
+                  AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                  AND COALESCE(eliminado, 0) = 0
+                ORDER BY id
+            """, (pos, qr_ot_id)).fetchall()
+        else:
+            datos_iniciales = db.execute("""
+                SELECT
+                    """ + procesos_cols + """
+                FROM procesos
+                WHERE posicion=? AND obra IS NOT NULL 
+                  AND COALESCE(eliminado, 0) = 0
+                LIMIT 1
+            """, (pos,)).fetchone()
+
+            todas_filas = db.execute("""
+                SELECT
+                    """ + procesos_cols + """
+                FROM procesos
+                WHERE posicion=? 
+                  AND COALESCE(eliminado, 0) = 0
+                ORDER BY id
+            """, (pos,)).fetchall()
 
     # Si vienen datos desde el QR y faltan en BD, los guardamos para próximos accesos.
     try:
@@ -3718,35 +3760,75 @@ def pieza(pos):
             db.commit()
 
             if qr_obra:
-                datos_iniciales = db.execute("""
-                    SELECT
-                        """ + procesos_cols + """
-                    FROM procesos
-                    WHERE posicion=? AND obra=? AND eliminado=0
-                    LIMIT 1
-                """, (pos, qr_obra)).fetchone()
-                todas_filas = db.execute("""
-                    SELECT
-                        """ + procesos_cols + """
-                    FROM procesos
-                    WHERE posicion=? AND obra=? AND eliminado=0
-                    ORDER BY id
-                """, (pos, qr_obra)).fetchall()
+                if qr_ot_id is not None:
+                    datos_iniciales = db.execute("""
+                        SELECT
+                            """ + procesos_cols + """
+                        FROM procesos
+                        WHERE posicion=? AND obra=?
+                          AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                          AND eliminado=0
+                        LIMIT 1
+                    """, (pos, qr_obra, qr_ot_id)).fetchone()
+                    todas_filas = db.execute("""
+                        SELECT
+                            """ + procesos_cols + """
+                        FROM procesos
+                        WHERE posicion=? AND obra=?
+                          AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                          AND eliminado=0
+                        ORDER BY id
+                    """, (pos, qr_obra, qr_ot_id)).fetchall()
+                else:
+                    datos_iniciales = db.execute("""
+                        SELECT
+                            """ + procesos_cols + """
+                        FROM procesos
+                        WHERE posicion=? AND obra=? AND eliminado=0
+                        LIMIT 1
+                    """, (pos, qr_obra)).fetchone()
+                    todas_filas = db.execute("""
+                        SELECT
+                            """ + procesos_cols + """
+                        FROM procesos
+                        WHERE posicion=? AND obra=? AND eliminado=0
+                        ORDER BY id
+                    """, (pos, qr_obra)).fetchall()
             else:
-                datos_iniciales = db.execute("""
-                    SELECT
-                        """ + procesos_cols + """
-                    FROM procesos
-                    WHERE posicion=? AND obra IS NOT NULL AND eliminado=0
-                    LIMIT 1
-                """, (pos,)).fetchone()
-                todas_filas = db.execute("""
-                    SELECT
-                        """ + procesos_cols + """
-                    FROM procesos
-                    WHERE posicion=? AND eliminado=0
-                    ORDER BY id
-                """, (pos,)).fetchall()
+                if qr_ot_id is not None:
+                    datos_iniciales = db.execute("""
+                        SELECT
+                            """ + procesos_cols + """
+                        FROM procesos
+                        WHERE posicion=? AND obra IS NOT NULL
+                          AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                          AND eliminado=0
+                        LIMIT 1
+                    """, (pos, qr_ot_id)).fetchone()
+                    todas_filas = db.execute("""
+                        SELECT
+                            """ + procesos_cols + """
+                        FROM procesos
+                        WHERE posicion=?
+                          AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                          AND eliminado=0
+                        ORDER BY id
+                    """, (pos, qr_ot_id)).fetchall()
+                else:
+                    datos_iniciales = db.execute("""
+                        SELECT
+                            """ + procesos_cols + """
+                        FROM procesos
+                        WHERE posicion=? AND obra IS NOT NULL AND eliminado=0
+                        LIMIT 1
+                    """, (pos,)).fetchone()
+                    todas_filas = db.execute("""
+                        SELECT
+                            """ + procesos_cols + """
+                        FROM procesos
+                        WHERE posicion=? AND eliminado=0
+                        ORDER BY id
+                    """, (pos,)).fetchall()
     except Exception:
         pass
 
@@ -3756,28 +3838,54 @@ def pieza(pos):
     )
     if obra_scope:
         _completar_metadatos_por_obra_pos(db, obra_scope, pos)
-        datos_iniciales = db.execute(
-            """
-            SELECT
-                """ + procesos_cols + """
-            FROM procesos
-            WHERE posicion=? AND obra=?
-              AND COALESCE(eliminado, 0) = 0
-            LIMIT 1
-            """,
-            (pos, obra_scope),
-        ).fetchone()
-        todas_filas = db.execute(
-            """
-            SELECT
-                """ + procesos_cols + """
-            FROM procesos
-            WHERE posicion=? AND obra=?
-              AND COALESCE(eliminado, 0) = 0
-            ORDER BY id
-            """,
-            (pos, obra_scope),
-        ).fetchall()
+        if qr_ot_id is not None:
+            datos_iniciales = db.execute(
+                """
+                SELECT
+                    """ + procesos_cols + """
+                FROM procesos
+                WHERE posicion=? AND obra=?
+                  AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                  AND COALESCE(eliminado, 0) = 0
+                LIMIT 1
+                """,
+                (pos, obra_scope, qr_ot_id),
+            ).fetchone()
+            todas_filas = db.execute(
+                """
+                SELECT
+                    """ + procesos_cols + """
+                FROM procesos
+                WHERE posicion=? AND obra=?
+                  AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+                  AND COALESCE(eliminado, 0) = 0
+                ORDER BY id
+                """,
+                (pos, obra_scope, qr_ot_id),
+            ).fetchall()
+        else:
+            datos_iniciales = db.execute(
+                """
+                SELECT
+                    """ + procesos_cols + """
+                FROM procesos
+                WHERE posicion=? AND obra=?
+                  AND COALESCE(eliminado, 0) = 0
+                LIMIT 1
+                """,
+                (pos, obra_scope),
+            ).fetchone()
+            todas_filas = db.execute(
+                """
+                SELECT
+                    """ + procesos_cols + """
+                FROM procesos
+                WHERE posicion=? AND obra=?
+                  AND COALESCE(eliminado, 0) = 0
+                ORDER BY id
+                """,
+                (pos, obra_scope),
+            ).fetchall()
 
     obra_scope_btn = qr_obra or (str(datos_iniciales[8]).strip() if datos_iniciales and len(datos_iniciales) > 8 and datos_iniciales[8] else "")
     ot_scope_btn = qr_ot_id or _obtener_ot_id_pieza(db, pos, obra_scope_btn)
@@ -4460,10 +4568,16 @@ def pieza(pos):
             pintura_aprobada = True
     # Verificar soldadura antes de decidir el botón (necesario para OTs sin pintura)
     if not es_completada and obra_url and not soldadura_aprobada:
-        sol_rows = db.execute(
-            "SELECT estado, re_inspeccion FROM procesos WHERE posicion=? AND obra=? AND UPPER(TRIM(COALESCE(proceso,'')))='SOLDADURA' ORDER BY id",
-            (pos, obra_url)
-        ).fetchall()
+        if ot_scope_btn is not None:
+            sol_rows = db.execute(
+                "SELECT estado, re_inspeccion FROM procesos WHERE posicion=? AND obra=? AND COALESCE(ot_id, -1)=COALESCE(?, -1) AND UPPER(TRIM(COALESCE(proceso,'')))='SOLDADURA' ORDER BY id",
+                (pos, obra_url, ot_scope_btn)
+            ).fetchall()
+        else:
+            sol_rows = db.execute(
+                "SELECT estado, re_inspeccion FROM procesos WHERE posicion=? AND obra=? AND UPPER(TRIM(COALESCE(proceso,'')))='SOLDADURA' ORDER BY id",
+                (pos, obra_url)
+            ).fetchall()
         soldadura_aprobada = any(_proceso_aprobado(r[0], r[1]) for r in sol_rows) if sol_rows else False
     if ot_sin_pintura:
         # Solo avanzar a despacho si soldadura ya está aprobada o no es requerida en el flujo
