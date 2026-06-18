@@ -392,12 +392,21 @@ def ot_lista():
                 <td>{ot[7]}</td>
         """
             if not es_obra:
+                estado_actual_ot = str(ot[5] or "").strip()
+                opciones_estado_rapido = ""
+                for _e_opt in ["Activa", "En proceso", "En pausa", "Finalizada"]:
+                    _sel = 'selected' if estado_actual_ot == _e_opt else ''
+                    opciones_estado_rapido += f'<option value="{_e_opt}" {_sel}>{_e_opt}</option>'
                 html += f"""
                 <td>
                     <a href="/modulo/ot/editar/{ot[0]}" class="btn" style="background: #ea580c;">Editar</a>
                     <a href="/modulo/ot/eliminar/{ot[0]}" class="btn" style="background: #c2410c;" onclick="return confirm('¿Eliminar?')">Eliminar</a>
                     <form method="post" action="/modulo/ot/cerrar/{ot[0]}" style="display:inline;">
                         <button type="submit" class="btn" style="background:#fb923c;color:#fff;" onclick="return confirm('¿Cerrar esta OT? Se moverá a Historial. Las piezas y controles quedan guardados y se recuperan si se reabre.')">Cerrar OT</button>
+                    </form>
+                    <form method="post" action="/modulo/ot/cambiar-estado/{ot[0]}" style="display:inline-flex;align-items:center;gap:4px;margin-left:4px;">
+                        <select name="estado" style="padding:5px 6px;border:1px solid #fdba74;border-radius:5px;font-size:12px;background:#fffaf5;">{opciones_estado_rapido}</select>
+                        <button type="submit" class="btn" style="background:#0f766e;padding:5px 10px;font-size:12px;">✔</button>
                     </form>
                 </td>
                 """
@@ -1064,6 +1073,18 @@ def ot_eliminar(ot_id):
         except Exception:
             pass
         return redirect(f"/modulo/ot?mensaje=Error eliminando OT: {html_lib.escape(str(exc))}")
+
+
+@ot_bp.route("/modulo/ot/cambiar-estado/<int:ot_id>", methods=["POST"])
+def ot_cambiar_estado(ot_id):
+    db = get_db()
+    nuevo_estado = (request.form.get("estado") or "").strip()
+    ESTADOS_VALIDOS = {"Activa", "En proceso", "En pausa", "Finalizada"}
+    if nuevo_estado not in ESTADOS_VALIDOS:
+        return redirect("/modulo/ot?mensaje=Estado invalido")
+    db.execute("UPDATE ordenes_trabajo SET estado=? WHERE id=?", (nuevo_estado, ot_id))
+    db.commit()
+    return redirect("/modulo/ot?mensaje=Estado actualizado")
 
 
 @ot_bp.route("/modulo/ot/cerrar/<int:ot_id>", methods=["POST"])

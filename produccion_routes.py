@@ -22,8 +22,8 @@ _excel_path_cache: dict = {}
 # Clave: ot_id. Valor: (max_proc_id, avance, total_piezas, conteo, ts).
 _avance_cache: dict = {}
 
-_EXCEL_PATH_CACHE_TTL_SECONDS = 45
-_AVANCE_CACHE_TTL_SECONDS = 8
+_EXCEL_PATH_CACHE_TTL_SECONDS = 180
+_AVANCE_CACHE_TTL_SECONDS = 60
 
 
 def _get_df_cached(excel_path):

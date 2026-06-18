@@ -66,6 +66,7 @@ def _collect(db, obra, year, week, week_start, week_end):
       ots = db.execute(
         "SELECT id, titulo, tipo_estructura, fecha_entrega, cliente, hs_previstas "
         "FROM ordenes_trabajo WHERE obra=? AND estado != 'INACTIVO' "
+        "AND fecha_cierre IS NULL AND (es_mantenimiento IS NULL OR es_mantenimiento = 0) "
         "ORDER BY fecha_entrega ASC, id ASC",
         (obra,)
       ).fetchall()
@@ -74,6 +75,7 @@ def _collect(db, obra, year, week, week_start, week_end):
         "SELECT id, titulo, tipo_estructura, fecha_entrega, cliente, hs_previstas "
         "FROM ordenes_trabajo "
         "WHERE TRIM(COALESCE(obra,'')) != '' AND estado != 'INACTIVO' "
+        "AND fecha_cierre IS NULL AND (es_mantenimiento IS NULL OR es_mantenimiento = 0) "
         "ORDER BY fecha_entrega ASC, id ASC"
       ).fetchall()
 
