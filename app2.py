@@ -4596,46 +4596,35 @@ def pieza(pos):
     procesos_completados_btn = obtener_procesos_completados(pos, obra_url if obra_url else None, ot_scope_btn)
     if not tiene_controles_en_ot:
         procesos_completados_btn = []
-    soldadura_aprobada = "SOLDADURA" in procesos_completados_btn
-    pintura_aprobada = "PINTURA" in procesos_completados_btn
-    ot_sin_pintura = _ot_no_requiere_pintura(db, obra=obra_url if obra_url else None, ot_id=ot_scope_btn)
     # Para piezas INSERTO (flujo ARMADO→DESPACHO): _pieza_es_inserto ahora tiene fallback
     # por posicion sola cuando obra/ot_id están vacíos, así que obtener_orden_procesos_ot
     # retorna ["ARMADO","DESPACHO"] correctamente incluso con obra vacía en BD.
     orden_procesos_btn = obtener_orden_procesos_ot(db, obra=obra_url if obra_url else None, ot_id=ot_scope_btn, pos=pos)
-    if "SOLDADURA" not in orden_procesos_btn and "PINTURA" not in orden_procesos_btn:
-        if "ARMADO" in procesos_completados_btn:
-            pintura_aprobada = True
-    # Verificar soldadura antes de decidir el botón (necesario para OTs sin pintura)
-    if not es_completada and obra_url and not soldadura_aprobada:
-        if ot_scope_btn is not None:
-            sol_rows = db.execute(
-                "SELECT estado, re_inspeccion FROM procesos WHERE posicion=? AND obra=? AND COALESCE(ot_id, -1)=COALESCE(?, -1) AND UPPER(TRIM(COALESCE(proceso,'')))='SOLDADURA' ORDER BY id",
-                (pos, obra_url, ot_scope_btn)
-            ).fetchall()
-        else:
-            sol_rows = db.execute(
-                "SELECT estado, re_inspeccion FROM procesos WHERE posicion=? AND obra=? AND UPPER(TRIM(COALESCE(proceso,'')))='SOLDADURA' ORDER BY id",
-                (pos, obra_url)
-            ).fetchall()
-        soldadura_aprobada = any(_proceso_aprobado(r[0], r[1]) for r in sol_rows) if sol_rows else False
-    if ot_sin_pintura:
-        # Solo avanzar a despacho si soldadura ya está aprobada o no es requerida en el flujo
-        soldadura_en_orden = "SOLDADURA" in orden_procesos_btn
-        if not soldadura_en_orden or soldadura_aprobada:
-            pintura_aprobada = True
+
+    siguiente_proceso_btn = None
+    if not es_completada and orden_procesos_btn:
+        if not procesos_completados_btn:
+            siguiente_proceso_btn = orden_procesos_btn[0]
+        elif len(procesos_completados_btn) < len(orden_procesos_btn):
+            try:
+                idx_proc = orden_procesos_btn.index(procesos_completados_btn[-1])
+                if idx_proc + 1 < len(orden_procesos_btn):
+                    siguiente_proceso_btn = orden_procesos_btn[idx_proc + 1]
+            except Exception:
+                siguiente_proceso_btn = orden_procesos_btn[0]
+
     if es_completada:
         btn_texto = "🔒 PIEZA COMPLETADA"
-    elif pintura_aprobada:
+    elif siguiente_proceso_btn == "DESPACHO":
         btn_texto = "📦 CONTROL DESPACHO"
     else:
         btn_texto = "➕ CARGAR CONTROL"
     if es_completada:
         btn_href = "#"
-    elif pintura_aprobada:
+    elif siguiente_proceso_btn == "DESPACHO":
         _ot_qs_d = f"&ot_id={ot_scope_btn}" if ot_scope_btn is not None else ""
         btn_href = f"/modulo/calidad/despacho?obra={quote(obra_url)}{_ot_qs_d}" if obra_url else "/modulo/calidad/despacho"
-    elif soldadura_aprobada and not ot_sin_pintura:
+    elif siguiente_proceso_btn == "PINTURA":
         btn_href = f"/modulo/calidad/escaneo/control-pintura?obra={quote(obra_url)}" + (f"&ot_id={ot_scope_btn}" if ot_scope_btn is not None else "")
     else:
         btn_href = f"/cargar/{quote(pos)}?obra={quote(obra_url)}{ot_qs}"

@@ -1094,12 +1094,17 @@ calcHoras();
 # ── Routes ─────────────────────────────────────────────────────────────────────
 @programacion_bp.route("/modulo/programacion")
 @programacion_bp.route("/modulo/programacion/detalle")
+@programacion_bp.route("/modulo/programacion/cumplimiento-detalle")
 @programacion_bp.route("/modulo/programacion/submodulos")
 def programacion_index():
     es_obra = _es_usuario_obra()
     path_actual = request.path.rstrip("/")
-    es_vista_detalle = path_actual.endswith("/detalle") or path_actual.endswith("/submodulos")
-    base_path = "/modulo/programacion/submodulos" if es_vista_detalle else "/modulo/programacion"
+    es_vista_detalle = (
+        path_actual.endswith("/detalle")
+        or path_actual.endswith("/submodulos")
+        or path_actual.endswith("/cumplimiento-detalle")
+    )
+    base_path = "/modulo/programacion/cumplimiento-detalle" if es_vista_detalle else "/modulo/programacion"
     db = get_db()
     today = date.today()
 
@@ -1604,7 +1609,7 @@ def programacion_index():
         _qs_toggle.append("obra=" + quote(obra_fil))
     if vista:
         _qs_toggle.append("vista=" + quote(vista))
-    _url_ir_detalle = "/modulo/programacion/submodulos" + ("?" + "&".join(_qs_toggle) if _qs_toggle else "")
+    _url_ir_detalle = "/modulo/programacion/cumplimiento-detalle" + ("?" + "&".join(_qs_toggle) if _qs_toggle else "")
     _url_ir_resumen = "/modulo/programacion" + ("?" + "&".join(_qs_toggle) if _qs_toggle else "")
     _btn_active = "background:#6366f1;color:#fff;border-color:#6366f1;"
     btn_trimestral_active = _btn_active if vista in ("", "trimestral") else ""
@@ -2040,7 +2045,7 @@ def programacion_cumplimiento():
     if ff:
         qs.append(f"ff={ff}")
     qs.append(f"semana={semana_key}")
-    return redirect("/modulo/programacion/submodulos" + ("?" + "&".join(qs) if qs else ""))
+    return redirect("/modulo/programacion/cumplimiento-detalle" + ("?" + "&".join(qs) if qs else ""))
 
 
 @programacion_bp.route("/modulo/programacion/nueva", methods=["GET", "POST"])
