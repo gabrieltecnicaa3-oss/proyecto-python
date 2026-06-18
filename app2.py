@@ -4555,7 +4555,47 @@ def pieza(pos):
     btn_agregar = "btn-add bloqueado" if es_completada else "btn-add"
     obra_url = obra if obra != '---' else (qr_obra or "")
     ot_qs = f"&ot_id={ot_scope_btn}" if ot_scope_btn is not None else ""
+    if ot_scope_btn is not None and obra_url:
+        fila_control_ot = db.execute(
+            """
+            SELECT 1
+            FROM procesos
+            WHERE TRIM(COALESCE(posicion, '')) = TRIM(?)
+              AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+              AND TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, ''))
+              AND COALESCE(eliminado, 0) = 0
+            LIMIT 1
+            """,
+            (pos, ot_scope_btn, obra_url),
+        ).fetchone()
+    elif ot_scope_btn is not None:
+        fila_control_ot = db.execute(
+            """
+            SELECT 1
+            FROM procesos
+            WHERE TRIM(COALESCE(posicion, '')) = TRIM(?)
+              AND COALESCE(ot_id, -1) = COALESCE(?, -1)
+              AND COALESCE(eliminado, 0) = 0
+            LIMIT 1
+            """,
+            (pos, ot_scope_btn),
+        ).fetchone()
+    else:
+        fila_control_ot = db.execute(
+            """
+            SELECT 1
+            FROM procesos
+            WHERE TRIM(COALESCE(posicion, '')) = TRIM(?)
+              AND TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, ''))
+              AND COALESCE(eliminado, 0) = 0
+            LIMIT 1
+            """,
+            (pos, obra_url),
+        ).fetchone()
+    tiene_controles_en_ot = bool(fila_control_ot)
     procesos_completados_btn = obtener_procesos_completados(pos, obra_url if obra_url else None, ot_scope_btn)
+    if not tiene_controles_en_ot:
+        procesos_completados_btn = []
     soldadura_aprobada = "SOLDADURA" in procesos_completados_btn
     pintura_aprobada = "PINTURA" in procesos_completados_btn
     ot_sin_pintura = _ot_no_requiere_pintura(db, obra=obra_url if obra_url else None, ot_id=ot_scope_btn)

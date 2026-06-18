@@ -1873,7 +1873,7 @@ function printCumplimiento() {{
     </div>
     <div class="hdr-actions">
         <a href="/modulo/programacion/nueva" class="btn">➕ Nueva Programación</a>
-        {f'<a href="{_url_ir_resumen}" class="btn btn-sec">⚡ Vista rápida</a>' if es_vista_detalle else f'<a href="{_url_ir_detalle}" class="btn btn-sec">🧩 Submódulos</a>'}
+        {f'<a href="{_url_ir_resumen}" class="btn btn-sec">⚡ Vista rápida</a>' if es_vista_detalle else f'<a href="{_url_ir_detalle}" class="btn btn-sec">🧩 Cumplimiento y detalle</a>'}
         <a href="/" class="btn btn-sec">⬅️ Volver</a>
     </div>
 </div>
@@ -1931,11 +1931,11 @@ function printCumplimiento() {{
 {'' if es_vista_detalle else f'''
 <div class="panel" id="detalle-wrapper-lite">
     <div class="collapsible-header" style="cursor:default;">
-        <h3>🧩 Submódulos de Programación</h3>
+        <h3>🧩 Cumplimiento y detalle</h3>
         <a class="collapsible-toggle" href="{_url_ir_detalle}" style="text-decoration:none;">Abrir</a>
     </div>
     <div style="padding:8px 0 2px;color:#9a3412;font-size:13px;">
-        Cumplimiento de objetivos y resumen detallado se abren en una pantalla separada.
+        Abrí esta pantalla para ver juntos los paneles de cumplimiento y tabla de detalle.
     </div>
 </div>
 '''}
