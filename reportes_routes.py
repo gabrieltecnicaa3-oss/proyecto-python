@@ -105,15 +105,67 @@ def _collect(db, obra, year, week, week_start, week_end):
     # Piezas aprobadas por etapa por OT
     appr = {oid: {s: 0 for s in STAGES} for oid in ot_ids}
     for stage in STAGES:
+      if stage == "DESPACHO":
         srows = db.execute(
-            f"SELECT ot_id, COUNT(DISTINCT posicion) FROM procesos "
-            f"WHERE ot_id IN ({ph}) AND proceso=? "
-            f"AND UPPER(TRIM(estado)) IN {_OK_PH} AND eliminado=0 GROUP BY ot_id",
-            ot_ids + [stage] + list(_OK)
+          f"SELECT ot_id, COUNT(DISTINCT posicion) FROM procesos "
+          f"WHERE ot_id IN ({ph}) "
+          f"AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('DESPACHO','P/DESPACHO') "
+          f"AND UPPER(TRIM(COALESCE(estado, ''))) IN {_OK_PH} "
+          f"AND COALESCE(eliminado, 0)=0 "
+          f"GROUP BY ot_id",
+          ot_ids + list(_OK)
+        ).fetchall()
+      else:
+        srows = db.execute(
+          f"SELECT ot_id, COUNT(DISTINCT posicion) FROM procesos "
+          f"WHERE ot_id IN ({ph}) AND UPPER(TRIM(COALESCE(proceso, '')))=? "
+          f"AND UPPER(TRIM(COALESCE(estado, ''))) IN {_OK_PH} "
+          f"AND COALESCE(eliminado, 0)=0 GROUP BY ot_id",
+          ot_ids + [stage] + list(_OK)
         ).fetchall()
         for r in srows:
             if r[0] in appr:
                 appr[r[0]][stage] = r[1]
+
+    # Piezas listas para despacho (control P/DESPACHO o DESPACHO aprobado) y despachadas reales.
+    desp_ready_rows = db.execute(
+      f"SELECT ot_id, COUNT(DISTINCT TRIM(COALESCE(posicion, ''))) FROM procesos "
+      f"WHERE ot_id IN ({ph}) "
+      f"AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('DESPACHO','P/DESPACHO') "
+      f"AND UPPER(TRIM(COALESCE(estado, ''))) IN {_OK_PH} "
+      f"AND TRIM(COALESCE(posicion, '')) <> '' "
+      f"AND COALESCE(eliminado, 0)=0 "
+      f"GROUP BY ot_id",
+      ot_ids + list(_OK),
+    ).fetchall()
+    desp_done_rows = db.execute(
+      f"SELECT ot_id, COUNT(DISTINCT TRIM(COALESCE(posicion, ''))) FROM procesos "
+      f"WHERE ot_id IN ({ph}) "
+      f"AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('DESPACHO','P/DESPACHO') "
+      f"AND UPPER(TRIM(COALESCE(estado_pieza, '')))='DESPACHADO' "
+      f"AND TRIM(COALESCE(posicion, '')) <> '' "
+      f"AND COALESCE(eliminado, 0)=0 "
+      f"GROUP BY ot_id",
+      ot_ids,
+    ).fetchall()
+    remitos_rows = db.execute(
+      f"SELECT DISTINCT ot_id FROM remitos WHERE ot_id IN ({ph})",
+      ot_ids,
+    ).fetchall()
+    desp_ready_by_ot = {int(r[0]): int(r[1] or 0) for r in desp_ready_rows}
+    desp_done_by_ot = {int(r[0]): int(r[1] or 0) for r in desp_done_rows}
+    ot_con_remito = {int(r[0]) for r in remitos_rows if int(r[0] or 0) > 0}
+    pending_dispatch_by_ot = {}
+    finalizada_by_ot = {}
+    for oid in ot_ids:
+      total_ot = int(total_by_ot.get(oid, 0) or 0)
+      ready = int(desp_ready_by_ot.get(oid, appr[oid]["DESPACHO"]) or 0)
+      done = int(desp_done_by_ot.get(oid, 0) or 0)
+      if oid in ot_con_remito and total_ot > 0 and ready >= total_ot:
+        done = max(done, ready)
+      despacho_equiv = max(ready, done)
+      finalizada_by_ot[oid] = bool(total_ot > 0 and despacho_equiv >= total_ot)
+      pending_dispatch_by_ot[oid] = max(ready - done, 0)
 
     # Avance global histórico (piezas por etapa)
     n_arm_g = sum(appr[oid]["ARMADO"]    for oid in ot_ids)
@@ -232,14 +284,14 @@ def _collect(db, obra, year, week, week_start, week_end):
     n_cumplido = 0
     n_en_termino = 0
     n_atrasado = 0
+    ots_en_proceso_ids = []
     for ot in ots:
         ot_id, _, _, fe, _, _ = ot
-        total = total_by_ot.get(ot_id, 0)
-        n_des = appr[ot_id]["DESPACHO"]
-        # Cumplido: todas las piezas despachadas
-        if total > 0 and n_des >= total:
+        # Cumplido: P/DESPACHO o DESPACHO al 100% (criterio operativo de finalización).
+        if finalizada_by_ot.get(ot_id, False):
             n_cumplido += 1
             continue
+        ots_en_proceso_ids.append(int(ot_id))
         # Determinar si está atrasado
         try:
             fe_date = datetime.strptime(str(fe)[:10], "%Y-%m-%d").date()
@@ -330,6 +382,9 @@ def _collect(db, obra, year, week, week_start, week_end):
         first_fecha=first_fecha, n_prev=n_prev, n_this=n_this,
         year=year, week=week, week_start=week_start, week_end=week_end,
         n_cumplido=n_cumplido, n_en_termino=n_en_termino, n_atrasado=n_atrasado,
+        ots_en_proceso_ids=ots_en_proceso_ids,
+        finalizada_by_ot=finalizada_by_ot,
+        pending_dispatch_by_ot=pending_dispatch_by_ot,
         prog_rows=prog_rows, avance_by_ot=avance_by_ot, avance_gantt_by_ot=avance_gantt_by_ot,
     )
 
@@ -497,6 +552,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     cliente     = _e(d["cliente"])
     ots         = d["ots"]
     is_interno  = tipo == "INTERNO"
+    ots_en_proceso_ids = set(int(x) for x in d.get("ots_en_proceso_ids", []))
     all_obras   = bool(d.get("all_obras", False))
     ot_obra_by_id = d.get("ot_obra_by_id", {})
     week_start  = d["week_start"]
@@ -920,11 +976,19 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     total_by_ot = d["total_by_ot"]
 
     table_rows = ""
+    pending_dispatch_total = 0
     for ot in ots:
         ot_id, titulo, tipo_est, fe, _, _ = ot
         obra_ot = _e(ot_obra_by_id.get(int(ot_id), ""))
         titulo_mostrar = f"[{obra_ot}] {_e(titulo)}" if all_obras and obra_ot else _e(titulo)
         total = total_by_ot.get(ot_id, 0)
+        pend_desp = int(d.get("pending_dispatch_by_ot", {}).get(ot_id, 0) or 0)
+        pending_dispatch_total += pend_desp
+        pend_desp_html = (
+            f'<span class="pri-badge" style="background:#fee2e2;color:#b91c1c">⚠ {pend_desp} pzas</span>'
+            if pend_desp > 0 else
+            '<span class="pri-badge" style="background:#f0fdf4;color:#166534">Sin pendiente</span>'
+        )
         cells = ""
         n_arm_ot = appr[ot_id]["ARMADO"]
         n_sol_ot = appr[ot_id]["SOLDADURA"]
@@ -944,6 +1008,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
       <td class="tc-titulo">{titulo_mostrar}</td>
       <td>{tipo_s}</td>
       <td>{total}</td>
+      <td>{pend_desp_html}</td>
       {cells}
       <td style="color:{av_clr};font-weight:700;text-align:center">{pct_av_ot}%</td>
       <td class="tc-fe">{fe_fmt}</td>
@@ -967,7 +1032,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
   <table class="main-table">
     <thead>
       <tr>
-        <th>OT</th><th>Título</th><th>Tipo</th><th>Pzas</th>
+        <th>OT</th><th>Título</th><th>Tipo</th><th>Pzas</th><th>Pend. despacho</th>
         <th>Armado</th><th>% A</th>
         <th>Soldadura</th><th>% S</th>
         <th>Pintura</th><th>% P</th>
@@ -977,7 +1042,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     </thead>
     <tbody>{table_rows}</tbody>
     <tfoot>
-      <tr><td colspan="3"><b>TOTALES</b></td><td><b>{total_g}</b></td>{tot_cells}<td>–</td></tr>
+      <tr><td colspan="3"><b>TOTALES</b></td><td><b>{total_g}</b></td><td><b>{pending_dispatch_total}</b></td>{tot_cells}<td>–</td></tr>
     </tfoot>
   </table>
   <div class="legend-row">
@@ -1215,7 +1280,10 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
     </div>
   </div>
 </div>"""
-    ots_sorted = sorted(ots, key=lambda r: (r[3] or "9999-99-99", r[0]))
+    ots_sorted = sorted(
+      [ot for ot in ots if int(ot[0]) in ots_en_proceso_ids],
+      key=lambda r: (r[3] or "9999-99-99", r[0])
+    )
     crono_rows = ""
     desvio_stats = {
       "crit": 0,
@@ -1238,6 +1306,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         pct_sol = _pct(n_sol, total)
         pct_pin = _pct(n_pin, total)
         pct_des = _pct(n_des, total)
+        pend_desp = int(d.get("pending_dispatch_by_ot", {}).get(ot_id, 0) or 0)
         # Avance total OT alineado con Estado de Producción
         pct_avance = max(0, min(100, int(d.get("avance_by_ot", {}).get(ot_id, 0))))
         pri_lbl, pri_col, pri_bg = _priority(fe)
@@ -1313,6 +1382,7 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
       <td class="tc-ot">{ot_id}</td>
       <td class="tc-titulo">{titulo_mostrar}</td>
       <td>{total}</td>
+      <td>{('<span class="pri-badge" style="background:#fee2e2;color:#b91c1c">⚠ ' + str(pend_desp) + ' pzas</span>') if pend_desp > 0 else '<span class="estado-badge done">Sin pendiente</span>'}</td>
       <td>{mb(pct_arm, '#3b82f6')}</td>
       <td>{mb(pct_sol, '#f97316')}</td>
       <td>{mb(pct_pin, '#22c55e')}</td>
@@ -1371,12 +1441,14 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
 </div>"""
 
     h_crono = next_sec("CRONOGRAMA DE ENTREGAS Y PRIORIDADES")
+    if not crono_rows:
+        crono_rows = '<tr><td colspan="12" style="text-align:center;color:#64748b">Sin OTs en proceso para el período seleccionado.</td></tr>'
     crono_html = f"""
 <div class="section print-new-page print-keep-together">
   <div class="section-header">{h_crono}</div>
   <table class="main-table">
     <thead>
-      <tr><th>Prior.</th><th>OT</th><th>Título</th><th>Pzas</th>
+      <tr><th>Prior.</th><th>OT</th><th>Título</th><th>Pzas</th><th>Pend. despacho</th>
           <th>Armado %</th><th>Soldadura %</th><th>Pintura %</th><th>Despacho %</th>
           <th>Avance Real</th><th>Desvío Plan (Esp / Δ)</th><th>Estado</th></tr>
     </thead>
@@ -1414,22 +1486,31 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
         alertas   = []
         situacion = []
         acciones  = []
+        ots_en_proceso = [ot for ot in ots if int(ot[0]) in ots_en_proceso_ids]
 
         if avance_pct < 20:
             alertas.append(f"Avance global {avance_pct}%: obra en etapa inicial.")
 
-        sin_mov  = [f"OT {ot[0]}" for ot in ots if appr[ot[0]]["ARMADO"] == 0]
-        urgentes = [ot for ot in ots if _priority(ot[3])[0] == "URGENTE"]
+        sin_mov  = [f"OT {ot[0]}" for ot in ots_en_proceso if appr[ot[0]]["ARMADO"] == 0]
+        urgentes = [ot for ot in ots_en_proceso if _priority(ot[3])[0] == "URGENTE"]
+        ots_pend_desp = [
+          (ot[0], int(d.get("pending_dispatch_by_ot", {}).get(ot[0], 0) or 0))
+          for ot in ots_en_proceso
+          if int(d.get("pending_dispatch_by_ot", {}).get(ot[0], 0) or 0) > 0
+        ]
 
         if sin_mov:
             alertas.append(f"{len(sin_mov)} OTs sin piezas iniciadas (0%): {', '.join(sin_mov[:6])}.")
         if d["hs_cons"] == 0:
             alertas.append("0 hs consumidas registradas – verificar carga de partes diarios.")
+        if ots_pend_desp:
+          txt_pend = ", ".join([f"OT {oid} ({cant} pzas)" for oid, cant in ots_pend_desp[:6]])
+          alertas.append(f"Piezas listas pendientes de despacho: {txt_pend}.")
         for ot in urgentes:
             alertas.append(f"OT {ot[0]} ({_e(ot[1])[:22]}): entrega {_fd(ot[3])}, requiere máxima atención.")
 
         ots_avanzadas = sorted(
-            [(ot[0], ot[1], appr[ot[0]]) for ot in ots if appr[ot[0]]["ARMADO"] > 0],
+          [(ot[0], ot[1], appr[ot[0]]) for ot in ots_en_proceso if appr[ot[0]]["ARMADO"] > 0],
             key=lambda x: x[2]["ARMADO"], reverse=True
         )
         for ot_id, titulo, ot_appr in ots_avanzadas[:4]:
@@ -1448,6 +1529,8 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
             acciones.append(f"Activar inicio en OTs sin movimiento ({', '.join(sin_mov[:5])}).")
         if d["hs_cons"] == 0:
             acciones.append("Regularizar carga de hs consumidas en el sistema.")
+        if ots_pend_desp:
+          acciones.append("Coordinar despacho inmediato de piezas listas para liberar frente de fabricación.")
         for ot in urgentes[:3]:
             acciones.append(f"Priorizar OT {ot[0]} – {_e(ot[1])[:22]} (entrega {_fd(ot[3])}).")
         if not acciones:
