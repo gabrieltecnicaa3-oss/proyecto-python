@@ -1093,8 +1093,11 @@ calcHoras();
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 @programacion_bp.route("/modulo/programacion")
+@programacion_bp.route("/modulo/programacion/detalle")
 def programacion_index():
     es_obra = _es_usuario_obra()
+    es_vista_detalle = request.path.rstrip("/").endswith("/detalle")
+    base_path = "/modulo/programacion/detalle" if es_vista_detalle else "/modulo/programacion"
     db = get_db()
     today = date.today()
 
@@ -1238,7 +1241,7 @@ def programacion_index():
     edit_ot_txt = (request.args.get("edit_ot") or "").strip()
     edit_ot = int(edit_ot_txt) if edit_ot_txt.isdigit() else 0
     edit_pct_txt = (request.args.get("edit_pct") or "").strip()
-    cargar_cumplimiento = (
+    cargar_cumplimiento = es_vista_detalle and (
         (request.args.get("cumplimiento") or "").strip() == "1"
         or bool((request.args.get("semana") or "").strip())
         or edit_ot > 0
@@ -1586,14 +1589,21 @@ def programacion_index():
         _qs_refresh.append("obra=" + quote(obra_fil))
     if vista:
         _qs_refresh.append("vista=" + quote(vista))
-    _url_refresh_avance = "/modulo/programacion?" + "&".join(_qs_refresh)
+    _url_refresh_avance = base_path + "?" + "&".join(_qs_refresh)
 
     _qs_prev_month = [f"fi={fi_prev_str}", f"ff={ff_prev_str}"]
     if obra_fil:
         _qs_prev_month.append("obra=" + quote(obra_fil))
     if vista:
         _qs_prev_month.append("vista=" + quote(vista))
-    _url_prev_month = "/modulo/programacion?" + "&".join(_qs_prev_month)
+    _url_prev_month = base_path + "?" + "&".join(_qs_prev_month)
+    _qs_toggle = [f"fi={fi_str}", f"ff={ff_str}"]
+    if obra_fil:
+        _qs_toggle.append("obra=" + quote(obra_fil))
+    if vista:
+        _qs_toggle.append("vista=" + quote(vista))
+    _url_ir_detalle = "/modulo/programacion/detalle" + ("?" + "&".join(_qs_toggle) if _qs_toggle else "")
+    _url_ir_resumen = "/modulo/programacion" + ("?" + "&".join(_qs_toggle) if _qs_toggle else "")
     _btn_active = "background:#6366f1;color:#fff;border-color:#6366f1;"
     btn_trimestral_active = _btn_active if vista in ("", "trimestral") else ""
     btn_semana_active    = _btn_active if vista == "semana"    else ""
@@ -1614,12 +1624,14 @@ def programacion_index():
     )
 
     semana_str = semana_sel.strftime("%Y-%m-%d")
-    if not cargar_cumplimiento:
+    if not es_vista_detalle:
+        cumplimiento_panel = ""
+    elif not cargar_cumplimiento:
         _base_qs = [f"fi={fi_str}", f"ff={ff_str}"]
         if obra_fil:
             _base_qs.append("obra=" + quote(obra_fil))
         _base_qs.append("cumplimiento=1")
-        _url_cumplimiento = "/modulo/programacion?" + "&".join(_base_qs) + "#cumplimiento-section"
+        _url_cumplimiento = base_path + "?" + "&".join(_base_qs) + "#cumplimiento-section"
         cumplimiento_panel = f"""
 <div class="panel" id="cumplimiento-section">
     <div class="collapsible-header">
@@ -1647,7 +1659,7 @@ def programacion_index():
             {'' if es_obra else '<button onclick="printCumplimiento()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>'}
         </div>
     </div>
-    <form method="get" action="/modulo/programacion" class="cumpl-filter-form" style="margin-bottom:10px;">
+    <form method="get" action="{base_path}" class="cumpl-filter-form" style="margin-bottom:10px;">
         <label>Semana (lunes):</label>
         <input type="date" id="semana" name="semana" value="{semana_str}" style="width:170px;">
         <label>Obra:</label>
@@ -1859,6 +1871,7 @@ function printCumplimiento() {{
     </div>
     <div class="hdr-actions">
         <a href="/modulo/programacion/nueva" class="btn">➕ Nueva Programación</a>
+        {f'<a href="{_url_ir_resumen}" class="btn btn-sec">⚡ Vista rápida</a>' if es_vista_detalle else f'<a href="{_url_ir_detalle}" class="btn btn-sec">📊 Cumplimiento y Detalle</a>'}
         <a href="/" class="btn btn-sec">⬅️ Volver</a>
     </div>
 </div>
@@ -1871,7 +1884,7 @@ function printCumplimiento() {{
 </div>
 
 <div class="panel">
-    <form method="get" action="/modulo/programacion" class="filters-form">
+    <form method="get" action="{base_path}" class="filters-form">
         <label>Desde:</label>
         <input type="date" name="fi" value="{fi_str}" style="width:160px;">
         <label>Hasta:</label>
@@ -1879,7 +1892,7 @@ function printCumplimiento() {{
         <label>Obra:</label>
         <select name="obra" style="min-width:180px;">{obras_opts}</select>
         <button type="submit" class="btn">Aplicar</button>
-        <a href="/modulo/programacion" class="btn btn-sec">Restablecer</a>
+        <a href="{base_path}" class="btn btn-sec">Restablecer</a>
     </form>
 </div>
 
@@ -1887,9 +1900,9 @@ function printCumplimiento() {{
     <div class="gantt-toolbar">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <h3>Diagrama de Gantt</h3>
-            <a href="/modulo/programacion?vista=trimestral{obra_qs}" class="btn btn-sm" style="{btn_trimestral_active}">📊 Trimestral</a>
-            <a href="/modulo/programacion?vista=mensual{obra_qs}" class="btn btn-sm" style="{btn_mensual_active}">📅 Mensual</a>
-            <a href="/modulo/programacion?vista=semana{obra_qs}" class="btn btn-sm" style="{btn_semana_active}">📆 Semana</a>
+            <a href="{base_path}?vista=trimestral{obra_qs}" class="btn btn-sm" style="{btn_trimestral_active}">📊 Trimestral</a>
+            <a href="{base_path}?vista=mensual{obra_qs}" class="btn btn-sm" style="{btn_mensual_active}">📅 Mensual</a>
+            <a href="{base_path}?vista=semana{obra_qs}" class="btn btn-sm" style="{btn_semana_active}">📆 Semana</a>
             <a href="{_url_prev_month}" class="btn btn-sec btn-sm">⬅️ 1 mes atrás</a>
             <a href="{_url_refresh_avance}" class="btn btn-sec btn-sm">🔄 Actualizar avance real</a>
         </div>
@@ -1900,6 +1913,7 @@ function printCumplimiento() {{
 
 {cumplimiento_panel}
 
+{'' if not es_vista_detalle else f'''
 <div class="panel" id="detalle-wrapper">
     <div class="collapsible-header" onclick="toggleSection('detalle-body','detalle-toggle')">
         <h3>📊 Detalle — {len(entradas)} programaciones · {total_hs:.0f} hs planificadas totales</h3>
@@ -1910,6 +1924,19 @@ function printCumplimiento() {{
         {tabla_html}
     </div>
 </div>
+'''}
+
+{'' if es_vista_detalle else f'''
+<div class="panel" id="detalle-wrapper-lite">
+    <div class="collapsible-header" style="cursor:default;">
+        <h3>📊 Cumplimiento y detalle</h3>
+        <a class="collapsible-toggle" href="{_url_ir_detalle}" style="text-decoration:none;">Abrir</a>
+    </div>
+    <div style="padding:8px 0 2px;color:#9a3412;font-size:13px;">
+        Se movieron a una vista separada para acelerar la carga inicial de Programación.
+    </div>
+</div>
+'''}
 
 <script>
 function toggleSection(bodyId, toggleId) {{

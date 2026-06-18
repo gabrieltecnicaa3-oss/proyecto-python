@@ -2510,17 +2510,10 @@ def home(page=1):
             FROM procesos p
             WHERE p.eliminado = 0
               AND TRIM(COALESCE(p.posicion, '')) <> ''
-              AND (
-                    COALESCE(p.ot_id, -1) = COALESCE(?, -1)
-                    OR (
-                        p.ot_id IS NULL
-                        AND TRIM(COALESCE(p.obra, '')) = TRIM(COALESCE(?, ''))
-                        AND TRIM(COALESCE(?, '')) <> ''
-                    )
-                  )
+              AND COALESCE(p.ot_id, -1) = COALESCE(?, -1)
             ORDER BY posicion ASC
             """,
-            (busqueda_ot, obra_ot_sel, obra_ot_sel),
+            (busqueda_ot,),
         ).fetchall()
     else:
         all_rows = []
@@ -2654,7 +2647,6 @@ def home(page=1):
               AND COALESCE(obra, '') = COALESCE(?, '')
                             AND (
                                 COALESCE(ot_id, -1) = COALESCE(?, -1)
-                                OR (ot_id IS NULL AND ? IS NOT NULL)
                             )
               AND eliminado=0
                               AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('ARMADO','SOLDADURA','DESPACHO','P/DESPACHO')
@@ -2672,10 +2664,10 @@ def home(page=1):
                     )
             ORDER BY id DESC
             """,
-            (pos_sel, obra_sel or '', ot_id_sel, ot_id_sel)
+            (pos_sel, obra_sel or '', ot_id_sel)
         ).fetchall()
 
-        if not rows and pos_sel:
+        if not rows and pos_sel and ot_id_sel is None and not str(obra_sel or '').strip():
             # Fallback para registros legacy que quedaron sin ot_id/obra pero sí tienen la posición.
             rows = db.execute(
                 """
@@ -2754,8 +2746,7 @@ def home(page=1):
             WHERE posicion=?
               AND COALESCE(obra, '') = COALESCE(?, '')
                                                         AND (
-                                                                COALESCE(ot_id, -1) = COALESCE(?, -1)
-                                                                OR (ot_id IS NULL AND ? IS NOT NULL)
+                                        COALESCE(ot_id, -1) = COALESCE(?, -1)
                                                         )
               AND eliminado=0
               AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('PINTURA','PINTURA_FONDO')
@@ -2773,7 +2764,7 @@ def home(page=1):
               )
                         ORDER BY id DESC
             """,
-                        (pos_sel, obra_sel or '', ot_id_sel, ot_id_sel)
+                        (pos_sel, obra_sel or '', ot_id_sel)
         ).fetchall()
 
         etapas = {'SUPERFICIE': None, 'FONDO': None, 'TERMINACION': None}
