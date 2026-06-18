@@ -2684,18 +2684,15 @@ def home(page=1):
                 WHERE TRIM(COALESCE(posicion, '')) = TRIM(?)
                   AND eliminado = 0
                   AND UPPER(TRIM(COALESCE(proceso, ''))) IN ('ARMADO','SOLDADURA','DESPACHO','P/DESPACHO')
-                  AND (
-                        COALESCE(ot_id, -1) = COALESCE(?, -1)
-                        OR (
-                            ot_id IS NULL
-                            AND TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, ''))
-                            AND TRIM(COALESCE(?, '')) <> ''
-                        )
-                  )
                 ORDER BY
+                    CASE
+                        WHEN COALESCE(ot_id, -1) = COALESCE(?, -1) THEN 0
+                        WHEN TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, '')) THEN 1
+                        ELSE 2
+                    END,
                     id DESC
                 """,
-                (pos_sel, ot_id_sel, obra_sel or '', obra_sel or ''),
+                (pos_sel, ot_id_sel, obra_sel or ''),
             ).fetchall()
 
         latest = {}
@@ -4470,21 +4467,24 @@ def pieza(pos):
     if "SOLDADURA" not in orden_procesos_btn and "PINTURA" not in orden_procesos_btn:
         if "ARMADO" in procesos_completados_btn:
             pintura_aprobada = True
-    if es_completada:
-        btn_texto = "🔒 PIEZA COMPLETADA"
-    elif pintura_aprobada or ot_sin_pintura:
-        btn_texto = "📦 CONTROL DESPACHO"
-    else:
-        btn_texto = "➕ CARGAR CONTROL"
-    if ot_sin_pintura:
-        pintura_aprobada = True
-    # Si pintura ya está aprobada, el siguiente paso es despacho; si no, y soldadura está OK, va a pintura.
+    # Verificar soldadura antes de decidir el botón (necesario para OTs sin pintura)
     if not es_completada and obra_url and not soldadura_aprobada:
         sol_rows = db.execute(
             "SELECT estado, re_inspeccion FROM procesos WHERE posicion=? AND obra=? AND UPPER(TRIM(COALESCE(proceso,'')))='SOLDADURA' ORDER BY id",
             (pos, obra_url)
         ).fetchall()
         soldadura_aprobada = any(_proceso_aprobado(r[0], r[1]) for r in sol_rows) if sol_rows else False
+    if ot_sin_pintura:
+        # Solo avanzar a despacho si soldadura ya está aprobada o no es requerida en el flujo
+        soldadura_en_orden = "SOLDADURA" in orden_procesos_btn
+        if not soldadura_en_orden or soldadura_aprobada:
+            pintura_aprobada = True
+    if es_completada:
+        btn_texto = "🔒 PIEZA COMPLETADA"
+    elif pintura_aprobada:
+        btn_texto = "📦 CONTROL DESPACHO"
+    else:
+        btn_texto = "➕ CARGAR CONTROL"
     if es_completada:
         btn_href = "#"
     elif pintura_aprobada:
