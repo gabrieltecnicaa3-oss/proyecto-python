@@ -95,29 +95,67 @@ def _parse_acciones_from_form(form):
 
 
 def _ensure_schema(db):
+  # SQLite first; fallback to MySQL-compatible DDL when needed.
+  try:
     db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS auditorias_obra (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ot_id INTEGER,
-            cliente TEXT,
-            obra TEXT,
-            proyecto TEXT,
-            fecha_auditoria DATE,
-            resumen TEXT,
-            aspectos_positivos TEXT,
-            acciones_pendientes TEXT,
-            observaciones_json TEXT,
-            evaluacion_json TEXT,
-            realizado_por TEXT,
-            creado_por TEXT,
-            fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)
-        )
-        """
+      """
+      CREATE TABLE IF NOT EXISTS auditorias_obra (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ot_id INTEGER,
+        cliente TEXT,
+        obra TEXT,
+        proyecto TEXT,
+        fecha_auditoria DATE,
+        resumen TEXT,
+        aspectos_positivos TEXT,
+        acciones_pendientes TEXT,
+        observaciones_json TEXT,
+        evaluacion_json TEXT,
+        realizado_por TEXT,
+        creado_por TEXT,
+        fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)
+      )
+      """
     )
+  except Exception:
+    db.execute(
+      """
+      CREATE TABLE IF NOT EXISTS auditorias_obra (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        ot_id BIGINT,
+        cliente TEXT,
+        obra TEXT,
+        proyecto TEXT,
+        fecha_auditoria DATE,
+        resumen TEXT,
+        aspectos_positivos TEXT,
+        acciones_pendientes TEXT,
+        observaciones_json LONGTEXT,
+        evaluacion_json LONGTEXT,
+        realizado_por TEXT,
+        creado_por TEXT,
+        fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+      """
+    )
+
+  try:
     db.execute("CREATE INDEX IF NOT EXISTS idx_auditorias_obra_fecha ON auditorias_obra(fecha_auditoria)")
+  except Exception:
+    try:
+      db.execute("CREATE INDEX idx_auditorias_obra_fecha ON auditorias_obra(fecha_auditoria)")
+    except Exception:
+      pass
+
+  try:
     db.execute("CREATE INDEX IF NOT EXISTS idx_auditorias_obra_ot ON auditorias_obra(ot_id)")
+  except Exception:
+    try:
+      db.execute("CREATE INDEX idx_auditorias_obra_ot ON auditorias_obra(ot_id)")
+    except Exception:
+      pass
+
     try:
       db.execute("ALTER TABLE auditorias_obra ADD COLUMN evaluacion_json TEXT")
     except Exception:
