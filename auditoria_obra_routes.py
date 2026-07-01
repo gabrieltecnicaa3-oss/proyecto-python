@@ -156,15 +156,15 @@ def _ensure_schema(db):
     except Exception:
       pass
 
-    try:
-      db.execute("ALTER TABLE auditorias_obra ADD COLUMN evaluacion_json TEXT")
-    except Exception:
-      pass
-    try:
-      db.execute("ALTER TABLE auditorias_obra ADD COLUMN realizado_por TEXT")
-    except Exception:
-      pass
-    db.commit()
+  try:
+    db.execute("ALTER TABLE auditorias_obra ADD COLUMN evaluacion_json TEXT")
+  except Exception:
+    pass
+  try:
+    db.execute("ALTER TABLE auditorias_obra ADD COLUMN realizado_por TEXT")
+  except Exception:
+    pass
+  db.commit()
 
 
 def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
@@ -249,32 +249,77 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
     story = []
     page_w = A4[0] - 28*mm  # usable width
 
-    # ── ENCABEZADO ────────────────────────────────────────────────────────
-    hdr_data = [
-        [
-            Paragraph("A3 SERVICIOS\nCONSTRUCTIVOS", ParagraphStyle("co", fontName="Helvetica-Bold", fontSize=9, textColor=colors.white, leading=12, alignment=TA_CENTER)),
-            Paragraph("INFORME DE AUDITORÍA DE OBRA", st_title),
-        Table(
-          [[
-            _iso_badge("ISO", "9001", AZUL_OSC),
-            _iso_badge("ISO", "45001", NARANJA_OSC),
-            _iso_badge("ISO", "37001", colors.HexColor("#64748b")),
-          ]],
-          colWidths=[14 * mm, 14 * mm, 14 * mm],
-        ),
-        ]
-    ]
-    hdr_tbl = Table(hdr_data, colWidths=[30*mm, page_w - 62*mm, 32*mm])
+    # ── ENCABEZADO (estilo reporte semanal) ───────────────────────────────
+    hdr_top = Table([[" "]], colWidths=[page_w], rowHeights=[1.2 * mm])
+    hdr_top.setStyle(TableStyle([
+      ("BACKGROUND", (0, 0), (-1, -1), NARANJA_OSC),
+      ("BOX", (0, 0), (-1, -1), 0, colors.white),
+    ]))
+    story.append(hdr_top)
+
+    header_title = ParagraphStyle(
+      "hdr_title_a",
+      fontName="Helvetica-Bold",
+      fontSize=12,
+      textColor=colors.HexColor("#1f2937"),
+      leading=15,
+    )
+    header_sub = ParagraphStyle(
+      "hdr_sub_a",
+      fontName="Helvetica",
+      fontSize=9,
+      textColor=colors.HexColor("#374151"),
+      leading=12,
+    )
+    header_chip = ParagraphStyle(
+      "hdr_chip_a",
+      fontName="Helvetica-Bold",
+      fontSize=8,
+      textColor=colors.HexColor("#b45309"),
+      alignment=TA_RIGHT,
+      leading=11,
+    )
+    header_date = ParagraphStyle(
+      "hdr_date_a",
+      fontName="Helvetica",
+      fontSize=9,
+      textColor=colors.HexColor("#374151"),
+      alignment=TA_RIGHT,
+      leading=12,
+    )
+
+    logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LOGO.png")
+    if os.path.isfile(logo_path):
+      logo_cell = Image(logo_path, width=16 * mm, height=11 * mm)
+    else:
+      logo_cell = Paragraph("A3", ParagraphStyle("hdr_logo_fallback", fontName="Helvetica-Bold", fontSize=11, textColor=NARANJA_OSC))
+
+    titulo_txt = "INFORME DE AUDITORIA DE OBRA"
+    subtitulo_txt = f"Obra: {obra or '-'}"
+    fecha_header = fecha_fmt or datetime.now().strftime("%d/%m/%Y")
+
+    hdr_data = [[
+      logo_cell,
+      Paragraph(f"{_e(titulo_txt)}<br/>{_e(subtitulo_txt)}", header_title),
+      Paragraph(
+        '<font backcolor="#fff7ed" color="#b45309">  INFORME INTERNO  </font><br/>' + _e(fecha_header),
+        header_date,
+      ),
+    ]]
+    hdr_tbl = Table(hdr_data, colWidths=[22 * mm, page_w - 62 * mm, 40 * mm], rowHeights=[15 * mm])
     hdr_tbl.setStyle(TableStyle([
-      ("BACKGROUND",  (0,0), (-1,-1), NARANJA_OSC),
-        ("VALIGN",      (0,0), (-1,-1), "MIDDLE"),
-        ("LEFTPADDING", (0,0), (-1,-1), 6),
-        ("RIGHTPADDING",(0,0), (-1,-1), 6),
-        ("TOPPADDING",  (0,0), (-1,-1), 8),
-        ("BOTTOMPADDING",(0,0),(-1,-1), 8),
+      ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f3f4f6")),
+      ("LINEBELOW", (0, 0), (-1, -1), 1, colors.HexColor("#cbd5e1")),
+      ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#e5e7eb")),
+      ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+      ("ALIGN", (2, 0), (2, 0), "RIGHT"),
+      ("LEFTPADDING", (0, 0), (-1, -1), 6),
+      ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+      ("TOPPADDING", (0, 0), (-1, -1), 5),
+      ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]))
     story.append(hdr_tbl)
-    story.append(Spacer(1, 3*mm))
+    story.append(Spacer(1, 3 * mm))
 
     # ── FICHA DE DATOS ────────────────────────────────────────────────────
     def _ficha_cell(label, value):
@@ -1052,6 +1097,36 @@ def modulo_auditoria_obra():
         body {{ margin:0; font-family: Arial, sans-serif; background:#f3f4f6; color:#111827; padding:16px; }}
         .wrap {{ max-width: 1250px; margin: 0 auto; }}
         .card {{ background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:14px; margin-bottom:12px; }}
+        .report-header {{
+          background:#f3f4f6;
+          border-top:4px solid #ea580c;
+          border-bottom:3px solid #cbd5e1;
+          border-left:1px solid #e5e7eb;
+          border-right:1px solid #e5e7eb;
+          border-radius:0;
+          padding:14px 16px;
+          margin-bottom:12px;
+          display:grid;
+          grid-template-columns: 70px 1fr auto;
+          gap:12px;
+          align-items:center;
+        }}
+        .report-header img {{ width:58px; height:auto; display:block; }}
+        .report-title {{ font-size:34px; margin:0 0 4px 0; font-weight:800; color:#1f2937; text-transform:uppercase; letter-spacing:0.3px; }}
+        .report-subtitle {{ font-size:18px; color:#374151; margin:0; }}
+        .report-right {{ text-align:right; }}
+        .report-chip {{
+          display:inline-block;
+          font-size:12px;
+          font-weight:800;
+          color:#b45309;
+          border:1px solid #fdba74;
+          background:#fff7ed;
+          border-radius:999px;
+          padding:6px 12px;
+          margin-bottom:6px;
+        }}
+        .report-date {{ font-size:15px; color:#374151; font-weight:700; }}
         h1 {{ margin:0 0 10px 0; font-size:22px; }}
         h2 {{ margin:0 0 10px 0; font-size:17px; color:#1f2937; }}
         .muted {{ color:#6b7280; font-size:13px; }}
@@ -1073,6 +1148,11 @@ def modulo_auditoria_obra():
         .err {{ background:#fee2e2; border:1px solid #fecaca; color:#991b1b; border-radius:8px; padding:10px; margin-bottom:10px; }}
         .obs-row textarea {{ min-height:65px; }}
         @media (max-width: 980px) {{
+          .report-header {{ grid-template-columns: 1fr; text-align:center; }}
+          .report-header img {{ margin:0 auto; }}
+          .report-right {{ text-align:center; }}
+          .report-title {{ font-size:24px; }}
+          .report-subtitle {{ font-size:15px; }}
           .grid4, .grid3 {{ grid-template-columns: 1fr; }}
           body {{ padding:10px; }}
         }}
@@ -1081,6 +1161,19 @@ def modulo_auditoria_obra():
     <body>
       <div class="wrap">
         <a href="/" class="btn-light" style="margin-bottom:10px;">Volver al panel</a>
+        <div class="report-header">
+          <div>
+            <img src="/logo-a3" alt="A3">
+          </div>
+          <div>
+            <p class="report-title">Informe de Auditoria de Obra</p>
+            <p class="report-subtitle">Carga y seguimiento de hallazgos en campo</p>
+          </div>
+          <div class="report-right">
+            <span class="report-chip">INFORME INTERNO</span>
+            <div class="report-date">{_e(datetime.now().strftime("%d %b %Y"))}</div>
+          </div>
+        </div>
         <div class="card">
           <h1>Auditoria de Obra</h1>
           <p class="muted">Módulo exclusivo para administrador. Carga la auditoría, adjunta fotos por observación y descargá directamente en PDF.</p>
@@ -1107,7 +1200,7 @@ def modulo_auditoria_obra():
                 </div>
                 <div>
                   <label>Proyecto</label>
-                  <input type="text" name="proyecto" id="proyecto" readonly style="background:#f9fafb;">
+                  <input type="text" name="proyecto" id="proyecto" placeholder="Completar manualmente">
                 </div>
                 <div>
                   <label>Realizado por</label>
@@ -1180,17 +1273,20 @@ def modulo_auditoria_obra():
               <h2>Seccion 4: ASPECTOS POSITIVOS</h2>
               <p class="muted">Completá los puntos positivos. Luego se mostrarán como items en el PDF.</p>
               <div style="overflow-x:auto;">
-                <table>
+                <table id="tabla_aspectos_positivos">
                   <thead>
                     <tr><th>Item</th></tr>
                   </thead>
                   <tbody>
-                    <tr><td><input name="aspecto_positivo[]" placeholder="Buen orden general de la obra"></td></tr>
+                    <tr class="ap-row"><td><input name="aspecto_positivo[]" placeholder="Buen orden general de la obra"></td></tr>
                     <tr><td><input name="aspecto_positivo[]" placeholder="Documentación completa y disponible"></td></tr>
                     <tr><td><input name="aspecto_positivo[]" placeholder="Personal con EPP correcto"></td></tr>
                     <tr><td><input name="aspecto_positivo[]" placeholder=""></td></tr>
                   </tbody>
                 </table>
+              </div>
+              <div style="margin-top:10px;">
+                <button type="button" class="btn-light" id="btn_add_aspecto">Sumar item</button>
               </div>
             </div>
 
@@ -1198,7 +1294,7 @@ def modulo_auditoria_obra():
               <h2>Seccion 5: ACCIONES PENDIENTES</h2>
               <p class="muted">Completa acción, responsable y fecha de compromiso.</p>
               <div style="overflow-x:auto;">
-                <table>
+                <table id="tabla_acciones_pendientes">
                   <thead>
                     <tr>
                       <th style="width:50%;">Acción</th>
@@ -1207,7 +1303,7 @@ def modulo_auditoria_obra():
                     </tr>
                   </thead>
                   <tbody>
-                    <tr>
+                    <tr class="accion-row">
                       <td><input name="accion_pendiente[]" placeholder="Completar ajuste de pernos"></td>
                       <td><input name="responsable_pendiente[]" placeholder="Juan Pérez"></td>
                       <td><input type="date" name="fecha_compromiso[]"></td>
@@ -1224,6 +1320,9 @@ def modulo_auditoria_obra():
                     </tr>
                   </tbody>
                 </table>
+              </div>
+              <div style="margin-top:10px;">
+                <button type="button" class="btn-light" id="btn_add_accion">Sumar item</button>
               </div>
             </div>
 
@@ -1277,7 +1376,6 @@ def modulo_auditoria_obra():
           const opt = sel.options[sel.selectedIndex];
           if (!opt) return;
           document.getElementById('cliente').value = opt.getAttribute('data-cliente') || '';
-          document.getElementById('proyecto').value = opt.getAttribute('data-proyecto') || '';
         }}
         (function() {{
           // Auto-sync on load if only one obra
@@ -1296,6 +1394,28 @@ def modulo_auditoria_obra():
             tr.querySelectorAll("input, textarea").forEach(function(el) {{ el.value = ""; }});
             tr.querySelectorAll("select").forEach(function(el) {{ el.selectedIndex = 0; }});
             tbody.appendChild(tr);
+          }});
+
+          const btnAspecto = document.getElementById("btn_add_aspecto");
+          const tbodyAspecto = document.querySelector("#tabla_aspectos_positivos tbody");
+          btnAspecto.addEventListener("click", function() {{
+            const base = tbodyAspecto.querySelector("tr.ap-row") || tbodyAspecto.querySelector("tr");
+            if (!base) return;
+            const tr = base.cloneNode(true);
+            tr.classList.add("ap-row");
+            tr.querySelectorAll("input").forEach(function(el) {{ el.value = ""; }});
+            tbodyAspecto.appendChild(tr);
+          }});
+
+          const btnAccion = document.getElementById("btn_add_accion");
+          const tbodyAccion = document.querySelector("#tabla_acciones_pendientes tbody");
+          btnAccion.addEventListener("click", function() {{
+            const base = tbodyAccion.querySelector("tr.accion-row") || tbodyAccion.querySelector("tr");
+            if (!base) return;
+            const tr = base.cloneNode(true);
+            tr.classList.add("accion-row");
+            tr.querySelectorAll("input").forEach(function(el) {{ el.value = ""; }});
+            tbodyAccion.appendChild(tr);
           }});
         }})();
       </script>
