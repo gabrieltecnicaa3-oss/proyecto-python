@@ -18,7 +18,12 @@ except Exception:  # pragma: no cover - fallback when MySQL dependency is missin
 _DB_ENGINE_RAW = os.getenv("DB_ENGINE", "auto").strip().lower()
 if _DB_ENGINE_RAW in ("", "auto"):
     # In cloud deployments we prefer MySQL automatically when credentials are available.
-    if os.getenv("MYSQL_HOST") and os.getenv("MYSQL_DB") and os.getenv("MYSQL_USER") and os.getenv("MYSQL_PASSWORD"):
+    if (
+        str(os.getenv("MYSQL_HOST") or "").strip()
+        and str(os.getenv("MYSQL_DB") or "").strip()
+        and str(os.getenv("MYSQL_USER") or "").strip()
+        and str(os.getenv("MYSQL_PASSWORD") or "").strip()
+    ):
         DB_ENGINE = "mysql"
     else:
         DB_ENGINE = "sqlite"
@@ -38,6 +43,10 @@ MYSQL_FAIL_OPEN = _env_flag_true("MYSQL_FAIL_OPEN", default=False)
 
 _DB_DIR = os.path.dirname(os.path.abspath(__file__))
 _SQLITE_DB_PATH = os.getenv("DB_PATH", os.path.join(_DB_DIR, "database.db"))
+
+
+def _env_str(name, default=""):
+    return str(os.getenv(name, default) or "").strip()
 
 
 class _StaticCursor:
@@ -291,12 +300,22 @@ def get_db():
                 return _connect_sqlite()
             raise RuntimeError("PyMySQL no disponible y MYSQL_FAIL_OPEN=0")
         try:
+            mysql_host = _env_str("MYSQL_HOST", "127.0.0.1")
+            mysql_user = _env_str("MYSQL_USER", "appuser")
+            mysql_password = _env_str("MYSQL_PASSWORD", "App1234!")
+            mysql_db = _env_str("MYSQL_DB", "gestion_produccion")
+            mysql_port_raw = _env_str("MYSQL_PORT", "3306")
+            try:
+                mysql_port = int(mysql_port_raw)
+            except Exception:
+                mysql_port = 3306
+
             mysql_conn = pymysql.connect(
-                host=os.getenv("MYSQL_HOST", "127.0.0.1"),
-                port=int(os.getenv("MYSQL_PORT", "3306")),
-                user=os.getenv("MYSQL_USER", "appuser"),
-                password=os.getenv("MYSQL_PASSWORD", "App1234!"),
-                database=os.getenv("MYSQL_DB", "gestion_produccion"),
+                host=mysql_host,
+                port=mysql_port,
+                user=mysql_user,
+                password=mysql_password,
+                database=mysql_db,
                 charset="utf8mb4",
                 autocommit=False,
             )
