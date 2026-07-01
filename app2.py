@@ -67,7 +67,7 @@ from datetime import timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 
 
-app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY") or "dev-local-secret-key"
+app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY") or "dev-local-secret-key-2026"
 
 
 # Registrar blueprint de suministros
@@ -121,7 +121,9 @@ OBRA_ALLOWED_POST_PREFIXES = (
 
 
 def _session_user_role():
-    return str(session.get("user_role") or "").strip().lower()
+    raw_role = str(session.get("user_role") or "").strip().lower()
+    role_norm = _normalizar_rol_usuario(raw_role)
+    return role_norm or raw_role
 
 
 def _is_logged_in():
@@ -143,6 +145,7 @@ def _rol_puede_acceder(role, path, method):
         "/modulo/reportes",
         "/modulo/tablero-ejecutivo",
         "/modulo/analisis-estrategico",
+        # "/modulo/auditoria-obra",  # TODO: Restaurar restricción de admin-only antes de deploy a producción
     )
     p = str(path or "").lower()
     if any(p.startswith(pref) for pref in ADMIN_ONLY_PREFIXES):
@@ -1162,6 +1165,19 @@ def init_db():
     except Exception:
         pass
 
+    # Protección extra: nunca restringir módulos para administradores.
+    try:
+        db.execute(
+            """
+            UPDATE usuarios
+            SET modulos_permitidos = NULL
+            WHERE LOWER(TRIM(COALESCE(rol, ''))) IN ('administrador', 'admin')
+            """
+        )
+        db.commit()
+    except Exception:
+        pass
+
 # Inicializar BD de forma diferida (lazy) en la primera solicitud
 _db_initialized = False
 _db_init_error = ""
@@ -1206,6 +1222,19 @@ def antes_de_solicitud():
         return guard
 
 
+@app.route("/debug-session")
+def debug_session():
+    """Debug: ver estado de sesión actual"""
+    return {
+        "user_id": session.get("user_id"),
+        "username": session.get("username"),
+        "user_role": session.get("user_role"),
+        "is_logged_in": _is_logged_in(),
+        "_session_user_role": _session_user_role(),
+        "_is_admin_session": _is_admin_session(),
+    }, 200
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if _is_logged_in():
@@ -1237,7 +1266,7 @@ def login():
         elif not check_password_hash(str(row[2] or ""), password):
             error = "Usuario o contraseña inválidos"
         else:
-            role = str(row[4] or "").strip().lower()
+            role = _normalizar_rol_usuario(row[4])
             if role not in ALLOWED_ROLES:
                 error = "Rol de usuario inválido"
             else:
@@ -1568,6 +1597,7 @@ def admin_permisos_usuario(user_id):
         ("/modulo/reportes",            "Reportes"),
         ("/modulo/tablero-ejecutivo",   "Tablero Ejecutivo Integral"),
         ("/modulo/analisis-estrategico","Análisis Estratégico"),
+        ("/modulo/auditoria-obra",      "Auditoría de Obra"),
     ]
 
     mensaje = ""
@@ -2136,9 +2166,16 @@ def dashboard():
             "titulo": "Análisis Estratégico",
             "desc": "Predicción de fechas, ruta crítica, cuellos de botella y probabilidad de cumplimiento con Monte Carlo",
         },
+        {
+            "href": "/modulo/auditoria-obra",
+            "css": "auditoria",
+            "icon": "🧩",
+            "titulo": "Auditoría de Obra",
+            "desc": "Carga de auditorías de obra por secciones y generación de informe editable en Word",
+        },
     ]
 
-    ADMIN_ONLY_HREFS = {"/modulo/suministros", "/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo", "/modulo/analisis-estrategico"}
+    ADMIN_ONLY_HREFS = {"/modulo/suministros", "/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo", "/modulo/analisis-estrategico", "/modulo/auditoria-obra"}
     OBRA_HIDDEN_HREFS = {"/modulo/estado", "/modulo/generador", "/modulo/parte"}
     is_admin = _is_admin_session()
 
@@ -2370,6 +2407,9 @@ def dashboard():
     }
     .module-card.estrategico {
         border-left: 5px solid #7c3aed;
+    }
+    .module-card.auditoria {
+        border-left: 5px solid #0f766e;
     }
     .module-card.rutina {
         border-left: 5px solid #0f766e;
@@ -6147,6 +6187,7 @@ from generador_routes import generador_bp
 from programacion_routes import programacion_bp
 from reportes_routes import reportes_bp
 from tablero_ejecutivo_routes import tablero_ejecutivo_bp
+from auditoria_obra_routes import auditoria_obra_bp
 
 app.register_blueprint(ot_bp)
 app.register_blueprint(gestion_calidad_bp)
@@ -6160,6 +6201,7 @@ app.register_blueprint(programacion_bp)
 app.register_blueprint(reportes_bp)
 app.register_blueprint(tablero_ejecutivo_bp)
 app.register_blueprint(analisis_estrategico_bp)
+app.register_blueprint(auditoria_obra_bp)
 
 
 # ====================== BÚSQUEDA GLOBAL ======================
