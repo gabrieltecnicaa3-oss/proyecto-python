@@ -340,9 +340,11 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
     story.append(Spacer(1, 4*mm))
 
     def _section_title(num, txt):
-        story.append(CondPageBreak(22*mm))
-        story.append(Paragraph(f"{num}. {txt.upper()}", st_h_sec))
-        story.append(HRFlowable(width="100%", thickness=1, color=NARANJA, spaceAfter=3))
+      story.append(CondPageBreak(30*mm))
+      story.append(KeepTogether([
+        Paragraph(f"{num}. {txt.upper()}", st_h_sec),
+        HRFlowable(width="100%", thickness=1, color=NARANJA, spaceAfter=3),
+      ]))
 
     def _body_para(txt):
         story.append(Paragraph(str(txt or "—").replace("\n", "<br/>"), st_normal))
@@ -564,7 +566,16 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
     firma_coord_flowable = Paragraph(" ", st_normal)
     if firma_coord_path:
       try:
-        firma_coord_flowable = Image(firma_coord_path, width=34 * mm, height=12 * mm)
+        firma_coord_flowable = Image(firma_coord_path)
+        firma_max_w = 34 * mm
+        firma_max_h = 12 * mm
+        firma_ratio = float(firma_coord_flowable.imageWidth or 1) / float(firma_coord_flowable.imageHeight or 1)
+        if firma_ratio >= (firma_max_w / firma_max_h):
+          firma_coord_flowable.drawWidth = firma_max_w
+          firma_coord_flowable.drawHeight = firma_max_w / firma_ratio
+        else:
+          firma_coord_flowable.drawHeight = firma_max_h
+          firma_coord_flowable.drawWidth = firma_max_h * firma_ratio
       except Exception:
         firma_coord_flowable = Paragraph("Gabriel Ibarra", st_normal)
 
@@ -572,7 +583,7 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
       [Paragraph("Realizado por", st_label), Paragraph("Firma Coordinador de EEMM", st_label)],
       [Paragraph(_e(realizado_por or " "), st_normal), firma_coord_flowable],
       [Paragraph("_______________________________", st_small), Paragraph("_______________________________", st_small)],
-      [Paragraph(_e(realizado_por or " "), st_small), Paragraph("Gabriel Ibarra", st_small)],
+      [Paragraph(_e(realizado_por or " "), st_small), Paragraph(" ", st_small)],
     ]
     firma_tbl = Table(firma_data, colWidths=[page_w / 2, page_w / 2])
     firma_tbl.setStyle(TableStyle([
