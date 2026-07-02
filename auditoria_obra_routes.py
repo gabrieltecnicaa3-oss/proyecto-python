@@ -454,7 +454,8 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
                 block.append(imgs_tbl)
 
             block.append(Spacer(1, 3*mm))
-            story.append(KeepTogether(block))
+            for item in block:
+              story.append(item)
     else:
         _body_para("Sin observaciones cargadas.")
 
@@ -623,8 +624,8 @@ def _save_foto(file_obj, auditoria_id, obs_idx, slot_idx):
         img = base
       elif img.mode == "L":
         img = img.convert("RGB")
-      img.thumbnail((1600, 1600), PILImage.Resampling.LANCZOS)
-      img.save(path, format="JPEG", quality=72, optimize=True)
+      img.thumbnail((1280, 1280), PILImage.Resampling.LANCZOS)
+      img.save(path, format="JPEG", quality=60, optimize=True)
     except Exception:
       try:
         file_obj.stream.seek(0)
