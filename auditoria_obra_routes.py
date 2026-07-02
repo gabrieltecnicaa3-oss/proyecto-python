@@ -7,13 +7,14 @@ import os
 from flask import Blueprint, request, redirect, send_file, session
 from werkzeug.utils import secure_filename
 
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak, HRFlowable
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak, HRFlowable, CondPageBreak, KeepTogether
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib.units import mm, cm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 from reportlab.graphics.shapes import Drawing, Circle, String
+from PIL import Image as PILImage, ImageOps
 
 from db_utils import get_db
 
@@ -173,16 +174,18 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
     import locale
 
     # ─── Colores del reporte ───────────────────────────────────────────────
-    NARANJA     = colors.HexColor("#f97316")
-    NARANJA_OSC = colors.HexColor("#ea580c")
-    AZUL_OSC    = colors.HexColor("#1f3864")
-    GRIS_LABEL  = colors.HexColor("#f1f5f9")
-    GRIS_BG     = colors.HexColor("#f8fafc")
-    VERDE       = colors.HexColor("#166534")
-    ROJO        = colors.HexColor("#b91c1c")
-    TEXTO_DARK  = colors.HexColor("#111827")
-    TEXTO_MED   = colors.HexColor("#374151")
-    TEXTO_LIGHT = colors.HexColor("#6b7280")
+    NARANJA         = colors.HexColor("#f97316")
+    NARANJA_OSC     = colors.HexColor("#ea580c")
+    CELESTE_PASTEL  = colors.HexColor("#d9eef7")
+    CELESTE_LINEA   = colors.HexColor("#bddfee")
+    CELESTE_TEXTO   = colors.HexColor("#2f6f88")
+    GRIS_LABEL      = colors.HexColor("#f1f5f9")
+    GRIS_BG         = colors.HexColor("#f8fafc")
+    VERDE           = colors.HexColor("#166534")
+    NARANJA_ALERTA  = colors.HexColor("#ea580c")
+    TEXTO_DARK      = colors.HexColor("#111827")
+    TEXTO_MED       = colors.HexColor("#374151")
+    TEXTO_LIGHT     = colors.HexColor("#6b7280")
     BORDE       = colors.HexColor("#e5e7eb")
     VERDE_SEMAFORO = colors.HexColor("#34d399")
     AMBAR_SEMAFORO = colors.HexColor("#fbbf24")
@@ -202,15 +205,16 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
 
     styles = getSampleStyleSheet()
     st_normal   = ParagraphStyle("normal_a",   fontName="Helvetica",       fontSize=9,  textColor=TEXTO_DARK, leading=13)
-    st_small    = ParagraphStyle("small_a",    fontName="Helvetica",       fontSize=8,  textColor=TEXTO_MED,  leading=11)
-    st_label    = ParagraphStyle("label_a",    fontName="Helvetica-Bold",  fontSize=7,  textColor=TEXTO_LIGHT, leading=10, spaceAfter=1)
+    st_small    = ParagraphStyle("small_a",    fontName="Helvetica",       fontSize=8.6,  textColor=TEXTO_MED,  leading=11.6)
+    st_label    = ParagraphStyle("label_a",    fontName="Helvetica-Bold",  fontSize=8.6,  textColor=TEXTO_LIGHT, leading=11.4, spaceAfter=1)
     st_value    = ParagraphStyle("value_a",    fontName="Helvetica-Bold",  fontSize=10, textColor=TEXTO_DARK,  leading=13)
     st_h_sec    = ParagraphStyle("hsec_a",     fontName="Helvetica-Bold",  fontSize=10, textColor=NARANJA,     leading=14, spaceBefore=8, spaceAfter=3)
-    st_obs_num  = ParagraphStyle("obsnum_a",   fontName="Helvetica-Bold",  fontSize=9,  textColor=AZUL_OSC,    leading=13, spaceBefore=6)
-    st_white    = ParagraphStyle("white_a",    fontName="Helvetica-Bold",  fontSize=9,  textColor=colors.white, leading=12)
-    st_white_sm = ParagraphStyle("whitesm_a",  fontName="Helvetica",       fontSize=8,  textColor=colors.white, leading=11)
+    st_obs_num  = ParagraphStyle("obsnum_a",   fontName="Helvetica-Bold",  fontSize=9.2,  textColor=CELESTE_TEXTO,    leading=13, spaceBefore=6)
+    st_white    = ParagraphStyle("white_a",    fontName="Helvetica-Bold",  fontSize=8.8,  textColor=CELESTE_TEXTO, leading=12)
+    st_white_sm = ParagraphStyle("whitesm_a",  fontName="Helvetica",       fontSize=8.4,  textColor=CELESTE_TEXTO, leading=11)
     st_title    = ParagraphStyle("title_a",    fontName="Helvetica-Bold",  fontSize=14, textColor=colors.white, leading=18, alignment=TA_CENTER)
     st_footer   = ParagraphStyle("footer_a",   fontName="Helvetica",       fontSize=7,  textColor=TEXTO_LIGHT, leading=9)
+    st_bullet   = ParagraphStyle("bullet_a",   fontName="Helvetica",       fontSize=9,  textColor=TEXTO_DARK, leading=13, leftIndent=10, firstLineIndent=-2, spaceAfter=2)
 
     def _date_fmt(s):
         try:
@@ -264,21 +268,6 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
       textColor=colors.HexColor("#1f2937"),
       leading=15,
     )
-    header_sub = ParagraphStyle(
-      "hdr_sub_a",
-      fontName="Helvetica",
-      fontSize=9,
-      textColor=colors.HexColor("#374151"),
-      leading=12,
-    )
-    header_chip = ParagraphStyle(
-      "hdr_chip_a",
-      fontName="Helvetica-Bold",
-      fontSize=8,
-      textColor=colors.HexColor("#b45309"),
-      alignment=TA_RIGHT,
-      leading=11,
-    )
     header_date = ParagraphStyle(
       "hdr_date_a",
       fontName="Helvetica",
@@ -295,12 +284,11 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
       logo_cell = Paragraph("A3", ParagraphStyle("hdr_logo_fallback", fontName="Helvetica-Bold", fontSize=11, textColor=NARANJA_OSC))
 
     titulo_txt = "INFORME DE AUDITORIA DE OBRA"
-    subtitulo_txt = f"Obra: {obra or '-'}"
     fecha_header = fecha_fmt or datetime.now().strftime("%d/%m/%Y")
 
     hdr_data = [[
       logo_cell,
-      Paragraph(f"{_e(titulo_txt)}<br/>{_e(subtitulo_txt)}", header_title),
+      Paragraph(_e(titulo_txt), header_title),
       Paragraph(
         '<font backcolor="#fff7ed" color="#b45309">  INFORME INTERNO  </font><br/>' + _e(fecha_header),
         header_date,
@@ -309,7 +297,7 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
     hdr_tbl = Table(hdr_data, colWidths=[22 * mm, page_w - 62 * mm, 40 * mm], rowHeights=[15 * mm])
     hdr_tbl.setStyle(TableStyle([
       ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f3f4f6")),
-      ("LINEBELOW", (0, 0), (-1, -1), 1, colors.HexColor("#cbd5e1")),
+      ("LINEBELOW", (0, 0), (-1, -1), 1, CELESTE_LINEA),
       ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#e5e7eb")),
       ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
       ("ALIGN", (2, 0), (2, 0), "RIGHT"),
@@ -352,6 +340,7 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
     story.append(Spacer(1, 4*mm))
 
     def _section_title(num, txt):
+        story.append(CondPageBreak(22*mm))
         story.append(Paragraph(f"{num}. {txt.upper()}", st_h_sec))
         story.append(HRFlowable(width="100%", thickness=1, color=NARANJA, spaceAfter=3))
 
@@ -363,8 +352,8 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
     _section_title(1, "RESUMEN")
     _body_para(auditoria.get("resumen", ""))
 
-    # ── 2. TABLA DE OBSERVACIONES ─────────────────────────────────────────
-    _section_title(2, "TABLA DE OBSERVACIONES")
+    # ── 2. RESUMEN DE OBSERVACIONES ─────────────────────────────────────────
+    _section_title(2, "RESUMEN DE OBSERVACIONES")
 
     t_hdrs = ["N°", "Punto Analizado", "Observación", "Estado", "Informado", "Categoría"]
     t_cw   = [8*mm, 30*mm, page_w - 8*mm - 30*mm - 22*mm - 16*mm - 28*mm, 22*mm, 16*mm, 28*mm]
@@ -372,7 +361,7 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
     if observaciones:
         for idx, obs in enumerate(observaciones, start=1):
             est = str(obs.get("estado", "") or "")
-            est_color = ROJO if "orregir" in est else (VERDE if "onforme" in est else TEXTO_DARK)
+            est_color = NARANJA_ALERTA if "orregir" in est.lower() else (VERDE if "onforme" in est.lower() else TEXTO_DARK)
             est_style = ParagraphStyle("ests", fontName="Helvetica-Bold", fontSize=8, textColor=est_color, leading=11, alignment=TA_CENTER)
             t_rows.append([
                 Paragraph(str(idx), ParagraphStyle("nc", fontName="Helvetica", fontSize=8, alignment=TA_CENTER, leading=11)),
@@ -387,7 +376,7 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
 
     t_obs = Table(t_rows, colWidths=t_cw, repeatRows=1)
     t_obs.setStyle(TableStyle([
-        ("BACKGROUND",   (0,0), (-1,0),  AZUL_OSC),
+        ("BACKGROUND",   (0,0), (-1,0),  CELESTE_PASTEL),
         ("BACKGROUND",   (0,1), (-1,-1), colors.white),
         ("ROWBACKGROUNDS",(0,1),(-1,-1), [colors.white, GRIS_BG]),
         ("BOX",          (0,0), (-1,-1), 0.5, BORDE),
@@ -405,58 +394,64 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
     _section_title(3, "DETALLE DE OBSERVACIONES")
     if observaciones:
         for idx, obs in enumerate(observaciones, start=1):
+            story.append(CondPageBreak(65*mm))
             block = []
             block.append(Paragraph(f"Observación {idx}: {_e(obs.get('punto', ''))}", st_obs_num))
+            estado_det = str(obs.get("estado", "") or "")
+            estado_det_color = NARANJA_ALERTA if "orregir" in estado_det.lower() else (VERDE if "onforme" in estado_det.lower() else TEXTO_DARK)
+            st_estado_det = ParagraphStyle("estado_det", fontName="Helvetica-Bold", fontSize=9, textColor=estado_det_color, leading=12)
             det_data = [
-                [Paragraph("Estado",     st_label), Paragraph(_e(obs.get("estado",     "")), st_normal)],
+                [Paragraph("Estado", st_label), Paragraph(_e(estado_det), st_estado_det)],
                 [Paragraph("Comentario", st_label), Paragraph(_e(obs.get("comentario", "")), st_normal)],
             ]
             det_cw = [25*mm, page_w - 25*mm]
             det_tbl = Table(det_data, colWidths=det_cw)
             det_tbl.setStyle(TableStyle([
-                ("BACKGROUND",  (0,0), (0,-1), GRIS_LABEL),
-                ("BOX",         (0,0), (-1,-1), 0.4, BORDE),
-                ("INNERGRID",   (0,0), (-1,-1), 0.3, BORDE),
+                ("BACKGROUND", (0,0), (0,-1), GRIS_LABEL),
+                ("BOX", (0,0), (-1,-1), 0.4, BORDE),
+                ("INNERGRID", (0,0), (-1,-1), 0.3, BORDE),
                 ("LEFTPADDING", (0,0), (-1,-1), 5),
-                ("TOPPADDING",  (0,0), (-1,-1), 3),
-                ("BOTTOMPADDING",(0,0),(-1,-1), 3),
-                ("VALIGN",      (0,0), (-1,-1), "TOP"),
+                ("TOPPADDING", (0,0), (-1,-1), 3),
+                ("BOTTOMPADDING", (0,0), (-1,-1), 3),
+                ("VALIGN", (0,0), (-1,-1), "TOP"),
             ]))
             block.append(det_tbl)
 
-            # ── Foto adjunta ──────────────────────────────────────────────
             fotos = []
             if isinstance(obs.get("fotos"), list):
-              fotos.extend([fp for fp in obs.get("fotos") if fp])
+                fotos.extend([fp for fp in obs.get("fotos") if fp])
             if not fotos and obs.get("foto_path"):
-              fotos.append(obs.get("foto_path"))
+                fotos.append(obs.get("foto_path"))
 
             img_flowables = []
             for foto_path in fotos[:3]:
-              if foto_path and os.path.isfile(foto_path):
-                try:
-                  img = Image(foto_path)
-                  img_w = min((page_w - 8 * mm) / 3, 75 * mm)
-                  factor = img_w / float(img.imageWidth or 1)
-                  img.drawWidth = img_w
-                  img.drawHeight = (img.imageHeight or 1) * factor
-                  img_flowables.append(img)
-                except Exception:
-                  pass
+                if foto_path and os.path.isfile(foto_path):
+                    try:
+                        img = Image(foto_path)
+                        img_w = min((page_w - 8 * mm) / 3, 75 * mm)
+                        factor = img_w / float(img.imageWidth or 1)
+                        img.drawWidth = img_w
+                        img.drawHeight = (img.imageHeight or 1) * factor
+                        img_flowables.append(img)
+                    except Exception:
+                        pass
 
             if img_flowables:
-              while len(img_flowables) < 3:
-                img_flowables.append(Paragraph("", st_small))
-              imgs_tbl = Table([img_flowables], colWidths=[(page_w - 8 * mm) / 3] * 3)
-              imgs_tbl.setStyle(TableStyle([
-                ("LEFTPADDING", (0, 0), (-1, -1), 2),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-                ("TOPPADDING", (0, 0), (-1, -1), 2),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-              ]))
-              block.append(Spacer(1, 2 * mm))
-              block.append(imgs_tbl)
+                while len(img_flowables) < 3:
+                    img_flowables.append(Paragraph("", st_small))
+                imgs_tbl = Table([img_flowables], colWidths=[(page_w - 8 * mm) / 3] * 3)
+                imgs_tbl.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#eef7fb")),
+                    ("INNERGRID", (0, 0), (-1, -1), 3, colors.white),
+                    ("BOX", (0, 0), (-1, -1), 0.5, CELESTE_LINEA),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]))
+                block.append(Spacer(1, 2 * mm))
+                block.append(imgs_tbl)
 
             block.append(Spacer(1, 3*mm))
             story.append(KeepTogether(block))
@@ -467,21 +462,8 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
     _section_title(4, "ASPECTOS POSITIVOS")
     aspectos_items = _parse_json_list(auditoria.get("aspectos_positivos", ""))
     if aspectos_items:
-      aspectos_rows = [[Paragraph("Item", st_white)]]
       for item in aspectos_items:
-        aspectos_rows.append([Paragraph(_e(item), st_normal)])
-      aspectos_tbl = Table(aspectos_rows, colWidths=[page_w])
-      aspectos_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), AZUL_OSC),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, GRIS_BG]),
-        ("BOX", (0, 0), (-1, -1), 0.5, BORDE),
-        ("INNERGRID", (0, 0), (-1, -1), 0.3, BORDE),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-      ]))
-      story.append(aspectos_tbl)
+        story.append(Paragraph(f"• {_e(item)}", st_bullet))
       story.append(Spacer(1, 3*mm))
     else:
       _body_para("Sin aspectos positivos cargados.")
@@ -499,7 +481,7 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
         ])
       acciones_tbl = Table(acciones_rows, colWidths=[page_w * 0.5, page_w * 0.25, page_w * 0.25], repeatRows=1)
       acciones_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), AZUL_OSC),
+        ("BACKGROUND", (0, 0), (-1, 0), CELESTE_PASTEL),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, GRIS_BG]),
         ("BOX", (0, 0), (-1, -1), 0.5, BORDE),
         ("INNERGRID", (0, 0), (-1, -1), 0.3, BORDE),
@@ -520,7 +502,7 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
         ])
       acciones_tbl = Table(acciones_rows, colWidths=[page_w * 0.5, page_w * 0.25, page_w * 0.25], repeatRows=1)
       acciones_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), AZUL_OSC),
+        ("BACKGROUND", (0, 0), (-1, 0), CELESTE_PASTEL),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, GRIS_BG]),
         ("BOX", (0, 0), (-1, -1), 0.5, BORDE),
         ("INNERGRID", (0, 0), (-1, -1), 0.3, BORDE),
@@ -555,7 +537,7 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
 
     eval_tbl = Table(eval_table_rows, colWidths=[page_w * 0.62, page_w * 0.38], repeatRows=1)
     eval_tbl.setStyle(TableStyle([
-      ("BACKGROUND", (0, 0), (-1, 0), AZUL_OSC),
+      ("BACKGROUND", (0, 0), (-1, 0), CELESTE_PASTEL),
       ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, GRIS_BG]),
       ("BOX", (0, 0), (-1, -1), 0.5, BORDE),
       ("INNERGRID", (0, 0), (-1, -1), 0.3, BORDE),
@@ -569,10 +551,27 @@ def _build_pdf_bytes(auditoria, observaciones, evaluaciones=None):
     story.append(Spacer(1, 6 * mm))
 
     # ── FIRMAS ───────────────────────────────────────────────────────────
+    firma_coord_path = ""
+    for candidate in (
+      os.path.join(os.path.dirname(os.path.abspath(__file__)), "Firmas empleados", "003-Gabi.png"),
+      os.path.join(os.path.dirname(os.path.abspath(__file__)), "Firmas empleados", "003-Gabi.jpg"),
+    ):
+      if os.path.isfile(candidate):
+        firma_coord_path = candidate
+        break
+
+    firma_coord_flowable = Paragraph(" ", st_normal)
+    if firma_coord_path:
+      try:
+        firma_coord_flowable = Image(firma_coord_path, width=34 * mm, height=12 * mm)
+      except Exception:
+        firma_coord_flowable = Paragraph("Gabriel Ibarra", st_normal)
+
     firma_data = [
       [Paragraph("Realizado por", st_label), Paragraph("Firma Coordinador de EEMM", st_label)],
-      [Paragraph(_e(realizado_por or " "), st_normal), Paragraph(" ", st_normal)],
+      [Paragraph(_e(realizado_por or " "), st_normal), firma_coord_flowable],
       [Paragraph("_______________________________", st_small), Paragraph("_______________________________", st_small)],
+      [Paragraph(_e(realizado_por or " "), st_small), Paragraph("Gabriel Ibarra", st_small)],
     ]
     firma_tbl = Table(firma_data, colWidths=[page_w / 2, page_w / 2])
     firma_tbl.setStyle(TableStyle([
@@ -609,12 +608,29 @@ def _save_foto(file_obj, auditoria_id, obs_idx, slot_idx):
     ext = os.path.splitext(secure_filename(file_obj.filename))[1].lower()
     if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
         return ""
-    filename = f"audit_{auditoria_id:04d}_obs{obs_idx:02d}_f{slot_idx}{ext}"
+    filename = f"audit_{auditoria_id:04d}_obs{obs_idx:02d}_f{slot_idx}.jpg"
     path = os.path.join(AUDITORIA_FOTOS_DIR, filename)
     try:
-      file_obj.save(path)
+      file_obj.stream.seek(0)
+      img = PILImage.open(file_obj.stream)
+      img = ImageOps.exif_transpose(img)
+      if img.mode not in ("RGB", "L"):
+        base = PILImage.new("RGB", img.size, (255, 255, 255))
+        if "A" in img.getbands():
+          base.paste(img, mask=img.getchannel("A"))
+        else:
+          base.paste(img)
+        img = base
+      elif img.mode == "L":
+        img = img.convert("RGB")
+      img.thumbnail((1600, 1600), PILImage.Resampling.LANCZOS)
+      img.save(path, format="JPEG", quality=72, optimize=True)
     except Exception:
-      return ""
+      try:
+        file_obj.stream.seek(0)
+        file_obj.save(path)
+      except Exception:
+        return ""
     return path
 
 
