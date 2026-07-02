@@ -964,7 +964,7 @@ def modulo_auditoria_obra():
     error = ""
 
     if request.method == "POST":
-        accion = (request.form.get("accion") or "guardar").strip().lower()
+      accion = (request.form.get("accion") or "guardar").strip().lower()
 
       # Evita cortes silenciosos con payloads grandes y devuelve error legible.
       max_upload_bytes = 25 * 1024 * 1024  # 25 MB totales por request
@@ -972,63 +972,75 @@ def modulo_auditoria_obra():
       if content_len > max_upload_bytes:
         error = "Las fotos superan el tamaño máximo permitido (25 MB por envío)."
 
-        ot_id_txt = (request.form.get("ot_id") or "").strip()
-        cliente = (request.form.get("cliente") or "").strip()
-        obra = (request.form.get("obra") or "").strip()
-        proyecto = (request.form.get("proyecto") or "").strip()
-        fecha_auditoria = (request.form.get("fecha_auditoria") or "").strip()
-        realizado_por = (request.form.get("realizado_por") or "").strip()
-        resumen = (request.form.get("resumen") or "").strip()
-        aspectos_positivos = _parse_text_items_from_form(request.form, "aspecto_positivo[]")
-        acciones_pendientes = _parse_acciones_from_form(request.form)
-        evaluacion_rows = _parse_evaluacion_from_form(request.form)
+      ot_id_txt = (request.form.get("ot_id") or "").strip()
+      cliente = (request.form.get("cliente") or "").strip()
+      obra = (request.form.get("obra") or "").strip()
+      proyecto = (request.form.get("proyecto") or "").strip()
+      fecha_auditoria = (request.form.get("fecha_auditoria") or "").strip()
+      realizado_por = (request.form.get("realizado_por") or "").strip()
+      resumen = (request.form.get("resumen") or "").strip()
+      aspectos_positivos = _parse_text_items_from_form(request.form, "aspecto_positivo[]")
+      acciones_pendientes = _parse_acciones_from_form(request.form)
+      evaluacion_rows = _parse_evaluacion_from_form(request.form)
 
-        if not fecha_auditoria:
-            fecha_auditoria = datetime.now().strftime("%Y-%m-%d")
+      if not fecha_auditoria:
+        fecha_auditoria = datetime.now().strftime("%Y-%m-%d")
 
-        if error:
-          pass
-        elif not obra:
-            error = "Seleccioná una obra antes de guardar."
-        elif not resumen:
-            error = "La seccion RESUMEN es obligatoria."
-        else:
-            ot_id = int(ot_id_txt) if ot_id_txt.isdigit() else None
-            creado_por = str(session.get("username") or session.get("nombre") or "admin")
-            if not realizado_por:
-                realizado_por = str(session.get("nombre") or session.get("username") or "")
+      if error:
+        pass
+      elif not obra:
+        error = "Seleccioná una obra antes de guardar."
+      elif not resumen:
+        error = "La seccion RESUMEN es obligatoria."
+      else:
+        ot_id = int(ot_id_txt) if ot_id_txt.isdigit() else None
+        creado_por = str(session.get("username") or session.get("nombre") or "admin")
+        if not realizado_por:
+          realizado_por = str(session.get("nombre") or session.get("username") or "")
 
-            # Insertar primero para obtener el ID (necesario para guardar fotos)
-            cur = db.execute(
-                """
-                INSERT INTO auditorias_obra (
-                    ot_id, cliente, obra, proyecto, fecha_auditoria,
-                    resumen, aspectos_positivos, acciones_pendientes,
-                    observaciones_json, evaluacion_json, realizado_por, creado_por
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (ot_id, cliente, obra, proyecto, fecha_auditoria,
-                 resumen, json.dumps(aspectos_positivos, ensure_ascii=False), json.dumps(acciones_pendientes, ensure_ascii=False), "[]", json.dumps(evaluacion_rows, ensure_ascii=False), realizado_por, creado_por),
-            )
-            db.commit()
-            auditoria_id = int(cur.lastrowid)
+        # Insertar primero para obtener el ID (necesario para guardar fotos)
+        cur = db.execute(
+          """
+          INSERT INTO auditorias_obra (
+            ot_id, cliente, obra, proyecto, fecha_auditoria,
+            resumen, aspectos_positivos, acciones_pendientes,
+            observaciones_json, evaluacion_json, realizado_por, creado_por
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """,
+          (
+            ot_id,
+            cliente,
+            obra,
+            proyecto,
+            fecha_auditoria,
+            resumen,
+            json.dumps(aspectos_positivos, ensure_ascii=False),
+            json.dumps(acciones_pendientes, ensure_ascii=False),
+            "[]",
+            json.dumps(evaluacion_rows, ensure_ascii=False),
+            realizado_por,
+            creado_por,
+          ),
+        )
+        db.commit()
+        auditoria_id = int(cur.lastrowid)
 
-            # Parsear observaciones + guardar fotos ahora que tenemos el ID
-            observaciones_rows = _parse_observaciones_from_form_with_photos(
-                request.form, request.files, auditoria_id
-            )
-            db.execute(
-                "UPDATE auditorias_obra SET observaciones_json = ? WHERE id = ?",
-                (json.dumps(observaciones_rows, ensure_ascii=False), auditoria_id),
-            )
-            db.commit()
+        # Parsear observaciones + guardar fotos ahora que tenemos el ID
+        observaciones_rows = _parse_observaciones_from_form_with_photos(
+          request.form, request.files, auditoria_id
+        )
+        db.execute(
+          "UPDATE auditorias_obra SET observaciones_json = ? WHERE id = ?",
+          (json.dumps(observaciones_rows, ensure_ascii=False), auditoria_id),
+        )
+        db.commit()
 
-            if accion == "guardar_pdf":
-              # Descarga en un segundo request: reduce timeouts al subir varias fotos.
-              return redirect(f"/modulo/auditoria-obra/pdf/{auditoria_id}")
+        if accion == "guardar_pdf":
+          # Descarga en un segundo request: reduce timeouts al subir varias fotos.
+          return redirect(f"/modulo/auditoria-obra/pdf/{auditoria_id}")
 
-            mensaje = f"Auditoria guardada con ID {auditoria_id}."
+        mensaje = f"Auditoria guardada con ID {auditoria_id}."
 
     obras = _obtener_obras_activas(db)
     auditorias = db.execute(
