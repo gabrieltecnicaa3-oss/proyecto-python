@@ -68,6 +68,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 
 app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY") or "dev-local-secret-key-2026"
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB por request
 
 
 # Registrar blueprint de suministros

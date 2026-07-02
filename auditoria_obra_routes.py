@@ -611,7 +611,10 @@ def _save_foto(file_obj, auditoria_id, obs_idx, slot_idx):
         return ""
     filename = f"audit_{auditoria_id:04d}_obs{obs_idx:02d}_f{slot_idx}{ext}"
     path = os.path.join(AUDITORIA_FOTOS_DIR, filename)
-    file_obj.save(path)
+    try:
+      file_obj.save(path)
+    except Exception:
+      return ""
     return path
 
 
@@ -963,6 +966,12 @@ def modulo_auditoria_obra():
     if request.method == "POST":
         accion = (request.form.get("accion") or "guardar").strip().lower()
 
+      # Evita cortes silenciosos con payloads grandes y devuelve error legible.
+      max_upload_bytes = 25 * 1024 * 1024  # 25 MB totales por request
+      content_len = int(request.content_length or 0)
+      if content_len > max_upload_bytes:
+        error = "Las fotos superan el tamaño máximo permitido (25 MB por envío)."
+
         ot_id_txt = (request.form.get("ot_id") or "").strip()
         cliente = (request.form.get("cliente") or "").strip()
         obra = (request.form.get("obra") or "").strip()
@@ -977,7 +986,9 @@ def modulo_auditoria_obra():
         if not fecha_auditoria:
             fecha_auditoria = datetime.now().strftime("%Y-%m-%d")
 
-        if not obra:
+        if error:
+          pass
+        elif not obra:
             error = "Seleccioná una obra antes de guardar."
         elif not resumen:
             error = "La seccion RESUMEN es obligatoria."
@@ -1014,17 +1025,8 @@ def modulo_auditoria_obra():
             db.commit()
 
             if accion == "guardar_pdf":
-                auditoria_dict = {
-                    "cliente": cliente, "obra": obra, "proyecto": proyecto,
-                    "fecha_auditoria": fecha_auditoria, "resumen": resumen,
-                  "aspectos_positivos": aspectos_positivos,
-                  "acciones_pendientes": acciones_pendientes,
-                    "realizado_por": realizado_por,
-                    "creado_por": creado_por,
-                }
-                pdf_buf = _build_pdf_bytes(auditoria_dict, observaciones_rows, evaluacion_rows)
-                nombre = f"auditoria_obra_{auditoria_id:04d}_{datetime.now().strftime('%Y%m%d')}.pdf"
-                return send_file(pdf_buf, as_attachment=True, download_name=nombre, mimetype="application/pdf")
+              # Descarga en un segundo request: reduce timeouts al subir varias fotos.
+              return redirect(f"/modulo/auditoria-obra/pdf/{auditoria_id}")
 
             mensaje = f"Auditoria guardada con ID {auditoria_id}."
 
