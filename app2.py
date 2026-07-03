@@ -1209,6 +1209,23 @@ def _auth_guard():
         return redirect(f"/login?next={next_qs}")
 
     role = _session_user_role()
+    # Para usuarios obra, refrescar módulos permitidos desde DB en cada request
+    # (así los cambios del admin se reflejan sin necesidad de re-login)
+    if role == ROLE_OBRA:
+        uid = int(session.get("user_id") or 0)
+        if uid:
+            try:
+                _db = get_db()
+                _row = _db.execute(
+                    "SELECT modulos_permitidos FROM usuarios WHERE id = ?", (uid,)
+                ).fetchone()
+                if _row and _row[0]:
+                    session["modulos_permitidos"] = json.loads(_row[0])
+                else:
+                    session["modulos_permitidos"] = []
+            except Exception:
+                pass  # Si falla, usa el valor cacheado en sesión
+
     if not _rol_puede_acceder(role, path, request.method):
         return _respuesta_sin_permiso()
 
@@ -1599,6 +1616,7 @@ def admin_permisos_usuario(user_id):
         ("/modulo/tablero-ejecutivo",   "Tablero Ejecutivo Integral"),
         ("/modulo/analisis-estrategico","Análisis Estratégico"),
         ("/modulo/auditoria-obra",      "Auditoría de Obra"),
+        ("/modulo/economico",           "💰 Módulo Económico"),
     ]
 
     mensaje = ""
@@ -2174,6 +2192,13 @@ def dashboard():
             "titulo": "Auditoría de Obra",
             "desc": "Carga de auditorías de obra por secciones y generación de informe editable en Word",
         },
+        {
+            "href": "/modulo/economico",
+            "css": "economico",
+            "icon": "💰",
+            "titulo": "Módulo Económico",
+            "desc": "Costos previstos vs reales, KPIs ($/kg, margen), desvíos por rubro y avance físico vs económico",
+        },
     ]
 
     ADMIN_ONLY_HREFS = {"/modulo/suministros", "/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo", "/modulo/analisis-estrategico", "/modulo/auditoria-obra"}
@@ -2411,6 +2436,9 @@ def dashboard():
     }
     .module-card.auditoria {
         border-left: 5px solid #0f766e;
+    }
+    .module-card.economico {
+        border-left: 5px solid #6366f1;
     }
     .module-card.rutina {
         border-left: 5px solid #0f766e;
@@ -6189,6 +6217,7 @@ from programacion_routes import programacion_bp
 from reportes_routes import reportes_bp
 from tablero_ejecutivo_routes import tablero_ejecutivo_bp
 from auditoria_obra_routes import auditoria_obra_bp
+from economico_routes import economico_bp
 
 app.register_blueprint(ot_bp)
 app.register_blueprint(gestion_calidad_bp)
@@ -6203,6 +6232,7 @@ app.register_blueprint(reportes_bp)
 app.register_blueprint(tablero_ejecutivo_bp)
 app.register_blueprint(analisis_estrategico_bp)
 app.register_blueprint(auditoria_obra_bp)
+app.register_blueprint(economico_bp)
 
 
 # ====================== BÚSQUEDA GLOBAL ======================
