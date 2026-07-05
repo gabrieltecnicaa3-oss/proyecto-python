@@ -399,6 +399,7 @@ def economico_dashboard():
   <div><h1>💰 Módulo Económico</h1>
     <div style="font-size:.76rem;opacity:.8;margin-top:2px;">Agrupado por obra · KPIs · Costos previstos vs reales</div></div>
   <div style="display:flex;gap:7px;flex-wrap:wrap;">
+    <a href="/modulo/economico/dashboard-ejecutivo" style="background:#fff;color:#6366f1;font-weight:700;">📊 Dashboard Ejecutivo</a>
     <a href="/modulo/economico/config">⚙️ Config global</a>
     <a href="/">← Inicio</a>
   </div>
@@ -752,3 +753,380 @@ def economico_ot(ot_id):
     </table></div>
   </div>
 </div></body></html>"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RUTA: DASHBOARD EJECUTIVO DE RENTABILIDAD
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _semaforo(mg, ae, af):
+    """Retorna (emoji, color_fondo, color_texto, etiqueta, detalle_riesgo)."""
+    en_desvio = ae > af + 5
+    en_desvio_critico = ae > af + 15
+    if mg < 5 or en_desvio_critico:
+        return "🔴", "#fef2f2", "#991b1b", "Crítico",    "Costo superior al previsto" if mg < 5 else "Desvío de avance crítico"
+    if mg < 10 or en_desvio:
+        return "🟠", "#fff7ed", "#92400e", "Atención",   "Mayor consumo de mano de obra" if en_desvio else "Margen ajustado"
+    return "🟢", "#f0fdf4", "#166534", "En control", "Dentro del presupuesto"
+
+
+@economico_bp.route("/modulo/economico/dashboard-ejecutivo")
+def economico_dashboard_ejecutivo():
+    db = get_db(); _ensure_schema(db)
+
+    ots_rows = db.execute(
+        "SELECT id, cliente, obra, tipo_estructura FROM ordenes_trabajo ORDER BY obra, id"
+    ).fetchall()
+
+    obras_dict = {}
+    for ot_id, cliente, obra, tipo in ots_rows:
+        k = str(obra or "Sin obra").strip()
+        if k not in obras_dict:
+            obras_dict[k] = {"cliente": cliente or "", "ots": []}
+        obras_dict[k]["ots"].append({"id": ot_id, "tipo": tipo})
+
+    # ── Acumular datos por obra ───────────────────────────────────────────────
+    obras_data = []   # lista de dicts por obra
+    rubros_global = {r: {"prev": 0.0, "real": 0.0} for r in
+                     ["Materiales","Pintura","Mano de Obra","Consumibles",
+                      "Ingeniería","Subcontratos","Gastos Generales","Impuestos"]}
+
+    for obra_key in sorted(obras_dict.keys()):
+        info = obras_dict[obra_key]
+        cfg  = _get_config_obra(db, obra_key)
+        ots_d = []
+        for oi in info["ots"]:
+            d = _calc_economico(db, oi["id"], cfg)
+            d["ot_id"] = oi["id"]
+            ots_d.append(d)
+        agg = _aggregate_obra(ots_d)
+        mg  = ((agg["p_pv"] - agg["r_tot"]) / agg["p_pv"] * 100.0) if agg["p_pv"] > 0 else 0.0
+        af  = agg["avf"]; ae = agg["ave"]
+        # Margen proyectado a la finalización (extrapolando costo actual)
+        if af > 0:
+            costo_proy = agg["r_tot"] / (af / 100.0)
+            mg_proy = ((agg["p_pv"] - costo_proy) / agg["p_pv"] * 100.0) if agg["p_pv"] > 0 else 0.0
+        else:
+            mg_proy = mg
+        sem_em, sem_bg, sem_tc, sem_lbl, sem_det = _semaforo(mg, ae, af)
+
+        obras_data.append({
+            "obra": obra_key, "cliente": info["cliente"],
+            "n_ots": len(ots_d), "kg": agg["kg"], "hh": agg["hh"],
+            "pv": agg["p_pv"], "r_tot": agg["r_tot"], "r_cd": agg["r_cd"],
+            "mg": mg, "mg_proy": mg_proy, "af": af, "ae": ae,
+            "sem_em": sem_em, "sem_bg": sem_bg, "sem_tc": sem_tc,
+            "sem_lbl": sem_lbl, "sem_det": sem_det,
+            "agg": agg,
+        })
+
+        # Acumular rubros globales
+        for nm, prev, real in [
+            ("Materiales",      agg["p_mat"],  agg["r_mat"]),
+            ("Pintura",         agg["p_pint"], agg["r_pint"]),
+            ("Mano de Obra",    agg["p_mo"],   agg["r_mo"]),
+            ("Consumibles",     agg["p_cons"], agg["r_cons"]),
+            ("Ingeniería",      agg["p_ing"],  0.0),
+            ("Subcontratos",    0.0,           agg["r_sub"]),
+            ("Gastos Generales",agg["p_gg"],   agg["r_gg"]),
+            ("Impuestos",       agg["p_imp"],  agg["r_imp"]),
+        ]:
+            rubros_global[nm]["prev"] += prev
+            rubros_global[nm]["real"] += real
+
+    n_obras = len(obras_data)
+    if n_obras == 0:
+        return "<p>Sin datos de obras.</p><a href='/modulo/economico'>← Volver</a>"
+
+    # ── KPIs globales ─────────────────────────────────────────────────────────
+    n_riesgo    = sum(1 for o in obras_data if o["sem_lbl"] in ("Crítico","Atención"))
+    n_criticos  = sum(1 for o in obras_data if o["sem_lbl"] == "Crítico")
+    mg_prom     = sum(o["mg_proy"] for o in obras_data) / n_obras
+    costo_cd    = sum(o["r_cd"]    for o in obras_data)
+    ae_prom     = sum(o["ae"]      for o in obras_data) / n_obras
+    # Riesgo global
+    pct_riesgo  = n_riesgo / n_obras
+    if n_criticos > 0 or pct_riesgo >= 0.5:
+        riesgo_em, riesgo_lbl, riesgo_c = "🔴", "Alto", "#991b1b"
+    elif pct_riesgo >= 0.25:
+        riesgo_em, riesgo_lbl, riesgo_c = "🟠", "Medio", "#92400e"
+    else:
+        riesgo_em, riesgo_lbl, riesgo_c = "🟢", "Bajo", "#166534"
+
+    # ── Ranking de desvíos ────────────────────────────────────────────────────
+    ranking = []
+    for nm, vals in rubros_global.items():
+        prev = vals["prev"]; real = vals["real"]
+        if prev == 0 and real == 0:
+            continue
+        desv_pct = ((real - prev) / prev * 100.0) if prev > 0 else (100.0 if real > 0 else 0.0)
+        ranking.append({"nombre": nm, "prev": prev, "real": real, "desv_pct": desv_pct})
+    ranking.sort(key=lambda x: abs(x["desv_pct"]), reverse=True)
+
+    # ── Resumen ejecutivo ─────────────────────────────────────────────────────
+    n_ok       = sum(1 for o in obras_data if o["sem_lbl"] == "En control")
+    n_atencion = sum(1 for o in obras_data if o["sem_lbl"] == "Atención")
+    obras_mo   = [o["obra"] for o in obras_data if o["sem_det"] and "mano de obra" in o["sem_det"].lower()]
+
+    resumen_items = [
+        f"{n_obras} obra{'s' if n_obras != 1 else ''} activa{'s' if n_obras != 1 else ''}.",
+        f"{n_ok} obra{'s' if n_ok != 1 else ''} dentro del presupuesto.",
+    ]
+    if n_atencion:
+        resumen_items.append(f"{n_atencion} obra{'s' if n_atencion!=1 else ''} con margen ajustado o desvío de avance.")
+    if obras_mo:
+        resumen_items.append(f"{', '.join(obras_mo)} presenta{'n' if len(obras_mo)>1 else ''} consumo de mano de obra superior al previsto.")
+    resumen_items.append(f"El margen promedio proyectado es del {mg_prom:.1f} %.")
+    if n_criticos == 0:
+        resumen_items.append("No se detectan riesgos críticos de rentabilidad.")
+    else:
+        resumen_items.append(f"⚠️ {n_criticos} obra{'s requieren' if n_criticos>1 else ' requiere'} atención inmediata.")
+
+    resumen_html = "\n".join(f"<li>{item}</li>" for item in resumen_items)
+
+    # ── HTML ──────────────────────────────────────────────────────────────────
+    # Tabla de obras
+    tabla_obras = ""
+    for o in obras_data:
+        af_bar = f'<div style="background:#e5e7eb;border-radius:3px;height:8px;width:100%;min-width:50px;"><div style="background:#3b82f6;border-radius:3px;height:8px;width:{min(o["af"],100):.1f}%;"></div></div><span style="font-size:.72rem;color:#6b7280;">{o["af"]:.1f}%</span>'
+        ae_c   = "#991b1b" if o["ae"] > o["af"]+5 else ("#166534" if o["ae"] <= o["af"] else "#92400e")
+        ae_bar = f'<div style="background:#e5e7eb;border-radius:3px;height:8px;width:100%;min-width:50px;"><div style="background:{ae_c};border-radius:3px;height:8px;width:{min(o["ae"],100):.1f}%;"></div></div><span style="font-size:.72rem;color:{ae_c};">{o["ae"]:.1f}%</span>'
+        mc     = _cm(o["mg_proy"])
+        tabla_obras += f"""<tr>
+          <td style="font-weight:700;"><a href="/modulo/economico/obra/{_E(o['obra'])}" style="color:#6366f1;text-decoration:none;">{_E(o['obra'])}</a></td>
+          <td style="font-size:.75rem;color:#6b7280;">{_E(o['cliente'])}</td>
+          <td>{af_bar}</td>
+          <td>{ae_bar}</td>
+          <td style="text-align:right;font-weight:700;color:{mc};">{o['mg_proy']:.1f}%</td>
+          <td style="text-align:right;color:#6b7280;">{_m(o['r_tot'])}</td>
+          <td style="text-align:center;font-size:1.3rem;">{o['sem_em']}</td>
+        </tr>"""
+
+    # Semáforos
+    semaforos_html = ""
+    for o in obras_data:
+        semaforos_html += f"""
+        <div style="background:{o['sem_bg']};border:1px solid;border-color:{o['sem_tc']}44;border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:12px;">
+          <span style="font-size:1.8rem;line-height:1;">{o['sem_em']}</span>
+          <div>
+            <div style="font-weight:700;color:{o['sem_tc']};font-size:.95rem;">{_E(o['obra'])}</div>
+            <div style="font-size:.78rem;color:{o['sem_tc']};opacity:.85;">{_E(o['sem_det'])}</div>
+          </div>
+          <div style="margin-left:auto;text-align:right;">
+            <div style="font-size:.7rem;color:#6b7280;">Margen proy.</div>
+            <div style="font-weight:800;color:{o['sem_tc']};font-size:.95rem;">{o['mg_proy']:.1f}%</div>
+          </div>
+        </div>"""
+
+    # Ranking desvíos
+    ranking_html = ""
+    for r in ranking[:8]:
+        pct = r["desv_pct"]
+        c   = "#991b1b" if pct > 0 else "#166534"
+        ic  = "▲" if pct > 0 else "▼"
+        bar_w = min(abs(pct), 50)
+        bar_c = "#fca5a5" if pct > 0 else "#86efac"
+        ranking_html += f"""<tr>
+          <td style="font-weight:600;font-size:.82rem;">{_E(r['nombre'])}</td>
+          <td style="text-align:right;font-size:.78rem;color:#6b7280;">{_m(r['prev'])}</td>
+          <td style="text-align:right;font-size:.78rem;">{_m(r['real'])}</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:5px;">
+              <div style="background:#f1f5f9;border-radius:3px;height:8px;flex:1;max-width:60px;">
+                <div style="background:{bar_c};border-radius:3px;height:8px;width:{bar_w*2:.0f}%;"></div>
+              </div>
+              <span style="font-weight:700;color:{c};font-size:.8rem;white-space:nowrap;">{ic} {abs(pct):.1f}%</span>
+            </div>
+          </td>
+        </tr>"""
+
+    # Datos para Chart.js
+    chart_labels = [o["obra"] for o in obras_data]
+    chart_af     = [round(o["af"], 1) for o in obras_data]
+    chart_ae     = [round(o["ae"], 1) for o in obras_data]
+
+    import json as _json
+    chart_labels_js = _json.dumps(chart_labels)
+    chart_af_js     = _json.dumps(chart_af)
+    chart_ae_js     = _json.dumps(chart_ae)
+
+    # KPI cards top
+    def _kpi(titulo, valor, color="#6366f1", sub=""):
+        return (f'<div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);'
+                f'padding:16px 20px;flex:1;min-width:150px;border-left:4px solid {color};">'
+                f'<div style="font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">{titulo}</div>'
+                f'<div style="font-size:1.45rem;font-weight:900;color:{color};margin:6px 0 2px;line-height:1;">{valor}</div>'
+                f'<div style="font-size:.72rem;color:#9ca3af;">{sub}</div>'
+                f'</div>')
+
+    kpi_html = (
+        _kpi("Obras con desvío",         f"{'🔴 ' if n_riesgo>0 else '🟢 '}{n_riesgo}",
+             "#991b1b" if n_riesgo>0 else "#166534", f"de {n_obras} obras") +
+        _kpi("Margen prom. proyectado",  f"{'🟢' if mg_prom>=10 else '🟠' if mg_prom>=5 else '🔴'} {mg_prom:.1f}%",
+             _cm(mg_prom), "a la finalización") +
+        _kpi("Costo directo ejecutado",  _m(costo_cd), "#1e293b", "acumulado") +
+        _kpi("Av. económico promedio",   f"{ae_prom:.1f}%", "#3b82f6", "sobre presupuesto") +
+        _kpi("Riesgo global",            f"{riesgo_em} {riesgo_lbl}", riesgo_c, f"{n_criticos} crítico{'s' if n_criticos!=1 else ''}")
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Dashboard Ejecutivo — Rentabilidad</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    *{{box-sizing:border-box;}}
+    body{{font-family:system-ui,sans-serif;background:#f1f5f9;margin:0;padding:0;}}
+    .hdr{{background:linear-gradient(135deg,#1e293b,#334155);color:#fff;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}}
+    .hdr h1{{margin:0;font-size:1.1rem;letter-spacing:-.01em;}}
+    .hdr a{{color:#fff;text-decoration:none;font-size:.8rem;background:rgba(255,255,255,.15);padding:5px 11px;border-radius:6px;}}
+    .hdr a:hover{{background:rgba(255,255,255,.28);}}
+    .body{{padding:18px;display:flex;flex-direction:column;gap:16px;}}
+    .kpi-row{{display:flex;flex-wrap:wrap;gap:12px;}}
+    .card{{background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);overflow:hidden;}}
+    .ct{{background:#f8fafc;border-bottom:1px solid #e5e7eb;padding:11px 16px;font-weight:700;font-size:.88rem;color:#1e293b;}}
+    .cb{{padding:16px;}}
+    .two{{display:grid;grid-template-columns:3fr 2fr;gap:16px;}}
+    @media(max-width:800px){{.two{{grid-template-columns:1fr;}}}}
+    .three{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;}}
+    @media(max-width:800px){{.three{{grid-template-columns:1fr;}}}}
+    table{{width:100%;border-collapse:collapse;font-size:.83rem;}}
+    th{{background:#1e293b;color:#fff;padding:8px 10px;text-align:left;font-size:.76rem;white-space:nowrap;}}
+    td{{padding:7px 10px;border-bottom:1px solid #f1f5f9;vertical-align:middle;}}
+    tr:last-child td{{border-bottom:none;}}
+    tr:hover td{{background:#f8fafc;}}
+    .resumen{{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}}
+    .resumen li{{padding:8px 12px;background:#f8fafc;border-left:3px solid #6366f1;border-radius:0 6px 6px 0;font-size:.85rem;color:#1e293b;}}
+  </style>
+</head>
+<body>
+  <div class="hdr">
+    <div>
+      <h1>📊 Dashboard Ejecutivo de Rentabilidad de Obras</h1>
+      <div style="font-size:.74rem;opacity:.7;margin-top:2px;">Visión consolidada · {n_obras} obras activas</div>
+    </div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap;">
+      <a href="/modulo/economico">← Módulo Económico</a>
+      <a href="/">Inicio</a>
+    </div>
+  </div>
+
+  <div class="body">
+
+    <!-- KPI superiores -->
+    <div class="kpi-row">{kpi_html}</div>
+
+    <!-- Tabla de obras + Semáforos -->
+    <div class="two">
+      <div class="card">
+        <div class="ct">📋 Estado de cada obra</div>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead><tr>
+              <th>Obra</th><th>Cliente</th>
+              <th style="min-width:110px;">Av. Físico</th>
+              <th style="min-width:110px;">Av. Económico</th>
+              <th style="text-align:right;">Margen Proy.</th>
+              <th style="text-align:right;">Costo Real</th>
+              <th style="text-align:center;">Estado</th>
+            </tr></thead>
+            <tbody>{tabla_obras}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="ct">🚦 Semáforo de obras</div>
+        <div class="cb" style="display:flex;flex-direction:column;gap:8px;">
+          {semaforos_html}
+        </div>
+      </div>
+    </div>
+
+    <!-- Gráfico avance -->
+    <div class="card">
+      <div class="ct">📈 Avance físico vs Avance económico — Todas las obras</div>
+      <div class="cb" style="position:relative;height:220px;">
+        <canvas id="chartAvance"></canvas>
+      </div>
+    </div>
+
+    <!-- Ranking desvíos + Resumen ejecutivo -->
+    <div class="two">
+      <div class="card">
+        <div class="ct">📉 Ranking de desvíos por rubro</div>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead><tr>
+              <th>Concepto</th>
+              <th style="text-align:right;">Previsto</th>
+              <th style="text-align:right;">Real</th>
+              <th>Desvío</th>
+            </tr></thead>
+            <tbody>{ranking_html}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="ct">📝 Resumen ejecutivo</div>
+        <div class="cb">
+          <div style="font-size:.8rem;font-weight:700;color:#374151;margin-bottom:10px;">Resumen de situación actual</div>
+          <ul class="resumen">{resumen_html}</ul>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+  (function() {{
+    const ctx = document.getElementById('chartAvance').getContext('2d');
+    new Chart(ctx, {{
+      type: 'bar',
+      data: {{
+        labels: {chart_labels_js},
+        datasets: [
+          {{
+            label: 'Avance Físico %',
+            data: {chart_af_js},
+            backgroundColor: 'rgba(59,130,246,0.7)',
+            borderColor: 'rgba(59,130,246,1)',
+            borderWidth: 1,
+            borderRadius: 4,
+          }},
+          {{
+            label: 'Avance Económico %',
+            data: {chart_ae_js},
+            backgroundColor: 'rgba(239,68,68,0.6)',
+            borderColor: 'rgba(239,68,68,1)',
+            borderWidth: 1,
+            borderRadius: 4,
+          }}
+        ]
+      }},
+      options: {{
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {{
+          legend: {{ position: 'top', labels: {{ font: {{ size: 11 }} }} }},
+          tooltip: {{
+            callbacks: {{
+              label: ctx => ` ${{ctx.dataset.label}}: ${{ctx.parsed.y.toFixed(1)}}%`
+            }}
+          }}
+        }},
+        scales: {{
+          y: {{
+            beginAtZero: true, max: 110,
+            ticks: {{ callback: v => v + '%', font: {{ size: 10 }} }},
+            grid: {{ color: '#f1f5f9' }}
+          }},
+          x: {{ ticks: {{ font: {{ size: 10 }} }} }}
+        }}
+      }}
+    }});
+  }})();
+  </script>
+</body>
+</html>"""
