@@ -1116,6 +1116,42 @@ def ot_reabrir(ot_id):
     return redirect("/modulo/ot?mensaje=OT reabierta")
 
 
+@ot_bp.route("/modulo/historial/eliminar/<int:ot_id>", methods=["POST"])
+def historial_eliminar_ot(ot_id):
+    db = get_db()
+    ot = db.execute("SELECT obra FROM ordenes_trabajo WHERE id=? AND fecha_cierre IS NOT NULL", (ot_id,)).fetchone()
+    if not ot:
+        return redirect("/modulo/historial?mensaje=OT no encontrada o no está cerrada")
+    obra = str(ot[0] or "").strip()
+    try:
+        db.execute("DELETE FROM recepcion_materiales WHERE ot_id=?", (ot_id,))
+        db.execute("DELETE FROM control_proceso WHERE ot_id=?", (ot_id,))
+        db.execute("DELETE FROM control_despacho WHERE ot_id=?", (ot_id,))
+        db.execute("DELETE FROM partes_trabajo WHERE ot_id=?", (ot_id,))
+        db.execute("DELETE FROM remitos WHERE ot_id=?", (ot_id,))
+        db.execute("DELETE FROM procesos WHERE ot_id=?", (ot_id,))
+        if obra:
+            db.execute(
+                "DELETE FROM procesos WHERE (ot_id IS NULL OR ot_id=0) AND TRIM(COALESCE(obra,''))=TRIM(?)",
+                (obra,),
+            )
+        db.execute(
+            "DELETE FROM programacion_hitos WHERE prog_id IN (SELECT id FROM programacion WHERE ot_id=?)",
+            (ot_id,),
+        )
+        db.execute("DELETE FROM programacion_cumplimiento WHERE ot_id=?", (ot_id,))
+        db.execute("DELETE FROM programacion WHERE ot_id=?", (ot_id,))
+        db.execute("DELETE FROM ordenes_trabajo WHERE id=?", (ot_id,))
+        db.commit()
+        return redirect("/modulo/historial?mensaje=OT eliminada definitivamente")
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return redirect(f"/modulo/historial?mensaje=Error eliminando OT: {html_lib.escape(str(exc))}")
+
+
 @ot_bp.route("/modulo/historial")
 def historial_ots():
     db = get_db()
@@ -1146,6 +1182,10 @@ def historial_ots():
     .header { display: flex; justify-content: space-between; align-items: center; }
     .btn-reabrir { background: #e5a3a3; }
     .btn-reabrir:hover { background: #d48e8e; }
+    .btn-eliminar { background: #ef4444; color: white; border: none; cursor: pointer; padding: 10px 15px; border-radius: 5px; font-size: 14px; margin: 0; }
+    .btn-eliminar:hover { background: #dc2626; }
+    .mensaje { background: #d1fae5; border-left: 4px solid #10b981; padding: 10px 16px; margin: 10px 0; border-radius: 4px; font-weight: bold; }
+    .mensaje-error { background: #fee2e2; border-left: 4px solid #ef4444; }
     </style>
     </head>
     <body>
@@ -1157,6 +1197,12 @@ def historial_ots():
         <a href="/modulo/ot" class="btn">📌 OTs Activas</a>
     </div>
     """
+
+    from flask import request as _req
+    mensaje = _req.args.get('mensaje', '')
+    if mensaje:
+        css_msg = 'mensaje-error' if 'Error' in mensaje else 'mensaje'
+        html += f"<div class='{css_msg} mensaje'>{html_lib.escape(mensaje)}</div>"
 
     if len(ots_cerradas) == 0:
         html += "<div class='sin-datos'>⚠️ No hay órdenes de trabajo cerradas</div>"
@@ -1214,6 +1260,9 @@ def historial_ots():
                     <a href="/modulo/ot/editar/{ot[0]}" class="btn" style="background: #4facfe;">Ver</a>
                     <form method="post" action="/modulo/ot/reabrir/{ot[0]}" style="display:inline;">
                         <button type="submit" class="btn btn-reabrir">🔓 Reabrir</button>
+                    </form>
+                    <form method="post" action="/modulo/historial/eliminar/{ot[0]}" style="display:inline;" onsubmit="return confirm('⚠️ ¿Eliminar definitivamente la OT-{ot[0]}?\nEsta acción no se puede deshacer.')">
+                        <button type="submit" class="btn-eliminar">🗑️ Eliminar</button>
                     </form>
                 </td>
             </tr>
