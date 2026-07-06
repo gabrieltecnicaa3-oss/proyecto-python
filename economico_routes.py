@@ -957,15 +957,18 @@ def economico_dashboard_ejecutivo():
     if periodo_sel not in ("semana", "mes", "trimestre"):
         periodo_sel = "mes"
 
+    from db_utils import DB_ENGINE
+    _mysql = (DB_ENGINE == "mysql")
+
     if periodo_sel == "semana":
-        fmt_sql = "strftime('%Y-S%W', fecha)"
+        fmt_sql = "DATE_FORMAT(fecha, '%Y-%u')" if _mysql else "strftime('%Y-%W', fecha)"
         fmt_lbl = "Semana"
     elif periodo_sel == "trimestre":
-        fmt_sql = ("strftime('%Y', fecha) || '-Q' || "
-                   "CAST((CAST(strftime('%m', fecha) AS INTEGER) + 2) / 3 AS TEXT)")
+        fmt_sql = ("CONCAT(YEAR(fecha), '-Q', QUARTER(fecha))" if _mysql
+                   else "strftime('%Y', fecha) || '-Q' || CAST((CAST(strftime('%m', fecha) AS INTEGER) + 2) / 3 AS TEXT)")
         fmt_lbl = "Trimestre"
     else:
-        fmt_sql = "strftime('%Y-%m', fecha)"
+        fmt_sql = "DATE_FORMAT(fecha, '%Y-%m')" if _mysql else "strftime('%Y-%m', fecha)"
         fmt_lbl = "Mes"
 
     # HH por OT por período
