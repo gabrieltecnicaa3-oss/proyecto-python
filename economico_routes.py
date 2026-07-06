@@ -854,14 +854,16 @@ def economico_dashboard_ejecutivo():
         riesgo_em, riesgo_lbl, riesgo_c = "🟢", "Bajo", "#166534"
 
     # ── Ranking de desvíos ────────────────────────────────────────────────────
+    # Rubros que siempre aparecen aunque prev=0 y real=0
+    RUBROS_SIEMPRE = {"Subcontratos", "Materiales", "Pintura", "Mano de Obra", "Consumibles"}
     ranking = []
     for nm, vals in rubros_global.items():
         prev = vals["prev"]; real = vals["real"]
-        if prev == 0 and real == 0:
+        if prev == 0 and real == 0 and nm not in RUBROS_SIEMPRE:
             continue
         desv_pct = ((real - prev) / prev * 100.0) if prev > 0 else (100.0 if real > 0 else 0.0)
         ranking.append({"nombre": nm, "prev": prev, "real": real, "desv_pct": desv_pct})
-    ranking.sort(key=lambda x: abs(x["desv_pct"]), reverse=True)
+    ranking.sort(key=lambda x: (-abs(x["desv_pct"]), x["nombre"]))
 
     # ── Resumen ejecutivo ─────────────────────────────────────────────────────
     n_ok       = sum(1 for o in obras_data if o["sem_lbl"] == "En control")
@@ -940,7 +942,7 @@ def economico_dashboard_ejecutivo():
           </td>
         </tr>"""
 
-    # Datos para Chart.js
+    # Datos para Chart.js — Avance
     chart_labels = [o["obra"] for o in obras_data]
     chart_af     = [round(o["af"], 1) for o in obras_data]
     chart_ae     = [round(o["ae"], 1) for o in obras_data]
@@ -949,6 +951,102 @@ def economico_dashboard_ejecutivo():
     chart_labels_js = _json.dumps(chart_labels)
     chart_af_js     = _json.dumps(chart_af)
     chart_ae_js     = _json.dumps(chart_ae)
+
+    # ── Chart Ingresos vs Egresos por período ────────────────────────────────
+    periodo_sel = (request.args.get("periodo") or "mes").strip().lower()
+    if periodo_sel not in ("semana", "mes", "trimestre"):
+        periodo_sel = "mes"
+
+    if periodo_sel == "semana":
+        fmt_sql = "strftime('%Y-S%W', fecha)"
+        fmt_lbl = "Semana"
+    elif periodo_sel == "trimestre":
+        fmt_sql = ("strftime('%Y', fecha) || '-Q' || "
+                   "CAST((CAST(strftime('%m', fecha) AS INTEGER) + 2) / 3 AS TEXT)")
+        fmt_lbl = "Trimestre"
+    else:
+        fmt_sql = "strftime('%Y-%m', fecha)"
+        fmt_lbl = "Mes"
+
+    # HH por OT por período
+    hh_rows = db.execute(
+        f"""SELECT ot_id, {fmt_sql} AS periodo, SUM(horas) AS hh
+            FROM partes_trabajo
+            WHERE fecha IS NOT NULL AND fecha != ''
+            GROUP BY ot_id, periodo
+            ORDER BY periodo"""
+    ).fetchall()
+
+    # Mapa de hs_previstas y precio_venta por OT
+    ots_meta = {}
+    for r in db.execute(
+        """SELECT ot.id, COALESCE(ot.hs_previstas, 0),
+                  COALESCE(ep.mat_previsto,0)+COALESCE(ep.pintura_previsto,0)+
+                  COALESCE(ep.mo_previsto,0)+COALESCE(ep.consumibles_previsto,0)+
+                  COALESCE(ep.ingenieria_previsto,0)+COALESCE(ep.gastos_gen_previsto,0)+
+                  COALESCE(ep.impuestos_previsto,0)+COALESCE(ep.beneficio_previsto,0) AS pv,
+                  ot.obra
+           FROM ordenes_trabajo ot
+           LEFT JOIN economico_presupuesto ep ON ep.ot_id = ot.id"""
+    ).fetchall():
+        ot_id_, hs_prev, pv_, obra_ = r
+        cfg_ot = _get_config_obra(db, obra_ or "")
+        # costos reales manuales
+        rm_row = db.execute(
+            "SELECT COALESCE(mat_real,0)+COALESCE(pintura_real,0)+COALESCE(subcontratos_real,0) FROM economico_costos_reales WHERE ot_id=?",
+            (ot_id_,)).fetchone()
+        manual_real = float(rm_row[0] or 0) if rm_row else 0.0
+        # total HH de la OT
+        tot_hh_row = db.execute("SELECT COALESCE(SUM(horas),0) FROM partes_trabajo WHERE ot_id=?", (ot_id_,)).fetchone()
+        tot_hh = float(tot_hh_row[0] or 0) if tot_hh_row else 0.0
+        ots_meta[ot_id_] = {
+            "hs_prev":     float(hs_prev or 0),
+            "pv":          float(pv_ or 0),
+            "cfg":         cfg_ot,
+            "manual_real": manual_real,
+            "tot_hh":      tot_hh,
+        }
+
+    # Acumular ingresos y egresos por período
+    from collections import defaultdict
+    periodos_ing  = defaultdict(float)  # ingresos (valor ganado) por período
+    periodos_egr  = defaultdict(float)  # egresos (costos) por período
+
+    for ot_id_, periodo, hh_p in hh_rows:
+        ot_id_ = int(ot_id_); hh_p = float(hh_p or 0)
+        meta = ots_meta.get(ot_id_)
+        if not meta:
+            continue
+        cfg_ot  = meta["cfg"]
+        hs_prev = meta["hs_prev"]
+        pv_ot   = meta["pv"]
+        tot_hh  = meta["tot_hh"]
+
+        # Ingresos del período = valor ganado incremental
+        if hs_prev > 0 and pv_ot > 0:
+            periodos_ing[periodo] += pv_ot * (hh_p / hs_prev)
+
+        # Egresos del período = costos auto + proporción de costos manuales
+        auto_cost  = hh_p * (cfg_ot["precio_hora_mo"] + cfg_ot["precio_hora_cons"])
+        frac_hh    = (hh_p / tot_hh) if tot_hh > 0 else 0.0
+        manual_p   = meta["manual_real"] * frac_hh
+        directo_p  = auto_cost + manual_p
+        gg_p       = directo_p * cfg_ot["pct_gastos_gen"] / 100.0
+        imp_p      = directo_p * cfg_ot["pct_impuestos"]  / 100.0
+        periodos_egr[periodo] += directo_p + gg_p + imp_p
+
+    # Ordenar períodos y construir series acumuladas
+    all_periods = sorted(set(periodos_ing.keys()) | set(periodos_egr.keys()))
+    cum_ing = []; cum_egr = []; running_i = 0.0; running_e = 0.0
+    for p in all_periods:
+        running_i += periodos_ing.get(p, 0.0)
+        running_e += periodos_egr.get(p, 0.0)
+        cum_ing.append(round(running_i, 0))
+        cum_egr.append(round(running_e, 0))
+
+    chart2_labels_js = _json.dumps(all_periods)
+    chart2_ing_js    = _json.dumps(cum_ing)
+    chart2_egr_js    = _json.dumps(cum_egr)
 
     # KPI cards top
     def _kpi(titulo, valor, color="#6366f1", sub=""):
@@ -1052,6 +1150,27 @@ def economico_dashboard_ejecutivo():
       </div>
     </div>
 
+    <!-- Gráfico Ingresos vs Egresos -->
+    <div class="card">
+      <div class="ct" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <span>💵 Ingresos vs Egresos acumulados — Valor ganado</span>
+        <div style="display:flex;gap:6px;">
+          <a href="?periodo=semana" style="font-size:.75rem;padding:3px 10px;border-radius:5px;text-decoration:none;font-weight:600;
+             {'background:#6366f1;color:#fff;' if periodo_sel=='semana' else 'background:#e0e7ff;color:#4338ca;'}">Semanal</a>
+          <a href="?periodo=mes" style="font-size:.75rem;padding:3px 10px;border-radius:5px;text-decoration:none;font-weight:600;
+             {'background:#6366f1;color:#fff;' if periodo_sel=='mes' else 'background:#e0e7ff;color:#4338ca;'}">Mensual</a>
+          <a href="?periodo=trimestre" style="font-size:.75rem;padding:3px 10px;border-radius:5px;text-decoration:none;font-weight:600;
+             {'background:#6366f1;color:#fff;' if periodo_sel=='trimestre' else 'background:#e0e7ff;color:#4338ca;'}">Trimestral</a>
+        </div>
+      </div>
+      <div style="padding:8px 16px;font-size:.75rem;color:#6b7280;">
+        Ingresos = Valor ganado (precio venta × HH ejecutadas / HH previstas). Egresos = costos reales acumulados por período.
+      </div>
+      <div class="cb" style="position:relative;height:260px;">
+        <canvas id="chartIngEgr"></canvas>
+      </div>
+    </div>
+
     <!-- Ranking desvíos + Resumen ejecutivo -->
     <div class="two">
       <div class="card">
@@ -1081,8 +1200,9 @@ def economico_dashboard_ejecutivo():
 
   <script>
   (function() {{
-    const ctx = document.getElementById('chartAvance').getContext('2d');
-    new Chart(ctx, {{
+    // Chart 1: Avance
+    const ctx1 = document.getElementById('chartAvance').getContext('2d');
+    new Chart(ctx1, {{
       type: 'bar',
       data: {{
         labels: {chart_labels_js},
@@ -1092,37 +1212,76 @@ def economico_dashboard_ejecutivo():
             data: {chart_af_js},
             backgroundColor: 'rgba(59,130,246,0.7)',
             borderColor: 'rgba(59,130,246,1)',
-            borderWidth: 1,
-            borderRadius: 4,
+            borderWidth: 1, borderRadius: 4,
           }},
           {{
             label: 'Avance Económico %',
             data: {chart_ae_js},
             backgroundColor: 'rgba(239,68,68,0.6)',
             borderColor: 'rgba(239,68,68,1)',
-            borderWidth: 1,
-            borderRadius: 4,
+            borderWidth: 1, borderRadius: 4,
           }}
         ]
       }},
       options: {{
-        responsive: true,
-        maintainAspectRatio: false,
+        responsive: true, maintainAspectRatio: false,
+        plugins: {{
+          legend: {{ position: 'top', labels: {{ font: {{ size: 11 }} }} }},
+          tooltip: {{ callbacks: {{ label: c => ` ${{c.dataset.label}}: ${{c.parsed.y.toFixed(1)}}%` }} }}
+        }},
+        scales: {{
+          y: {{ beginAtZero: true, max: 110,
+                ticks: {{ callback: v => v + '%', font: {{ size: 10 }} }},
+                grid: {{ color: '#f1f5f9' }} }},
+          x: {{ ticks: {{ font: {{ size: 10 }} }} }}
+        }}
+      }}
+    }});
+
+    // Chart 2: Ingresos vs Egresos acumulados
+    const ctx2 = document.getElementById('chartIngEgr').getContext('2d');
+    const ing_data = {chart2_ing_js};
+    const egr_data = {chart2_egr_js};
+    new Chart(ctx2, {{
+      type: 'line',
+      data: {{
+        labels: {chart2_labels_js},
+        datasets: [
+          {{
+            label: 'Ingresos (Valor Ganado)',
+            data: ing_data,
+            borderColor: 'rgba(16,185,129,1)',
+            backgroundColor: 'rgba(16,185,129,0.08)',
+            borderWidth: 2.5, pointRadius: 4,
+            fill: true, tension: 0.3,
+          }},
+          {{
+            label: 'Egresos (Costos Reales)',
+            data: egr_data,
+            borderColor: 'rgba(239,68,68,1)',
+            backgroundColor: 'rgba(239,68,68,0.06)',
+            borderWidth: 2.5, pointRadius: 4,
+            fill: true, tension: 0.3,
+          }}
+        ]
+      }},
+      options: {{
+        responsive: true, maintainAspectRatio: false,
         plugins: {{
           legend: {{ position: 'top', labels: {{ font: {{ size: 11 }} }} }},
           tooltip: {{
             callbacks: {{
-              label: ctx => ` ${{ctx.dataset.label}}: ${{ctx.parsed.y.toFixed(1)}}%`
+              label: c => ` ${{c.dataset.label}}: ${{(c.parsed.y/1000000).toFixed(2)}} M`
             }}
           }}
         }},
         scales: {{
           y: {{
-            beginAtZero: true, max: 110,
-            ticks: {{ callback: v => v + '%', font: {{ size: 10 }} }},
+            beginAtZero: true,
+            ticks: {{ callback: v => '$' + (v/1000000).toFixed(1) + 'M', font: {{ size: 10 }} }},
             grid: {{ color: '#f1f5f9' }}
           }},
-          x: {{ ticks: {{ font: {{ size: 10 }} }} }}
+          x: {{ ticks: {{ font: {{ size: 10 }}, maxRotation: 45 }} }}
         }}
       }}
     }});
