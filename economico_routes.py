@@ -59,6 +59,10 @@ def _ensure_schema(db):
     )""")
     if not db.execute("SELECT id FROM economico_config LIMIT 1").fetchone():
         db.execute("INSERT INTO economico_config (precio_hora_mo,precio_hora_cons,pct_gastos_gen,pct_impuestos) VALUES (0,0,5.0,3.0)")
+    try:
+        db.execute("ALTER TABLE economico_costos_reales ADD COLUMN ingenieria_real REAL DEFAULT 0")
+    except Exception:
+        pass
     db.commit()
 
 
@@ -126,17 +130,18 @@ def _calc_economico(db, ot_id, cfg):
     p_tc = p_cd + p_gg + p_imp
     p_pv = p_tc + p_ben
 
-    rm = db.execute("SELECT mat_real,pintura_real,subcontratos_real FROM economico_costos_reales WHERE ot_id=?", (ot_id,)).fetchone()
+    rm = db.execute("SELECT mat_real,pintura_real,subcontratos_real,COALESCE(ingenieria_real,0) FROM economico_costos_reales WHERE ot_id=?", (ot_id,)).fetchone()
     r_mat  = float(rm[0] or 0) if rm else 0.0
     r_pint = float(rm[1] or 0) if rm else 0.0
     r_sub  = float(rm[2] or 0) if rm else 0.0
+    r_ing_real = float(rm[3] or 0) if rm else 0.0
 
     hh = db.execute("SELECT COALESCE(SUM(horas),0) FROM partes_trabajo WHERE ot_id=?", (ot_id,)).fetchone()
     hh_total = float(hh[0] or 0) if hh else 0.0
 
     r_mo   = hh_total * cfg["precio_hora_mo"]
     r_cons = hh_total * cfg["precio_hora_cons"]
-    r_cd   = r_mat + r_pint + r_sub + r_mo + r_cons
+    r_cd   = r_mat + r_pint + r_sub + r_mo + r_cons + r_ing_real
     r_gg   = r_cd * cfg["pct_gastos_gen"] / 100.0
     r_imp  = r_cd * cfg["pct_impuestos"] / 100.0
     r_tot  = r_cd + r_gg + r_imp
@@ -154,7 +159,7 @@ def _calc_economico(db, ot_id, cfg):
     return {
         "p":  {"mat":p_mat,"pintura":p_pint,"mo":p_mo,"cons":p_cons,
                "ing":p_ing,"gg":p_gg,"imp":p_imp,"ben":p_ben,"cd":p_cd,"tc":p_tc,"pv":p_pv},
-        "rm": {"mat":r_mat,"pintura":r_pint,"sub":r_sub},
+        "rm": {"mat":r_mat,"pintura":r_pint,"sub":r_sub,"ing":r_ing_real},
         "ra": {"mo":r_mo,"cons":r_cons,"gg":r_gg,"imp":r_imp},
         "r":  {"cd":r_cd,"tot":r_tot},
         "hh": hh_total, "kg": kg, "avf": avf,
@@ -164,7 +169,7 @@ def _calc_economico(db, ot_id, cfg):
 
 def _aggregate_obra(ots_data):
     agg = {k:0.0 for k in ["p_mat","p_pint","p_mo","p_cons","p_ing","p_gg","p_imp","p_ben",
-                            "p_cd","p_tc","p_pv","r_mat","r_pint","r_sub","r_mo","r_cons",
+                            "p_cd","p_tc","p_pv","r_mat","r_pint","r_sub","r_ing","r_mo","r_cons",
                             "r_gg","r_imp","r_cd","r_tot","hh","kg"]}
     avf_list = []
     for d in ots_data:
@@ -172,7 +177,7 @@ def _aggregate_obra(ots_data):
                     ("p_cons",d["p"]["cons"]),("p_ing",d["p"]["ing"]),("p_gg",d["p"]["gg"]),
                     ("p_imp",d["p"]["imp"]),("p_ben",d["p"]["ben"]),("p_cd",d["p"]["cd"]),
                     ("p_tc",d["p"]["tc"]),("p_pv",d["p"]["pv"]),
-                    ("r_mat",d["rm"]["mat"]),("r_pint",d["rm"]["pintura"]),("r_sub",d["rm"]["sub"]),
+                    ("r_mat",d["rm"]["mat"]),("r_pint",d["rm"]["pintura"]),("r_sub",d["rm"]["sub"]),("r_ing",d["rm"]["ing"]),
                     ("r_mo",d["ra"]["mo"]),("r_cons",d["ra"]["cons"]),("r_gg",d["ra"]["gg"]),
                     ("r_imp",d["ra"]["imp"]),("r_cd",d["r"]["cd"]),("r_tot",d["r"]["tot"]),
                     ("hh",d["hh"]),("kg",d["kg"])]:
@@ -479,7 +484,7 @@ def economico_obra(obra_nombre):
     for nombre, prev, real in [
         ("Materiales",agg["p_mat"],agg["r_mat"]),("Pintura",agg["p_pint"],agg["r_pint"]),
         ("Mano de Obra",agg["p_mo"],agg["r_mo"]),("Consumibles",agg["p_cons"],agg["r_cons"]),
-        ("Ingeniería",agg["p_ing"],0.0),("Subcontratos",0.0,agg["r_sub"]),
+        ("Ingeniería",agg["p_ing"],agg["r_ing"]),("Subcontratos",0.0,agg["r_sub"]),
         ("Gastos Generales",agg["p_gg"],agg["r_gg"]),("Impuestos",agg["p_imp"],agg["r_imp"])]:
         da = real-prev; dp = (da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c = _cd(da); ic = "▲" if da>0 else ("▼" if da<0 else "–")
@@ -602,14 +607,15 @@ def economico_ot(ot_id):
                         VALUES(?,?,?,?,?,?,?,?,?)""", (ot_id, *vals))
                 db.commit(); mensaje = "Presupuesto guardado."
             elif accion == "guardar_costos_reales":
-                mat = float(request.form.get("mat_real") or 0)
+                mat  = float(request.form.get("mat_real") or 0)
                 pint = float(request.form.get("pintura_real") or 0)
                 sub  = float(request.form.get("subcontratos_real") or 0)
+                ing  = float(request.form.get("ingenieria_real") or 0)
                 ex = db.execute("SELECT id FROM economico_costos_reales WHERE ot_id=?", (ot_id,)).fetchone()
                 if ex:
-                    db.execute("UPDATE economico_costos_reales SET mat_real=?,pintura_real=?,subcontratos_real=?,updated_at=CURRENT_TIMESTAMP WHERE ot_id=?", (mat,pint,sub,ot_id))
+                    db.execute("UPDATE economico_costos_reales SET mat_real=?,pintura_real=?,subcontratos_real=?,ingenieria_real=?,updated_at=CURRENT_TIMESTAMP WHERE ot_id=?", (mat,pint,sub,ing,ot_id))
                 else:
-                    db.execute("INSERT INTO economico_costos_reales(ot_id,mat_real,pintura_real,subcontratos_real) VALUES(?,?,?,?)", (ot_id,mat,pint,sub))
+                    db.execute("INSERT INTO economico_costos_reales(ot_id,mat_real,pintura_real,subcontratos_real,ingenieria_real) VALUES(?,?,?,?,?)", (ot_id,mat,pint,sub,ing))
                 db.commit(); mensaje = "Costos reales guardados."
             elif accion == "config_obra":
                 _save_config_obra(db, obra,
@@ -646,7 +652,7 @@ def economico_ot(ot_id):
     for nombre, prev, real in [
         ("Materiales",p["mat"],rm["mat"]),("Pintura",p["pintura"],rm["pintura"]),
         ("Mano de Obra",p["mo"],ra["mo"]),("Consumibles",p["cons"],ra["cons"]),
-        ("Ingeniería",p["ing"],0.0),("Subcontratos",0.0,rm["sub"]),
+        ("Ingeniería",p["ing"],rm["ing"]),("Subcontratos",0.0,rm["sub"]),
         ("Gastos Generales",p["gg"],ra["gg"]),("Impuestos",p["imp"],ra["imp"])]:
         da=real-prev; dp=(da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c=_cd(da); ic="▲" if da>0 else ("▼" if da<0 else "–")
@@ -721,6 +727,7 @@ def economico_ot(ot_id):
         <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">Carga Manual</div>
         <div class="fg"><label>Materiales reales ($)</label><input type="number" name="mat_real" step="0.01" min="0" value="{_fv(rm['mat'])}"></div>
         <div class="fg"><label>Pintura real ($)</label><input type="number" name="pintura_real" step="0.01" min="0" value="{_fv(rm['pintura'])}"></div>
+        <div class="fg"><label>Ingeniería real ($)</label><input type="number" name="ingenieria_real" step="0.01" min="0" value="{_fv(rm['ing'])}"></div>
         <div class="fg"><label>Subcontratos ($)</label><input type="number" name="subcontratos_real" step="0.01" min="0" value="{_fv(rm['sub'])}"></div>
         <button type="submit" class="btn" style="background:#0891b2;color:#fff;width:100%;">💾 Guardar costos manuales</button>
       </form>
@@ -826,7 +833,7 @@ def economico_dashboard_ejecutivo():
             ("Pintura",         agg["p_pint"], agg["r_pint"]),
             ("Mano de Obra",    agg["p_mo"],   agg["r_mo"]),
             ("Consumibles",     agg["p_cons"], agg["r_cons"]),
-            ("Ingeniería",      agg["p_ing"],  0.0),
+            ("Ingeniería",      agg["p_ing"],  agg["r_ing"]),
             ("Subcontratos",    0.0,           agg["r_sub"]),
             ("Gastos Generales",agg["p_gg"],   agg["r_gg"]),
             ("Impuestos",       agg["p_imp"],  agg["r_imp"]),
@@ -842,8 +849,9 @@ def economico_dashboard_ejecutivo():
     n_riesgo    = sum(1 for o in obras_data if o["sem_lbl"] in ("Crítico","Atención"))
     n_criticos  = sum(1 for o in obras_data if o["sem_lbl"] == "Crítico")
     mg_prom     = sum(o["mg_proy"] for o in obras_data) / n_obras
-    costo_cd    = sum(o["r_cd"]    for o in obras_data)
-    ae_prom     = sum(o["ae"]      for o in obras_data) / n_obras
+    costo_cd      = sum(o["r_cd"]          for o in obras_data)
+    costo_cd_prev = sum(o["agg"]["p_cd"]   for o in obras_data)
+    ae_prom       = sum(o["ae"]             for o in obras_data) / n_obras
     # Riesgo global
     pct_riesgo  = n_riesgo / n_obras
     if n_criticos > 0 or pct_riesgo >= 0.5:
@@ -953,104 +961,15 @@ def economico_dashboard_ejecutivo():
     chart_af_js     = _json.dumps(chart_af)
     chart_ae_js     = _json.dumps(chart_ae)
 
-    # ── Chart Ingresos vs Egresos por período ────────────────────────────────
-    periodo_sel = (request.args.get("periodo") or "mes").strip().lower()
-    if periodo_sel not in ("semana", "mes", "trimestre"):
-        periodo_sel = "mes"
-
-    from db_utils import DB_ENGINE
-    _mysql = (DB_ENGINE == "mysql")
-
-    if periodo_sel == "semana":
-        fmt_sql = "DATE_FORMAT(fecha, '%Y-%u')" if _mysql else "strftime('%Y-%W', fecha)"
-        fmt_lbl = "Semana"
-    elif periodo_sel == "trimestre":
-        fmt_sql = ("CONCAT(YEAR(fecha), '-Q', QUARTER(fecha))" if _mysql
-                   else "strftime('%Y', fecha) || '-Q' || CAST((CAST(strftime('%m', fecha) AS INTEGER) + 2) / 3 AS TEXT)")
-        fmt_lbl = "Trimestre"
-    else:
-        fmt_sql = "DATE_FORMAT(fecha, '%Y-%m')" if _mysql else "strftime('%Y-%m', fecha)"
-        fmt_lbl = "Mes"
-
-    # HH por OT por período
-    hh_rows = db.execute(
-        f"""SELECT ot_id, {fmt_sql} AS periodo, SUM(horas) AS hh
-            FROM partes_trabajo
-            WHERE fecha IS NOT NULL AND fecha != ''
-            GROUP BY ot_id, periodo
-            ORDER BY periodo"""
-    ).fetchall()
-
-    # Mapa de hs_previstas y precio_venta por OT
-    ots_meta = {}
-    for r in db.execute(
-        """SELECT ot.id, COALESCE(ot.hs_previstas, 0),
-                  COALESCE(ep.mat_previsto,0)+COALESCE(ep.pintura_previsto,0)+
-                  COALESCE(ep.mo_previsto,0)+COALESCE(ep.consumibles_previsto,0)+
-                  COALESCE(ep.ingenieria_previsto,0)+COALESCE(ep.gastos_gen_previsto,0)+
-                  COALESCE(ep.impuestos_previsto,0)+COALESCE(ep.beneficio_previsto,0) AS pv,
-                  ot.obra
-           FROM ordenes_trabajo ot
-           LEFT JOIN economico_presupuesto ep ON ep.ot_id = ot.id"""
-    ).fetchall():
-        ot_id_, hs_prev, pv_, obra_ = r
-        cfg_ot = _get_config_obra(db, obra_ or "")
-        # costos reales manuales
-        rm_row = db.execute(
-            "SELECT COALESCE(mat_real,0)+COALESCE(pintura_real,0)+COALESCE(subcontratos_real,0) FROM economico_costos_reales WHERE ot_id=?",
-            (ot_id_,)).fetchone()
-        manual_real = float(rm_row[0] or 0) if rm_row else 0.0
-        # total HH de la OT
-        tot_hh_row = db.execute("SELECT COALESCE(SUM(horas),0) FROM partes_trabajo WHERE ot_id=?", (ot_id_,)).fetchone()
-        tot_hh = float(tot_hh_row[0] or 0) if tot_hh_row else 0.0
-        ots_meta[ot_id_] = {
-            "hs_prev":     float(hs_prev or 0),
-            "pv":          float(pv_ or 0),
-            "cfg":         cfg_ot,
-            "manual_real": manual_real,
-            "tot_hh":      tot_hh,
-        }
-
-    # Acumular ingresos y egresos por período
-    from collections import defaultdict
-    periodos_ing  = defaultdict(float)  # ingresos (valor ganado) por período
-    periodos_egr  = defaultdict(float)  # egresos (costos) por período
-
-    for ot_id_, periodo, hh_p in hh_rows:
-        ot_id_ = int(ot_id_); hh_p = float(hh_p or 0)
-        meta = ots_meta.get(ot_id_)
-        if not meta:
-            continue
-        cfg_ot  = meta["cfg"]
-        hs_prev = meta["hs_prev"]
-        pv_ot   = meta["pv"]
-        tot_hh  = meta["tot_hh"]
-
-        # Ingresos del período = valor ganado incremental
-        if hs_prev > 0 and pv_ot > 0:
-            periodos_ing[periodo] += pv_ot * (hh_p / hs_prev)
-
-        # Egresos del período = costos auto + proporción de costos manuales
-        auto_cost  = hh_p * (cfg_ot["precio_hora_mo"] + cfg_ot["precio_hora_cons"])
-        frac_hh    = (hh_p / tot_hh) if tot_hh > 0 else 0.0
-        manual_p   = meta["manual_real"] * frac_hh
-        directo_p  = auto_cost + manual_p
-        gg_p       = directo_p * cfg_ot["pct_gastos_gen"] / 100.0
-        imp_p      = directo_p * cfg_ot["pct_impuestos"]  / 100.0
-        periodos_egr[periodo] += directo_p + gg_p + imp_p
-
-    # Ordenar períodos y construir series acumuladas
-    all_periods = sorted(set(periodos_ing.keys()) | set(periodos_egr.keys()))
-    cum_ing = []; cum_egr = []; running_i = 0.0; running_e = 0.0
-    for p in all_periods:
-        running_i += periodos_ing.get(p, 0.0)
-        running_e += periodos_egr.get(p, 0.0)
-        cum_ing.append(round(running_i, 0))
-        cum_egr.append(round(running_e, 0))
-
-    chart2_labels_js = _json.dumps(all_periods)
-    chart2_ing_js    = _json.dumps(cum_ing)
-    chart2_egr_js    = _json.dumps(cum_egr)
+    # ── Chart Precio de Venta vs Costo Real por obra ────────────────────────
+    import json as _json2
+    chart2_labels_js = _json2.dumps([o["obra"] for o in obras_data])
+    chart2_pv_js     = _json2.dumps([round(o["pv"], 0) for o in obras_data])
+    chart2_costo_js  = _json2.dumps([round(o["r_tot"], 0) for o in obras_data])
+    chart2_colors_js = _json2.dumps([
+        "rgba(16,185,129,0.75)" if o["pv"] >= o["r_tot"] else "rgba(239,68,68,0.75)"
+        for o in obras_data
+    ])
 
     # KPI cards top
     def _kpi(titulo, valor, color="#6366f1", sub=""):
@@ -1066,7 +985,8 @@ def economico_dashboard_ejecutivo():
              "#991b1b" if n_riesgo>0 else "#166534", f"de {n_obras} obras") +
         _kpi("Margen prom. proyectado",  f"{'🟢' if mg_prom>=10 else '🟠' if mg_prom>=5 else '🔴'} {mg_prom:.1f}%",
              _cm(mg_prom), "a la finalización") +
-        _kpi("Costo directo ejecutado",  _m(costo_cd), "#1e293b", "acumulado") +
+        _kpi("Costo directo ejecutado",  _m(costo_cd),      "#1e293b", "acumulado") +
+        _kpi("Costo directo previsto",   _m(costo_cd_prev), "#3b82f6", "presupuestado") +
         _kpi("Av. económico promedio",   f"{ae_prom:.1f}%", "#3b82f6", "sobre presupuesto") +
         _kpi("Riesgo global",            f"{riesgo_em} {riesgo_lbl}", riesgo_c, f"{n_criticos} crítico{'s' if n_criticos!=1 else ''}")
     )
@@ -1155,21 +1075,11 @@ def economico_dashboard_ejecutivo():
       </div>
     </div>
 
-    <!-- Gráfico Ingresos vs Egresos -->
+    <!-- Gráfico Precio de Venta vs Costo Real por Obra -->
     <div class="card">
-      <div class="ct" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-        <span>💵 Ingresos vs Egresos acumulados — Valor ganado</span>
-        <div style="display:flex;gap:6px;">
-          <a href="?periodo=semana" style="font-size:.75rem;padding:3px 10px;border-radius:5px;text-decoration:none;font-weight:600;
-             {'background:#6366f1;color:#fff;' if periodo_sel=='semana' else 'background:#e0e7ff;color:#4338ca;'}">Semanal</a>
-          <a href="?periodo=mes" style="font-size:.75rem;padding:3px 10px;border-radius:5px;text-decoration:none;font-weight:600;
-             {'background:#6366f1;color:#fff;' if periodo_sel=='mes' else 'background:#e0e7ff;color:#4338ca;'}">Mensual</a>
-          <a href="?periodo=trimestre" style="font-size:.75rem;padding:3px 10px;border-radius:5px;text-decoration:none;font-weight:600;
-             {'background:#6366f1;color:#fff;' if periodo_sel=='trimestre' else 'background:#e0e7ff;color:#4338ca;'}">Trimestral</a>
-        </div>
-      </div>
-      <div style="padding:8px 16px;font-size:.75rem;color:#6b7280;">
-        Ingresos = Valor ganado (precio venta × HH ejecutadas / HH previstas). Egresos = costos reales acumulados por período.
+      <div class="ct">💵 Precio de Venta vs Costo Real — por obra</div>
+      <div style="padding:6px 16px 0;font-size:.75rem;color:#6b7280;">
+        Verde = obra rentable (PV &gt; Costo Real). Rojo = costo supera el precio de venta presupuestado.
       </div>
       <div class="cb" style="position:relative;height:260px;">
         <canvas id="chartIngEgr"></canvas>
@@ -1243,30 +1153,25 @@ def economico_dashboard_ejecutivo():
       }}
     }});
 
-    // Chart 2: Ingresos vs Egresos acumulados
+    // Chart 2: Precio de Venta vs Costo Real por obra
     const ctx2 = document.getElementById('chartIngEgr').getContext('2d');
-    const ing_data = {chart2_ing_js};
-    const egr_data = {chart2_egr_js};
     new Chart(ctx2, {{
-      type: 'line',
+      type: 'bar',
       data: {{
         labels: {chart2_labels_js},
         datasets: [
           {{
-            label: 'Ingresos (Valor Ganado)',
-            data: ing_data,
-            borderColor: 'rgba(16,185,129,1)',
-            backgroundColor: 'rgba(16,185,129,0.08)',
-            borderWidth: 2.5, pointRadius: 4,
-            fill: true, tension: 0.3,
+            label: 'Precio de Venta (Presupuestado)',
+            data: {chart2_pv_js},
+            backgroundColor: 'rgba(99,102,241,0.7)',
+            borderColor: 'rgba(99,102,241,1)',
+            borderWidth: 1, borderRadius: 4,
           }},
           {{
-            label: 'Egresos (Costos Reales)',
-            data: egr_data,
-            borderColor: 'rgba(239,68,68,1)',
-            backgroundColor: 'rgba(239,68,68,0.06)',
-            borderWidth: 2.5, pointRadius: 4,
-            fill: true, tension: 0.3,
+            label: 'Costo Real',
+            data: {chart2_costo_js},
+            backgroundColor: {chart2_colors_js},
+            borderWidth: 1, borderRadius: 4,
           }}
         ]
       }},
