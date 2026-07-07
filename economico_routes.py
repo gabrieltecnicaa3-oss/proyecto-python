@@ -782,15 +782,17 @@ def economico_dashboard_ejecutivo():
     db = get_db(); _ensure_schema(db)
 
     ots_rows = db.execute(
-        "SELECT id, cliente, obra, tipo_estructura FROM ordenes_trabajo ORDER BY obra, id"
+        "SELECT id, cliente, obra, tipo_estructura, COALESCE(es_mantenimiento,0) FROM ordenes_trabajo ORDER BY obra, id"
     ).fetchall()
 
-    obras_dict = {}
-    for ot_id, cliente, obra, tipo in ots_rows:
+    obras_dict = {}   # obras productivas
+    mant_dict  = {}   # obras de mantenimiento / overhead
+    for ot_id, cliente, obra, tipo, es_mant in ots_rows:
         k = str(obra or "Sin obra").strip()
-        if k not in obras_dict:
-            obras_dict[k] = {"cliente": cliente or "", "ots": []}
-        obras_dict[k]["ots"].append({"id": ot_id, "tipo": tipo})
+        dest = mant_dict if es_mant else obras_dict
+        if k not in dest:
+            dest[k] = {"cliente": cliente or "", "ots": []}
+        dest[k]["ots"].append({"id": ot_id, "tipo": tipo})
 
     # ── Acumular datos por obra ───────────────────────────────────────────────
     obras_data = []   # lista de dicts por obra
@@ -844,6 +846,56 @@ def economico_dashboard_ejecutivo():
     n_obras = len(obras_data)
     if n_obras == 0:
         return "<p>Sin datos de obras.</p><a href='/modulo/economico'>← Volver</a>"
+
+    # ── Mantenimiento / Overhead ──────────────────────────────────────────────
+    mant_data = []
+    for obra_key in sorted(mant_dict.keys()):
+        info = mant_dict[obra_key]
+        cfg  = _get_config_obra(db, obra_key)
+        ots_d = []
+        for oi in info["ots"]:
+            d = _calc_economico(db, oi["id"], cfg)
+            d["ot_id"] = oi["id"]
+            ots_d.append(d)
+        agg = _aggregate_obra(ots_d)
+        mant_data.append({
+            "obra": obra_key, "cliente": info["cliente"],
+            "n_ots": len(ots_d), "hh": agg["hh"],
+            "p_tc": agg["p_tc"], "r_tot": agg["r_tot"], "agg": agg,
+        })
+
+    total_mant_prev = sum(d["p_tc"]  for d in mant_data)
+    total_mant_real = sum(d["r_tot"] for d in mant_data)
+    total_prod_real = sum(o["r_tot"] for o in obras_data)
+    pct_overhead    = (total_mant_real / total_prod_real * 100.0) if total_prod_real > 0 else 0.0
+
+    # Chart mensual de mantenimiento — HH × precio por mes
+    from db_utils import DB_ENGINE as _DB_ENGINE3
+    from collections import defaultdict as _dd3
+    import json as _json3
+    _mysql3 = (_DB_ENGINE3 == "mysql")
+    fmt_mes3 = "DATE_FORMAT(fecha, '%Y-%m')" if _mysql3 else "strftime('%Y-%m', fecha)"
+    mant_ot_ids = [oi["id"] for info in mant_dict.values() for oi in info["ots"]]
+    mant_mes_costs = _dd3(float)
+    if mant_ot_ids:
+        _ph = ",".join("?" * len(mant_ot_ids))
+        _mant_hh = db.execute(
+            f"""SELECT ot_id, {fmt_mes3} AS mes, SUM(horas) AS hh
+                FROM partes_trabajo
+                WHERE ot_id IN ({_ph}) AND fecha IS NOT NULL AND fecha != ''
+                GROUP BY ot_id, mes ORDER BY mes""",
+            mant_ot_ids
+        ).fetchall()
+        _mant_cfg_cache = {}
+        for _ot_id, _mes, _hh in _mant_hh:
+            if _ot_id not in _mant_cfg_cache:
+                _r = db.execute("SELECT obra FROM ordenes_trabajo WHERE id=?", (_ot_id,)).fetchone()
+                _mant_cfg_cache[_ot_id] = _get_config_obra(db, (_r[0] or "") if _r else "")
+            _cfg3 = _mant_cfg_cache[_ot_id]
+            mant_mes_costs[_mes] += float(_hh or 0) * (_cfg3["precio_hora_mo"] + _cfg3["precio_hora_cons"])
+    _mant_meses    = sorted(mant_mes_costs.keys())
+    mant_mes_js    = _json3.dumps(_mant_meses)
+    mant_costs_js  = _json3.dumps([round(mant_mes_costs[m], 0) for m in _mant_meses])
 
     # ── KPIs globales ─────────────────────────────────────────────────────────
     n_riesgo    = sum(1 for o in obras_data if o["sem_lbl"] in ("Crítico","Atención"))
@@ -970,6 +1022,73 @@ def economico_dashboard_ejecutivo():
         "rgba(16,185,129,0.75)" if o["pv"] >= o["r_tot"] else "rgba(239,68,68,0.75)"
         for o in obras_data
     ])
+
+    # ── Panel Mantenimiento HTML ──────────────────────────────────────────────
+    if mant_data:
+        desv_oh = total_mant_real - total_mant_prev
+        desv_oh_c = "#991b1b" if desv_oh > 0 else "#166534"
+        desv_oh_ic = "▲" if desv_oh > 0 else "▼"
+        pct_oh_c = "#92400e" if pct_overhead > 15 else ("#991b1b" if pct_overhead > 25 else "#166534")
+        mant_filas = ""
+        for d in mant_data:
+            desv_d = d["r_tot"] - d["p_tc"]
+            c_d = "#991b1b" if desv_d > 0 else "#166534"
+            ic_d = "▲" if desv_d > 0 else "▼"
+            mant_filas += f"""<tr>
+              <td style="font-weight:600;"><a href="/modulo/economico/obra/{_E(d['obra'])}" style="color:#6366f1;text-decoration:none;">{_E(d['obra'])}</a></td>
+              <td style="text-align:right;color:#6b7280;">{_m(d['p_tc'])}</td>
+              <td style="text-align:right;">{_m(d['r_tot'])}</td>
+              <td style="text-align:right;font-weight:700;color:{c_d};">{ic_d} {_m(abs(desv_d))}</td>
+              <td style="text-align:right;font-size:.78rem;color:#6b7280;">{d['hh']:,.1f} HH</td>
+            </tr>"""
+        mant_panel_html = f"""
+    <!-- Costos de Estructura / Mantenimiento -->
+    <div class="card" style="border-top:3px solid #f59e0b;">
+      <div class="ct" style="background:#fefce8;color:#92400e;">🏭 Costos de Estructura &amp; Mantenimiento
+        <span style="font-size:.72rem;font-weight:400;color:#a16207;margin-left:8px;">Overhead — sin ingreso directo</span>
+      </div>
+      <div class="cb">
+        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;border-left:4px solid #f59e0b;">
+            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Presupuesto</div>
+            <div style="font-size:1.1rem;font-weight:800;color:#92400e;">{_m(total_mant_prev)}</div>
+          </div>
+          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;border-left:4px solid #1e293b;">
+            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Costo Real</div>
+            <div style="font-size:1.1rem;font-weight:800;color:#1e293b;">{_m(total_mant_real)}</div>
+          </div>
+          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;border-left:4px solid {desv_oh_c};">
+            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Desvío</div>
+            <div style="font-size:1.1rem;font-weight:800;color:{desv_oh_c};">{desv_oh_ic} {_m(abs(desv_oh))}</div>
+          </div>
+          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:150px;border-left:4px solid {pct_oh_c};">
+            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">% sobre costo obras productivas</div>
+            <div style="font-size:1.1rem;font-weight:800;color:{pct_oh_c};">{pct_overhead:.1f}%</div>
+            <div style="font-size:.7rem;color:#9ca3af;">de {_m(total_prod_real)} en obras</div>
+          </div>
+        </div>
+        <div class="two" style="margin-bottom:0;">
+          <div>
+            <table style="font-size:.83rem;">
+              <thead><tr>
+                <th>Obra</th>
+                <th style="text-align:right;">Presupuesto</th>
+                <th style="text-align:right;">Real</th>
+                <th style="text-align:right;">Desvío</th>
+                <th style="text-align:right;">HH</th>
+              </tr></thead>
+              <tbody>{mant_filas}</tbody>
+            </table>
+          </div>
+          <div style="position:relative;min-height:180px;">
+            <div style="font-size:.78rem;font-weight:700;color:#374151;margin-bottom:6px;">Evolución mensual del costo (HH)</div>
+            <div style="position:relative;height:160px;"><canvas id="chartMant"></canvas></div>
+          </div>
+        </div>
+      </div>
+    </div>"""
+    else:
+        mant_panel_html = ""
 
     # KPI cards top
     def _kpi(titulo, valor, color="#6366f1", sub=""):
@@ -1111,6 +1230,8 @@ def economico_dashboard_ejecutivo():
       </div>
     </div>
 
+    {mant_panel_html}
+
   </div>
 
   <script>
@@ -1195,6 +1316,37 @@ def economico_dashboard_ejecutivo():
         }}
       }}
     }});
+
+    // Chart 3: Mantenimiento — evolución mensual
+    const ctxMant = document.getElementById('chartMant');
+    if (ctxMant) {{
+      new Chart(ctxMant.getContext('2d'), {{
+        type: 'bar',
+        data: {{
+          labels: {mant_mes_js},
+          datasets: [{{
+            label: 'Costo mensual estructura ($)',
+            data: {mant_costs_js},
+            backgroundColor: 'rgba(245,158,11,0.7)',
+            borderColor: 'rgba(245,158,11,1)',
+            borderWidth: 1, borderRadius: 4,
+          }}]
+        }},
+        options: {{
+          responsive: true, maintainAspectRatio: false,
+          plugins: {{
+            legend: {{ display: false }},
+            tooltip: {{ callbacks: {{ label: c => ` ${{(c.parsed.y/1000).toFixed(0)}}k` }} }}
+          }},
+          scales: {{
+            y: {{ beginAtZero: true,
+                  ticks: {{ callback: v => '$' + (v/1000).toFixed(0) + 'k', font: {{ size: 9 }} }},
+                  grid: {{ color: '#f1f5f9' }} }},
+            x: {{ ticks: {{ font: {{ size: 9 }}, maxRotation: 45 }} }}
+          }}
+        }}
+      }});
+    }}
   }})();
   </script>
 </body>
