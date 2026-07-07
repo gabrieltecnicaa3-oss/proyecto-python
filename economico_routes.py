@@ -813,7 +813,7 @@ def economico_dashboard_ejecutivo():
         obras_data.append({
             "obra": obra_key, "cliente": info["cliente"],
             "n_ots": len(ots_d), "kg": agg["kg"], "hh": agg["hh"],
-            "pv": agg["p_pv"], "r_tot": agg["r_tot"], "r_cd": agg["r_cd"],
+            "pv": agg["p_pv"], "p_tc": agg["p_tc"], "r_tot": agg["r_tot"], "r_cd": agg["r_cd"],
             "mg": mg, "mg_proy": mg_proy, "af": af, "ae": ae,
             "sem_em": sem_em, "sem_bg": sem_bg, "sem_tc": sem_tc,
             "sem_lbl": sem_lbl, "sem_det": sem_det,
@@ -900,6 +900,7 @@ def economico_dashboard_ejecutivo():
           <td>{af_bar}</td>
           <td>{ae_bar}</td>
           <td style="text-align:right;font-weight:700;color:{mc};">{o['mg_proy']:.1f}%</td>
+          <td style="text-align:right;color:#6b7280;">{_m(o['p_tc'])}</td>
           <td style="text-align:right;color:#6b7280;">{_m(o['r_tot'])}</td>
           <td style="text-align:center;font-size:1.3rem;">{o['sem_em']}</td>
         </tr>"""
@@ -1127,9 +1128,10 @@ def economico_dashboard_ejecutivo():
           <table>
             <thead><tr>
               <th>Obra</th><th>Cliente</th>
-              <th style="min-width:110px;">Av. Físico</th>
-              <th style="min-width:110px;">Av. Económico</th>
+              <th style="min-width:110px;">Av. Físico <span title="Estado de Avance ingresado manualmente en la OT (0–100%)" style="cursor:help;opacity:.7;font-weight:400;">ⓘ</span></th>
+              <th style="min-width:110px;">Av. Económico <span title="Costo Total Real / Costo Total Presupuestado × 100. Superar 100% indica sobrecosto." style="cursor:help;opacity:.7;font-weight:400;">ⓘ</span></th>
               <th style="text-align:right;">Margen Proy.</th>
+              <th style="text-align:right;">Costo Previsto</th>
               <th style="text-align:right;">Costo Real</th>
               <th style="text-align:center;">Estado</th>
             </tr></thead>
