@@ -63,6 +63,14 @@ def _ensure_schema(db):
         db.execute("ALTER TABLE economico_costos_reales ADD COLUMN ingenieria_real REAL DEFAULT 0")
     except Exception:
         pass
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS economico_gastos_fijos (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        mes       VARCHAR(7)   NOT NULL,
+        concepto  VARCHAR(255) NOT NULL,
+        monto     REAL         DEFAULT 0,
+        updated_at DATETIME   DEFAULT CURRENT_TIMESTAMP
+    )""")
     db.commit()
 
 
@@ -405,6 +413,7 @@ def economico_dashboard():
     <div style="font-size:.76rem;opacity:.8;margin-top:2px;">Agrupado por obra · KPIs · Costos previstos vs reales</div></div>
   <div style="display:flex;gap:7px;flex-wrap:wrap;">
     <a href="/modulo/economico/dashboard-ejecutivo" style="background:#fff;color:#6366f1;font-weight:700;">📊 Dashboard Ejecutivo</a>
+    <a href="/modulo/economico/gastos-fijos" style="background:#fef3c7;color:#92400e;font-weight:700;">🏭 Gastos Fijos</a>
     <a href="/modulo/economico/config">⚙️ Config global</a>
     <a href="/">← Inicio</a>
   </div>
@@ -763,6 +772,180 @@ def economico_ot(ot_id):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# RUTA: GASTOS FIJOS DE ESTRUCTURA
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CONCEPTOS_SUGERIDOS = [
+    "Alquiler", "Electricidad", "Gas", "Agua", "Internet",
+    "Limpieza", "Viandas", "Seguro", "Telefonía", "Mantenimiento edilicio", "Otros",
+]
+
+@economico_bp.route("/modulo/economico/gastos-fijos", methods=["GET", "POST"])
+def economico_gastos_fijos_page():
+    db = get_db(); _ensure_schema(db)
+    from datetime import date as _date
+    mensaje = error = ""
+    anio_sel = request.args.get("anio") or str(_date.today().year)
+
+    if request.method == "POST":
+        accion = (request.form.get("accion") or "").strip()
+        try:
+            if accion == "agregar":
+                mes = (request.form.get("mes") or "").strip()
+                concepto = (request.form.get("concepto") or "").strip()
+                monto = float(request.form.get("monto") or 0)
+                if mes and concepto and monto > 0:
+                    db.execute(
+                        "INSERT INTO economico_gastos_fijos (mes, concepto, monto) VALUES (?,?,?)",
+                        (mes, concepto, monto))
+                    db.commit(); mensaje = "Gasto agregado."
+                else:
+                    error = "Completá mes, concepto y monto."
+            elif accion == "eliminar":
+                gasto_id = int(request.form.get("gasto_id") or 0)
+                if gasto_id:
+                    db.execute("DELETE FROM economico_gastos_fijos WHERE id=?", (gasto_id,))
+                    db.commit(); mensaje = "Gasto eliminado."
+        except Exception as exc:
+            error = str(exc)
+
+    filas = db.execute(
+        "SELECT id, mes, concepto, monto FROM economico_gastos_fijos WHERE mes LIKE ? ORDER BY mes, concepto",
+        (f"{anio_sel}-%",)
+    ).fetchall()
+
+    # Totales por mes
+    from collections import defaultdict as _dd
+    por_mes = _dd(float)
+    for _, mes, _, monto in filas:
+        por_mes[mes] += float(monto or 0)
+
+    # Años disponibles
+    anios_db = db.execute(
+        "SELECT DISTINCT substr(mes,1,4) FROM economico_gastos_fijos ORDER BY 1 DESC"
+    ).fetchall()
+    anios = list({r[0] for r in anios_db} | {str(_date.today().year)})
+    anios.sort(reverse=True)
+
+    filas_html = ""
+    mes_actual = None
+    for gid, mes, concepto, monto in filas:
+        if mes != mes_actual:
+            mes_actual = mes
+            total_mes = por_mes[mes]
+            filas_html += f"""<tr style="background:#f1f5f9;">
+              <td colspan="2" style="font-weight:700;color:#1e293b;">{mes}</td>
+              <td style="text-align:right;font-weight:700;color:#6366f1;">{_m(total_mes)}</td>
+              <td></td>
+            </tr>"""
+        filas_html += f"""<tr>
+          <td style="padding-left:20px;color:#374151;">{_E(concepto)}</td>
+          <td></td>
+          <td style="text-align:right;">{_m(float(monto or 0))}</td>
+          <td style="text-align:center;">
+            <form method="post" style="display:inline;" onsubmit="return confirm('¿Eliminar este gasto?')">
+              <input type="hidden" name="accion" value="eliminar">
+              <input type="hidden" name="gasto_id" value="{gid}">
+              <button type="submit" style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:1rem;">🗑️</button>
+            </form>
+          </td>
+        </tr>"""
+
+    total_anio = sum(por_mes.values())
+    prom_mensual = total_anio / len(por_mes) if por_mes else 0.0
+
+    anio_tabs = "".join(
+        f'<a href="?anio={a}" style="padding:5px 12px;border-radius:5px;text-decoration:none;font-size:.82rem;font-weight:600;'
+        f'{"background:#f59e0b;color:#fff;" if a==anio_sel else "background:#fef3c7;color:#92400e;"}">{a}</a>'
+        for a in anios)
+
+    sugerencias_html = "".join(f'<option value="{c}">' for c in _CONCEPTOS_SUGERIDOS)
+    mes_default = _date.today().strftime("%Y-%m")
+
+    msg = f'<div style="background:#d1fae5;border-left:4px solid #10b981;padding:8px 14px;border-radius:4px;margin-bottom:12px;font-weight:700;">{_E(mensaje)}</div>' if mensaje else ""
+    err_html = f'<div style="background:#fee2e2;border-left:4px solid #ef4444;padding:8px 14px;border-radius:4px;margin-bottom:12px;">{_E(error)}</div>' if error else ""
+
+    return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Gastos Fijos de Estructura</title>
+<style>{_CSS_COMMON}
+  .fg label {{ font-size:.74rem; font-weight:700; color:#374151; display:block; margin-bottom:3px; }}
+  .fg input {{ width:100%; padding:6px 9px; border:1px solid #d1d5db; border-radius:5px; font-size:.88rem; }}
+</style></head><body>
+<div class="hdr" style="background:linear-gradient(135deg,#78350f,#92400e);">
+  <div>
+    <h1>🏭 Gastos Fijos de Estructura</h1>
+    <div style="font-size:.74rem;opacity:.75;margin-top:2px;">Alquiler · Servicios · Limpieza · Viandas · y más</div>
+  </div>
+  <div style="display:flex;gap:7px;flex-wrap:wrap;">
+    <a href="/modulo/economico/dashboard-ejecutivo">📊 Dashboard</a>
+    <a href="/modulo/economico">← Módulo</a>
+  </div>
+</div>
+<div class="body">
+  {msg}{err_html}
+  <!-- Formulario agregar -->
+  <div class="card">
+    <div class="ct">➕ Agregar gasto fijo</div>
+    <div class="cb">
+      <form method="post" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;">
+        <input type="hidden" name="accion" value="agregar">
+        <datalist id="conceptos">{sugerencias_html}</datalist>
+        <div class="fg" style="min-width:120px;">
+          <label>Mes</label>
+          <input type="month" name="mes" value="{mes_default}" required>
+        </div>
+        <div class="fg" style="min-width:200px;flex:1;">
+          <label>Concepto</label>
+          <input type="text" name="concepto" list="conceptos" placeholder="Alquiler, Luz, Gas…" required>
+        </div>
+        <div class="fg" style="min-width:140px;">
+          <label>Monto ($)</label>
+          <input type="number" name="monto" step="0.01" min="0.01" placeholder="0.00" required>
+        </div>
+        <button type="submit" class="btn" style="background:#f59e0b;color:#fff;">💾 Agregar</button>
+      </form>
+    </div>
+  </div>
+  <!-- KPI año -->
+  <div style="display:flex;flex-wrap:wrap;gap:12px;">
+    <div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);padding:16px 20px;flex:1;min-width:140px;border-left:4px solid #f59e0b;">
+      <div style="font-size:.7rem;color:#6b7280;font-weight:700;text-transform:uppercase;">Total {anio_sel}</div>
+      <div style="font-size:1.4rem;font-weight:900;color:#92400e;">{_m(total_anio)}</div>
+    </div>
+    <div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);padding:16px 20px;flex:1;min-width:140px;border-left:4px solid #6366f1;">
+      <div style="font-size:.7rem;color:#6b7280;font-weight:700;text-transform:uppercase;">Promedio mensual</div>
+      <div style="font-size:1.4rem;font-weight:900;color:#6366f1;">{_m(prom_mensual)}</div>
+    </div>
+    <div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);padding:16px 20px;flex:1;min-width:140px;border-left:4px solid #6b7280;">
+      <div style="font-size:.7rem;color:#6b7280;font-weight:700;text-transform:uppercase;">Meses cargados</div>
+      <div style="font-size:1.4rem;font-weight:900;color:#1e293b;">{len(por_mes)}</div>
+    </div>
+  </div>
+  <!-- Filtro año -->
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+    <span style="font-size:.8rem;font-weight:700;color:#374151;">Año:</span>
+    {anio_tabs}
+  </div>
+  <!-- Tabla -->
+  <div class="card">
+    <div class="ct">📋 Gastos registrados — {anio_sel}</div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr>
+          <th>Concepto</th><th></th>
+          <th style="text-align:right;">Monto</th>
+          <th style="text-align:center;width:50px;"></th>
+        </tr></thead>
+        <tbody>
+          {filas_html if filas_html else '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:24px;">Sin gastos registrados para este año.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div></body></html>"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # RUTA: DASHBOARD EJECUTIVO DE RENTABILIDAD
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -868,15 +1051,13 @@ def economico_dashboard_ejecutivo():
     total_mant_real = sum(d["r_tot"] for d in mant_data)
     total_prod_real = sum(o["r_tot"] for o in obras_data)
     pct_overhead    = (total_mant_real / total_prod_real * 100.0) if total_prod_real > 0 else 0.0
-    # Gastos Generales de los proyectos productivos (deberían cubrir el overhead)
+    # Gastos Generales de los proyectos productivos (deberían cubrir el overhead total)
     total_gg_prev   = sum(o["agg"]["p_gg"] for o in obras_data)
     total_gg_real   = sum(o["agg"]["r_gg"] for o in obras_data)
-    saldo_prev      = total_gg_prev - total_mant_prev   # positivo → GG cubre el mantenimiento
-    saldo_real      = total_gg_real - total_mant_real
-    pct_cob_prev    = min((total_gg_prev / total_mant_prev * 100.0) if total_mant_prev > 0 else 100.0, 200.0)
-    pct_cob_real    = min((total_gg_real / total_mant_real * 100.0) if total_mant_real > 0 else 100.0, 200.0)
+    # Nota: saldo_real se recalcula después de obtener total_gf_real
+    # Por ahora inicializar; se actualizará con total_estructura_real en el panel HTML
 
-    # Chart mensual de mantenimiento — HH × precio por mes
+    # Chart mensual de mantenimiento — HH × precio por mes + gastos fijos
     from db_utils import DB_ENGINE as _DB_ENGINE3
     from collections import defaultdict as _dd3
     import json as _json3
@@ -900,9 +1081,24 @@ def economico_dashboard_ejecutivo():
                 _mant_cfg_cache[_ot_id] = _get_config_obra(db, (_r[0] or "") if _r else "")
             _cfg3 = _mant_cfg_cache[_ot_id]
             mant_mes_costs[_mes] += float(_hh or 0) * (_cfg3["precio_hora_mo"] + _cfg3["precio_hora_cons"])
-    _mant_meses    = sorted(mant_mes_costs.keys())
-    mant_mes_js    = _json3.dumps(_mant_meses)
-    mant_costs_js  = _json3.dumps([round(mant_mes_costs[m], 0) for m in _mant_meses])
+
+    # Gastos fijos por mes
+    gf_rows = db.execute(
+        "SELECT mes, SUM(monto) FROM economico_gastos_fijos GROUP BY mes ORDER BY mes"
+    ).fetchall()
+    gf_mes_costs = {str(r[0]): float(r[1] or 0) for r in gf_rows}
+    total_gf_real = sum(gf_mes_costs.values())
+
+    # Ahora calculamos saldo real con total de estructura (mantenimiento + gastos fijos)
+    _total_estructura = total_mant_real + total_gf_real
+    saldo_real  = total_gg_real - _total_estructura
+    pct_cob_real = min((total_gg_real / _total_estructura * 100.0) if _total_estructura > 0 else 100.0, 200.0)
+
+    # Series para el chart — unión de todos los meses con datos
+    _all_meses = sorted(set(mant_mes_costs.keys()) | set(gf_mes_costs.keys()))
+    mant_mes_js   = _json3.dumps(_all_meses)
+    mant_costs_js = _json3.dumps([round(mant_mes_costs.get(m, 0), 0) for m in _all_meses])
+    gf_costs_js   = _json3.dumps([round(gf_mes_costs.get(m, 0), 0) for m in _all_meses])
 
     # ── KPIs globales ─────────────────────────────────────────────────────────
     n_riesgo    = sum(1 for o in obras_data if o["sem_lbl"] in ("Crítico","Atención"))
@@ -1031,118 +1227,87 @@ def economico_dashboard_ejecutivo():
     ])
 
     # ── Panel Mantenimiento HTML ──────────────────────────────────────────────
-    if mant_data:
-        desv_oh = total_mant_real - total_mant_prev
-        desv_oh_c = "#991b1b" if desv_oh > 0 else "#166534"
-        desv_oh_ic = "▲" if desv_oh > 0 else "▼"
-        pct_oh_c = "#92400e" if pct_overhead > 15 else ("#991b1b" if pct_overhead > 25 else "#166534")
-        # Cobertura GG
-        saldo_prev_c  = "#166534" if saldo_prev >= 0 else "#991b1b"
+    total_estructura_real = total_mant_real + total_gf_real
+    pct_oh_c = "#991b1b" if pct_overhead > 25 else ("#92400e" if pct_overhead > 15 else "#166534")
+    if mant_data or total_gf_real > 0:
+        # Cobertura GG (solo real — sin presupuesto de estructura)
         saldo_real_c  = "#166534" if saldo_real >= 0 else "#991b1b"
-        saldo_prev_ic = "▲" if saldo_prev >= 0 else "▼"
         saldo_real_ic = "▲" if saldo_real >= 0 else "▼"
-        bar_prev_w  = min(pct_cob_prev, 100)
-        bar_real_w  = min(pct_cob_real, 100)
-        bar_prev_c  = "#16a34a" if pct_cob_prev >= 100 else ("#f59e0b" if pct_cob_prev >= 70 else "#dc2626")
-        bar_real_c  = "#16a34a" if pct_cob_real  >= 100 else ("#f59e0b" if pct_cob_real  >= 70 else "#dc2626")
+        bar_real_w    = min(pct_cob_real, 100)
+        bar_real_c    = "#16a34a" if pct_cob_real >= 100 else ("#f59e0b" if pct_cob_real >= 70 else "#dc2626")
         mant_filas = ""
         for d in mant_data:
-            desv_d = d["r_tot"] - d["p_tc"]
-            c_d = "#991b1b" if desv_d > 0 else "#166534"
-            ic_d = "▲" if desv_d > 0 else "▼"
             mant_filas += f"""<tr>
               <td style="font-weight:600;"><a href="/modulo/economico/obra/{_E(d['obra'])}" style="color:#6366f1;text-decoration:none;">{_E(d['obra'])}</a></td>
-              <td style="text-align:right;color:#6b7280;">{_m(d['p_tc'])}</td>
               <td style="text-align:right;">{_m(d['r_tot'])}</td>
-              <td style="text-align:right;font-weight:700;color:{c_d};">{ic_d} {_m(abs(desv_d))}</td>
               <td style="text-align:right;font-size:.78rem;color:#6b7280;">{d['hh']:,.1f} HH</td>
             </tr>"""
+        gf_link = '<a href="/modulo/economico/gastos-fijos" style="font-size:.76rem;background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:5px;text-decoration:none;font-weight:700;margin-left:10px;">+ Cargar gastos fijos</a>'
+        pct_total_overhead = (total_estructura_real / total_prod_real * 100.0) if total_prod_real > 0 else 0.0
+        pct_total_c = "#991b1b" if pct_total_overhead > 25 else ("#92400e" if pct_total_overhead > 15 else "#166534")
         mant_panel_html = f"""
     <!-- Costos de Estructura / Mantenimiento -->
     <div class="card" style="border-top:3px solid #f59e0b;">
-      <div class="ct" style="background:#fefce8;color:#92400e;">🏭 Costos de Estructura &amp; Mantenimiento
-        <span style="font-size:.72rem;font-weight:400;color:#a16207;margin-left:8px;">Overhead — sin ingreso directo</span>
+      <div class="ct" style="background:#fefce8;color:#92400e;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+        <span>🏭 Costos de Estructura &amp; Mantenimiento
+          <span style="font-size:.72rem;font-weight:400;color:#a16207;margin-left:8px;">Overhead — sin ingreso directo</span>
+        </span>
+        {gf_link}
       </div>
       <div class="cb">
+        <!-- KPIs -->
         <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
           <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;border-left:4px solid #f59e0b;">
-            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Presupuesto</div>
-            <div style="font-size:1.1rem;font-weight:800;color:#92400e;">{_m(total_mant_prev)}</div>
+            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Obras mantenimiento</div>
+            <div style="font-size:1.1rem;font-weight:800;color:#92400e;">{_m(total_mant_real)}</div>
+            <div style="font-size:.7rem;color:#9ca3af;">{sum(d['hh'] for d in mant_data):,.0f} HH</div>
           </div>
-          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;border-left:4px solid #1e293b;">
-            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Costo Real</div>
-            <div style="font-size:1.1rem;font-weight:800;color:#1e293b;">{_m(total_mant_real)}</div>
+          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;border-left:4px solid #dc2626;">
+            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Gastos fijos</div>
+            <div style="font-size:1.1rem;font-weight:800;color:#dc2626;">{_m(total_gf_real)}</div>
+            <div style="font-size:.7rem;color:#9ca3af;">alquiler · servicios · etc.</div>
           </div>
-          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;border-left:4px solid {desv_oh_c};">
-            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Desvío</div>
-            <div style="font-size:1.1rem;font-weight:800;color:{desv_oh_c};">{desv_oh_ic} {_m(abs(desv_oh))}</div>
+          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:140px;border-left:4px solid #1e293b;">
+            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Total estructura</div>
+            <div style="font-size:1.1rem;font-weight:800;color:#1e293b;">{_m(total_estructura_real)}</div>
           </div>
-          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:150px;border-left:4px solid {pct_oh_c};">
-            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">% sobre costo obras productivas</div>
-            <div style="font-size:1.1rem;font-weight:800;color:{pct_oh_c};">{pct_overhead:.1f}%</div>
-            <div style="font-size:.7rem;color:#9ca3af;">de {_m(total_prod_real)} en obras</div>
+          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:150px;border-left:4px solid {pct_total_c};">
+            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">% sobre obras productivas</div>
+            <div style="font-size:1.1rem;font-weight:800;color:{pct_total_c};">{pct_total_overhead:.1f}%</div>
+            <div style="font-size:.7rem;color:#9ca3af;">de {_m(total_prod_real)}</div>
           </div>
         </div>
-        <!-- Cobertura por Gastos Generales -->
+        <!-- Cobertura por Gastos Generales (solo real) -->
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px 16px;margin-bottom:16px;">
           <div style="font-weight:700;color:#14532d;font-size:.82rem;margin-bottom:10px;">
             📊 Cobertura del overhead con Gastos Generales de proyectos
             <span style="font-weight:400;color:#6b7280;font-size:.74rem;margin-left:6px;">
-              Los GG presupuestados en cada proyecto están pensados para solventar estos costos
+              GG reales cobrados en proyectos vs total real de estructura
             </span>
           </div>
-          <div style="display:flex;flex-wrap:wrap;gap:16px;">
-            <!-- Previsto -->
-            <div style="flex:1;min-width:200px;">
-              <div style="font-size:.72rem;color:#6b7280;font-weight:700;margin-bottom:6px;">PRESUPUESTADO</div>
-              <div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:3px;">
-                <span>GG proyectos</span><span style="font-weight:700;color:#6366f1;">{_m(total_gg_prev)}</span>
-              </div>
-              <div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:6px;">
-                <span>Costo estructura</span><span style="font-weight:700;">{_m(total_mant_prev)}</span>
-              </div>
-              <div style="background:#e5e7eb;border-radius:4px;height:10px;margin-bottom:4px;">
-                <div style="background:{bar_prev_c};border-radius:4px;height:10px;width:{bar_prev_w:.1f}%;"></div>
-              </div>
-              <div style="font-size:.75rem;font-weight:700;color:{saldo_prev_c};">
-                {saldo_prev_ic} Saldo: {_m(abs(saldo_prev))} &nbsp;
-                <span style="font-weight:400;color:#6b7280;">({pct_cob_prev:.0f}% cubierto)</span>
-              </div>
-            </div>
-            <!-- Real -->
-            <div style="flex:1;min-width:200px;">
-              <div style="font-size:.72rem;color:#6b7280;font-weight:700;margin-bottom:6px;">REAL</div>
-              <div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:3px;">
-                <span>GG proyectos</span><span style="font-weight:700;color:#6366f1;">{_m(total_gg_real)}</span>
-              </div>
-              <div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:6px;">
-                <span>Costo estructura</span><span style="font-weight:700;">{_m(total_mant_real)}</span>
-              </div>
-              <div style="background:#e5e7eb;border-radius:4px;height:10px;margin-bottom:4px;">
-                <div style="background:{bar_real_c};border-radius:4px;height:10px;width:{bar_real_w:.1f}%;"></div>
-              </div>
-              <div style="font-size:.75rem;font-weight:700;color:{saldo_real_c};">
-                {saldo_real_ic} Saldo: {_m(abs(saldo_real))} &nbsp;
-                <span style="font-weight:400;color:#6b7280;">({pct_cob_real:.0f}% cubierto)</span>
-              </div>
-            </div>
+          <div style="display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:4px;">
+            <span>GG reales cobrados en proyectos</span>
+            <span style="font-weight:700;color:#6366f1;">{_m(total_gg_real)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:8px;">
+            <span>Total costo de estructura</span>
+            <span style="font-weight:700;">{_m(total_estructura_real)}</span>
+          </div>
+          <div style="background:#e5e7eb;border-radius:4px;height:12px;margin-bottom:6px;">
+            <div style="background:{bar_real_c};border-radius:4px;height:12px;width:{bar_real_w:.1f}%;"></div>
+          </div>
+          <div style="font-size:.82rem;font-weight:700;color:{saldo_real_c};">
+            {saldo_real_ic} Saldo: {_m(abs(saldo_real))} &nbsp;
+            <span style="font-weight:400;color:#6b7280;">({pct_cob_real:.0f}% del overhead cubierto por GG)</span>
           </div>
         </div>
+        <!-- Tabla OTs + Gráfico -->
         <div class="two" style="margin-bottom:0;">
           <div>
-            <table style="font-size:.83rem;">
-              <thead><tr>
-                <th>Obra</th>
-                <th style="text-align:right;">Presupuesto</th>
-                <th style="text-align:right;">Real</th>
-                <th style="text-align:right;">Desvío</th>
-                <th style="text-align:right;">HH</th>
-              </tr></thead>
-              <tbody>{mant_filas}</tbody>
-            </table>
+            {"<table style='font-size:.83rem;'><thead><tr><th>Obra mantenimiento</th><th style='text-align:right;'>Costo Real</th><th style='text-align:right;'>HH</th></tr></thead><tbody>" + mant_filas + "</tbody></table>" if mant_filas else ""}
           </div>
           <div style="position:relative;min-height:180px;">
-            <div style="font-size:.78rem;font-weight:700;color:#374151;margin-bottom:6px;">Evolución mensual del costo (HH)</div>
+            <div style="font-size:.78rem;font-weight:700;color:#374151;margin-bottom:6px;">Evolución mensual — estructura total</div>
             <div style="position:relative;height:160px;"><canvas id="chartMant"></canvas></div>
           </div>
         </div>
@@ -1378,32 +1543,43 @@ def economico_dashboard_ejecutivo():
       }}
     }});
 
-    // Chart 3: Mantenimiento — evolución mensual
+    // Chart 3: Mantenimiento — evolución mensual (apilado: HH + gastos fijos)
     const ctxMant = document.getElementById('chartMant');
     if (ctxMant) {{
       new Chart(ctxMant.getContext('2d'), {{
         type: 'bar',
         data: {{
           labels: {mant_mes_js},
-          datasets: [{{
-            label: 'Costo mensual estructura ($)',
-            data: {mant_costs_js},
-            backgroundColor: 'rgba(245,158,11,0.7)',
-            borderColor: 'rgba(245,158,11,1)',
-            borderWidth: 1, borderRadius: 4,
-          }}]
+          datasets: [
+            {{
+              label: 'Obras mant. (HH)',
+              data: {mant_costs_js},
+              backgroundColor: 'rgba(245,158,11,0.75)',
+              borderColor: 'rgba(245,158,11,1)',
+              borderWidth: 1, borderRadius: 2,
+              stack: 'estructura',
+            }},
+            {{
+              label: 'Gastos fijos',
+              data: {gf_costs_js},
+              backgroundColor: 'rgba(239,68,68,0.7)',
+              borderColor: 'rgba(239,68,68,1)',
+              borderWidth: 1, borderRadius: 2,
+              stack: 'estructura',
+            }}
+          ]
         }},
         options: {{
           responsive: true, maintainAspectRatio: false,
           plugins: {{
-            legend: {{ display: false }},
-            tooltip: {{ callbacks: {{ label: c => ` ${{(c.parsed.y/1000).toFixed(0)}}k` }} }}
+            legend: {{ position: 'top', labels: {{ font: {{ size: 9 }}, boxWidth: 10 }} }},
+            tooltip: {{ callbacks: {{ label: c => ` ${{c.dataset.label}}: ${{(c.parsed.y/1000).toFixed(0)}}k` }} }}
           }},
           scales: {{
-            y: {{ beginAtZero: true,
+            y: {{ beginAtZero: true, stacked: true,
                   ticks: {{ callback: v => '$' + (v/1000).toFixed(0) + 'k', font: {{ size: 9 }} }},
                   grid: {{ color: '#f1f5f9' }} }},
-            x: {{ ticks: {{ font: {{ size: 9 }}, maxRotation: 45 }} }}
+            x: {{ stacked: true, ticks: {{ font: {{ size: 9 }}, maxRotation: 45 }} }}
           }}
         }}
       }});
