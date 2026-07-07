@@ -776,6 +776,10 @@ def economico_ot(ot_id):
 # ─────────────────────────────────────────────────────────────────────────────
 
 _CONCEPTOS_SUGERIDOS = [
+    # Sueldos
+    "Sueldo Coordinador", "Sueldo Jefe de Taller", "Sueldo Jefe de Calidad",
+    "Sueldo Oficina Técnica",
+    # Servicios
     "Alquiler", "Electricidad", "Gas", "Agua", "Internet",
     "Limpieza", "Viandas", "Seguro", "Telefonía", "Mantenimiento edilicio", "Otros",
 ]
