@@ -868,6 +868,13 @@ def economico_dashboard_ejecutivo():
     total_mant_real = sum(d["r_tot"] for d in mant_data)
     total_prod_real = sum(o["r_tot"] for o in obras_data)
     pct_overhead    = (total_mant_real / total_prod_real * 100.0) if total_prod_real > 0 else 0.0
+    # Gastos Generales de los proyectos productivos (deberían cubrir el overhead)
+    total_gg_prev   = sum(o["agg"]["p_gg"] for o in obras_data)
+    total_gg_real   = sum(o["agg"]["r_gg"] for o in obras_data)
+    saldo_prev      = total_gg_prev - total_mant_prev   # positivo → GG cubre el mantenimiento
+    saldo_real      = total_gg_real - total_mant_real
+    pct_cob_prev    = min((total_gg_prev / total_mant_prev * 100.0) if total_mant_prev > 0 else 100.0, 200.0)
+    pct_cob_real    = min((total_gg_real / total_mant_real * 100.0) if total_mant_real > 0 else 100.0, 200.0)
 
     # Chart mensual de mantenimiento — HH × precio por mes
     from db_utils import DB_ENGINE as _DB_ENGINE3
@@ -1029,6 +1036,15 @@ def economico_dashboard_ejecutivo():
         desv_oh_c = "#991b1b" if desv_oh > 0 else "#166534"
         desv_oh_ic = "▲" if desv_oh > 0 else "▼"
         pct_oh_c = "#92400e" if pct_overhead > 15 else ("#991b1b" if pct_overhead > 25 else "#166534")
+        # Cobertura GG
+        saldo_prev_c  = "#166534" if saldo_prev >= 0 else "#991b1b"
+        saldo_real_c  = "#166534" if saldo_real >= 0 else "#991b1b"
+        saldo_prev_ic = "▲" if saldo_prev >= 0 else "▼"
+        saldo_real_ic = "▲" if saldo_real >= 0 else "▼"
+        bar_prev_w  = min(pct_cob_prev, 100)
+        bar_real_w  = min(pct_cob_real, 100)
+        bar_prev_c  = "#16a34a" if pct_cob_prev >= 100 else ("#f59e0b" if pct_cob_prev >= 70 else "#dc2626")
+        bar_real_c  = "#16a34a" if pct_cob_real  >= 100 else ("#f59e0b" if pct_cob_real  >= 70 else "#dc2626")
         mant_filas = ""
         for d in mant_data:
             desv_d = d["r_tot"] - d["p_tc"]
@@ -1065,6 +1081,51 @@ def economico_dashboard_ejecutivo():
             <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">% sobre costo obras productivas</div>
             <div style="font-size:1.1rem;font-weight:800;color:{pct_oh_c};">{pct_overhead:.1f}%</div>
             <div style="font-size:.7rem;color:#9ca3af;">de {_m(total_prod_real)} en obras</div>
+          </div>
+        </div>
+        <!-- Cobertura por Gastos Generales -->
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px 16px;margin-bottom:16px;">
+          <div style="font-weight:700;color:#14532d;font-size:.82rem;margin-bottom:10px;">
+            📊 Cobertura del overhead con Gastos Generales de proyectos
+            <span style="font-weight:400;color:#6b7280;font-size:.74rem;margin-left:6px;">
+              Los GG presupuestados en cada proyecto están pensados para solventar estos costos
+            </span>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:16px;">
+            <!-- Previsto -->
+            <div style="flex:1;min-width:200px;">
+              <div style="font-size:.72rem;color:#6b7280;font-weight:700;margin-bottom:6px;">PRESUPUESTADO</div>
+              <div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:3px;">
+                <span>GG proyectos</span><span style="font-weight:700;color:#6366f1;">{_m(total_gg_prev)}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:6px;">
+                <span>Costo estructura</span><span style="font-weight:700;">{_m(total_mant_prev)}</span>
+              </div>
+              <div style="background:#e5e7eb;border-radius:4px;height:10px;margin-bottom:4px;">
+                <div style="background:{bar_prev_c};border-radius:4px;height:10px;width:{bar_prev_w:.1f}%;"></div>
+              </div>
+              <div style="font-size:.75rem;font-weight:700;color:{saldo_prev_c};">
+                {saldo_prev_ic} Saldo: {_m(abs(saldo_prev))} &nbsp;
+                <span style="font-weight:400;color:#6b7280;">({pct_cob_prev:.0f}% cubierto)</span>
+              </div>
+            </div>
+            <!-- Real -->
+            <div style="flex:1;min-width:200px;">
+              <div style="font-size:.72rem;color:#6b7280;font-weight:700;margin-bottom:6px;">REAL</div>
+              <div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:3px;">
+                <span>GG proyectos</span><span style="font-weight:700;color:#6366f1;">{_m(total_gg_real)}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:6px;">
+                <span>Costo estructura</span><span style="font-weight:700;">{_m(total_mant_real)}</span>
+              </div>
+              <div style="background:#e5e7eb;border-radius:4px;height:10px;margin-bottom:4px;">
+                <div style="background:{bar_real_c};border-radius:4px;height:10px;width:{bar_real_w:.1f}%;"></div>
+              </div>
+              <div style="font-size:.75rem;font-weight:700;color:{saldo_real_c};">
+                {saldo_real_ic} Saldo: {_m(abs(saldo_real))} &nbsp;
+                <span style="font-weight:400;color:#6b7280;">({pct_cob_real:.0f}% cubierto)</span>
+              </div>
+            </div>
           </div>
         </div>
         <div class="two" style="margin-bottom:0;">
