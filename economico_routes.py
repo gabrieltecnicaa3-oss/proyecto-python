@@ -775,17 +775,272 @@ def economico_ot(ot_id):
 # RUTA: GASTOS FIJOS DE ESTRUCTURA
 # ─────────────────────────────────────────────────────────────────────────────
 
-_CONCEPTOS_SUGERIDOS = [
-    # Sueldos
-    "Sueldo Coordinador", "Sueldo Jefe de Taller", "Sueldo Jefe de Calidad",
-    "Sueldo Oficina Técnica",
-    # Servicios
-    "Alquiler", "Electricidad", "Gas", "Agua", "Internet",
-    "Limpieza", "Viandas", "Seguro", "Telefonía", "Mantenimiento edilicio", "Otros",
-]
+_GRUPOS_FIJOS = {
+    "💼 Sueldos": [
+        "Sueldo Coordinador",
+        "Sueldo Jefe de Taller",
+        "Sueldo Jefe de Calidad",
+        "Sueldo Oficina Técnica",
+    ],
+    "🏢 Servicios y Gastos": [
+        "Alquiler",
+        "Electricidad",
+        "Gas",
+        "Agua",
+        "Internet",
+        "Limpieza",
+        "Viandas",
+        "Seguro",
+        "Telefonía",
+        "Mantenimiento edilicio",
+    ],
+}
+_CONCEPTOS_FIJOS = [c for conceptos in _GRUPOS_FIJOS.values() for c in conceptos]
+_CONCEPTOS_SUGERIDOS = _CONCEPTOS_FIJOS + ["Otros"]
+
 
 @economico_bp.route("/modulo/economico/gastos-fijos", methods=["GET", "POST"])
 def economico_gastos_fijos_page():
+    db = get_db(); _ensure_schema(db)
+    from datetime import date as _date
+    mensaje = error = ""
+    hoy = _date.today()
+    mes_sel = request.args.get("mes") or request.form.get("mes_nav") or hoy.strftime("%Y-%m")
+    anio_sel = mes_sel[:4]
+
+    if request.method == "POST":
+        accion = (request.form.get("accion") or "").strip()
+        try:
+            if accion == "guardar_mes":
+                mes = (request.form.get("mes") or "").strip()
+                if mes:
+                    for i, concepto in enumerate(_CONCEPTOS_FIJOS):
+                        monto = float(request.form.get(f"monto_{i}") or 0)
+                        db.execute("DELETE FROM economico_gastos_fijos WHERE mes=? AND concepto=?", (mes, concepto))
+                        if monto > 0:
+                            db.execute("INSERT INTO economico_gastos_fijos (mes, concepto, monto) VALUES (?,?,?)",
+                                       (mes, concepto, monto))
+                    db.commit(); mensaje = f"Gastos fijos de {mes} guardados."
+                    mes_sel = mes
+            elif accion == "agregar_manual":
+                mes = (request.form.get("mes") or "").strip()
+                concepto = (request.form.get("concepto_manual") or "").strip()
+                monto = float(request.form.get("monto_manual") or 0)
+                if mes and concepto and monto > 0:
+                    db.execute("INSERT INTO economico_gastos_fijos (mes, concepto, monto) VALUES (?,?,?)",
+                               (mes, concepto, monto))
+                    db.commit(); mensaje = "Gasto adicional agregado."
+                    mes_sel = mes
+                else:
+                    error = "Completá concepto y monto."
+            elif accion == "eliminar":
+                gasto_id = int(request.form.get("gasto_id") or 0)
+                if gasto_id:
+                    db.execute("DELETE FROM economico_gastos_fijos WHERE id=?", (gasto_id,))
+                    db.commit(); mensaje = "Gasto eliminado."
+        except Exception as exc:
+            error = str(exc)
+
+    # Cargar valores del mes seleccionado
+    filas_mes = db.execute(
+        "SELECT id, concepto, monto FROM economico_gastos_fijos WHERE mes=? ORDER BY concepto",
+        (mes_sel,)
+    ).fetchall()
+    vals_mes = {r[1]: (r[2], r[0]) for r in filas_mes}  # concepto → (monto, id)
+    manuales_mes = [(r[0], r[1], r[2]) for r in filas_mes if r[1] not in _CONCEPTOS_FIJOS]
+
+    # Totales por mes (todo el año)
+    filas_anio = db.execute(
+        "SELECT mes, SUM(monto) FROM economico_gastos_fijos WHERE mes LIKE ? GROUP BY mes ORDER BY mes",
+        (f"{anio_sel}-%",)
+    ).fetchall()
+    por_mes = {r[0]: float(r[1] or 0) for r in filas_anio}
+    total_anio  = sum(por_mes.values())
+    prom_mes    = total_anio / len(por_mes) if por_mes else 0.0
+    total_mes_sel = sum(v for v, _ in vals_mes.values())
+
+    # Años disponibles para navegación
+    anios_db = db.execute("SELECT DISTINCT substr(mes,1,4) FROM economico_gastos_fijos ORDER BY 1 DESC").fetchall()
+    anios = sorted({r[0] for r in anios_db} | {str(hoy.year)}, reverse=True)
+
+    # Generar campos fijos por grupo
+    grupos_html = ""
+    for grupo, conceptos in _GRUPOS_FIJOS.items():
+        campos = ""
+        for concepto in conceptos:
+            idx = _CONCEPTOS_FIJOS.index(concepto)
+            val = vals_mes.get(concepto, (0, None))[0]
+            val_fmt = f"{val:.2f}" if val else ""
+            campos += f"""<div class="fg">
+              <label>{_E(concepto)}</label>
+              <input type="number" name="monto_{idx}" step="0.01" min="0"
+                     value="{val_fmt}" placeholder="0.00" class="monto-input">
+            </div>"""
+        grupos_html += f"""<div class="card" style="flex:1;min-width:220px;">
+          <div class="ct" style="font-size:.82rem;">{grupo}</div>
+          <div class="cb">{campos}</div>
+        </div>"""
+
+    # Tabla historial año
+    hist_html = ""
+    for mes_k in sorted(por_mes.keys()):
+        activo = "background:#fef3c7;" if mes_k == mes_sel else ""
+        hist_html += f"""<tr style="{activo}">
+          <td><a href="?mes={mes_k}" style="font-weight:700;color:#92400e;text-decoration:none;">{mes_k}</a></td>
+          <td style="text-align:right;">{_m(por_mes[mes_k])}</td>
+          <td><a href="?mes={mes_k}" style="font-size:.75rem;padding:2px 8px;background:#fef3c7;color:#92400e;border-radius:4px;text-decoration:none;">Editar</a></td>
+        </tr>"""
+
+    # Manuales del mes
+    manuales_html = ""
+    for gid, concepto, monto in manuales_mes:
+        manuales_html += f"""<tr>
+          <td style="color:#374151;">{_E(concepto)}</td>
+          <td style="text-align:right;">{_m(float(monto or 0))}</td>
+          <td style="text-align:center;">
+            <form method="post" style="display:inline;" onsubmit="return confirm('¿Eliminar?')">
+              <input type="hidden" name="accion" value="eliminar">
+              <input type="hidden" name="gasto_id" value="{gid}">
+              <input type="hidden" name="mes_nav" value="{mes_sel}">
+              <button type="submit" style="background:none;border:none;cursor:pointer;color:#dc2626;">🗑️</button>
+            </form>
+          </td>
+        </tr>"""
+
+    anio_tabs = "".join(
+        f'<a href="?mes={a}-01" style="padding:4px 10px;border-radius:5px;text-decoration:none;font-size:.8rem;font-weight:600;'
+        f'{"background:#f59e0b;color:#fff;" if a==anio_sel else "background:#fef3c7;color:#92400e;"}">{a}</a>'
+        for a in anios)
+
+    msg     = f'<div style="background:#d1fae5;border-left:4px solid #10b981;padding:8px 14px;border-radius:4px;margin-bottom:12px;font-weight:700;">{_E(mensaje)}</div>' if mensaje else ""
+    err_html= f'<div style="background:#fee2e2;border-left:4px solid #ef4444;padding:8px 14px;border-radius:4px;margin-bottom:12px;">{_E(error)}</div>' if error else ""
+
+    return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gastos Fijos — {mes_sel}</title>
+<style>{_CSS_COMMON}
+  .two {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }}
+  @media(max-width:700px){{.two{{grid-template-columns:1fr;}}}}
+  .fg {{ margin-bottom:10px; }}
+  .fg label {{ font-size:.74rem; font-weight:700; color:#374151; display:block; margin-bottom:3px; }}
+  .fg input {{ width:100%; padding:6px 9px; border:1px solid #d1d5db; border-radius:5px; font-size:.88rem; }}
+  .fg input:focus {{ border-color:#f59e0b; outline:none; box-shadow:0 0 0 2px #fef3c7; }}
+</style></head><body>
+<div class="hdr" style="background:linear-gradient(135deg,#78350f,#92400e);">
+  <div>
+    <h1>🏭 Gastos Fijos de Estructura</h1>
+    <div style="font-size:.74rem;opacity:.75;margin-top:2px;">Sueldos · Alquiler · Servicios · y más</div>
+  </div>
+  <div style="display:flex;gap:7px;flex-wrap:wrap;">
+    <a href="/modulo/economico/dashboard-ejecutivo">📊 Dashboard</a>
+    <a href="/modulo/economico">← Módulo</a>
+  </div>
+</div>
+<div class="body">
+  {msg}{err_html}
+
+  <!-- KPIs año -->
+  <div style="display:flex;flex-wrap:wrap;gap:12px;">
+    <div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);padding:14px 18px;flex:1;min-width:120px;border-left:4px solid #f59e0b;">
+      <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Total {anio_sel}</div>
+      <div style="font-size:1.3rem;font-weight:900;color:#92400e;">{_m(total_anio)}</div>
+    </div>
+    <div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);padding:14px 18px;flex:1;min-width:120px;border-left:4px solid #6366f1;">
+      <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Promedio mensual</div>
+      <div style="font-size:1.3rem;font-weight:900;color:#6366f1;">{_m(prom_mes)}</div>
+    </div>
+    <div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);padding:14px 18px;flex:1;min-width:120px;border-left:4px solid #1e293b;">
+      <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Mes actual — {mes_sel}</div>
+      <div style="font-size:1.3rem;font-weight:900;color:#1e293b;">{_m(total_mes_sel)}</div>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">{anio_tabs}</div>
+  </div>
+
+  <!-- Selector de mes + formulario principal -->
+  <form method="post" id="frmMes">
+    <input type="hidden" name="accion" value="guardar_mes">
+    <input type="hidden" name="mes" value="{mes_sel}">
+
+    <!-- Navegación de mes -->
+    <div class="card">
+      <div class="ct" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <span>📅 Cargando mes: <b>{mes_sel}</b></span>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <input type="month" id="irMes" value="{mes_sel}"
+                 style="padding:5px 9px;border:1px solid #d1d5db;border-radius:5px;font-size:.85rem;"
+                 onchange="window.location='?mes='+this.value">
+        </div>
+      </div>
+    </div>
+
+    <!-- Grupos de campos -->
+    <div style="display:flex;flex-wrap:wrap;gap:16px;">
+      {grupos_html}
+    </div>
+
+    <!-- Total y guardar -->
+    <div class="card">
+      <div class="cb" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+        <div>
+          <div style="font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;">Total mes {mes_sel}</div>
+          <div style="font-size:1.4rem;font-weight:900;color:#92400e;" id="totalMes">{_m(total_mes_sel)}</div>
+        </div>
+        <button type="submit" class="btn" style="background:#f59e0b;color:#fff;font-size:.95rem;padding:10px 24px;">
+          💾 Guardar mes {mes_sel}
+        </button>
+      </div>
+    </div>
+  </form>
+
+  <!-- Otros gastos adicionales -->
+  <div class="card">
+    <div class="ct">➕ Otros gastos adicionales — {mes_sel}
+      <span style="font-size:.72rem;font-weight:400;color:#6b7280;margin-left:8px;">Gastos que no están en la lista fija</span>
+    </div>
+    <div class="cb">
+      <form method="post" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:14px;">
+        <input type="hidden" name="accion" value="agregar_manual">
+        <input type="hidden" name="mes" value="{mes_sel}">
+        <div class="fg" style="min-width:200px;flex:1;">
+          <label>Concepto</label>
+          <input type="text" name="concepto_manual" placeholder="Ej: Reparación calderas…" required>
+        </div>
+        <div class="fg" style="min-width:130px;">
+          <label>Monto ($)</label>
+          <input type="number" name="monto_manual" step="0.01" min="0.01" placeholder="0.00" required>
+        </div>
+        <button type="submit" class="btn" style="background:#6366f1;color:#fff;">➕ Agregar</button>
+      </form>
+      {"<table style='font-size:.85rem;'><thead><tr><th>Concepto</th><th style='text-align:right;'>Monto</th><th></th></tr></thead><tbody>" + manuales_html + "</tbody></table>" if manuales_mes else '<p style="color:#9ca3af;font-size:.82rem;">Sin gastos adicionales este mes.</p>'}
+    </div>
+  </div>
+
+  <!-- Historial del año -->
+  <div class="card">
+    <div class="ct">📋 Historial — {anio_sel}</div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>Mes</th><th style="text-align:right;">Total</th><th></th></tr></thead>
+        <tbody>{hist_html if hist_html else '<tr><td colspan="3" style="text-align:center;color:#9ca3af;padding:20px;">Sin datos.</td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+// Recalcular total en tiempo real
+document.querySelectorAll('.monto-input').forEach(inp => {{
+  inp.addEventListener('input', () => {{
+    let tot = 0;
+    document.querySelectorAll('.monto-input').forEach(i => {{ tot += parseFloat(i.value || 0); }});
+    const el = document.getElementById('totalMes');
+    if (el) el.textContent = '$ ' + tot.toLocaleString('es-AR', {{minimumFractionDigits:0, maximumFractionDigits:0}});
+  }});
+}});
+</script>
+</body></html>"""
+
+
     db = get_db(); _ensure_schema(db)
     from datetime import date as _date
     mensaje = error = ""
@@ -863,90 +1118,7 @@ def economico_gastos_fijos_page():
         f'{"background:#f59e0b;color:#fff;" if a==anio_sel else "background:#fef3c7;color:#92400e;"}">{a}</a>'
         for a in anios)
 
-    sugerencias_html = "".join(f'<option value="{c}">' for c in _CONCEPTOS_SUGERIDOS)
-    mes_default = _date.today().strftime("%Y-%m")
 
-    msg = f'<div style="background:#d1fae5;border-left:4px solid #10b981;padding:8px 14px;border-radius:4px;margin-bottom:12px;font-weight:700;">{_E(mensaje)}</div>' if mensaje else ""
-    err_html = f'<div style="background:#fee2e2;border-left:4px solid #ef4444;padding:8px 14px;border-radius:4px;margin-bottom:12px;">{_E(error)}</div>' if error else ""
-
-    return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Gastos Fijos de Estructura</title>
-<style>{_CSS_COMMON}
-  .fg label {{ font-size:.74rem; font-weight:700; color:#374151; display:block; margin-bottom:3px; }}
-  .fg input {{ width:100%; padding:6px 9px; border:1px solid #d1d5db; border-radius:5px; font-size:.88rem; }}
-</style></head><body>
-<div class="hdr" style="background:linear-gradient(135deg,#78350f,#92400e);">
-  <div>
-    <h1>🏭 Gastos Fijos de Estructura</h1>
-    <div style="font-size:.74rem;opacity:.75;margin-top:2px;">Alquiler · Servicios · Limpieza · Viandas · y más</div>
-  </div>
-  <div style="display:flex;gap:7px;flex-wrap:wrap;">
-    <a href="/modulo/economico/dashboard-ejecutivo">📊 Dashboard</a>
-    <a href="/modulo/economico">← Módulo</a>
-  </div>
-</div>
-<div class="body">
-  {msg}{err_html}
-  <!-- Formulario agregar -->
-  <div class="card">
-    <div class="ct">➕ Agregar gasto fijo</div>
-    <div class="cb">
-      <form method="post" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;">
-        <input type="hidden" name="accion" value="agregar">
-        <datalist id="conceptos">{sugerencias_html}</datalist>
-        <div class="fg" style="min-width:120px;">
-          <label>Mes</label>
-          <input type="month" name="mes" value="{mes_default}" required>
-        </div>
-        <div class="fg" style="min-width:200px;flex:1;">
-          <label>Concepto</label>
-          <input type="text" name="concepto" list="conceptos" placeholder="Alquiler, Luz, Gas…" required>
-        </div>
-        <div class="fg" style="min-width:140px;">
-          <label>Monto ($)</label>
-          <input type="number" name="monto" step="0.01" min="0.01" placeholder="0.00" required>
-        </div>
-        <button type="submit" class="btn" style="background:#f59e0b;color:#fff;">💾 Agregar</button>
-      </form>
-    </div>
-  </div>
-  <!-- KPI año -->
-  <div style="display:flex;flex-wrap:wrap;gap:12px;">
-    <div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);padding:16px 20px;flex:1;min-width:140px;border-left:4px solid #f59e0b;">
-      <div style="font-size:.7rem;color:#6b7280;font-weight:700;text-transform:uppercase;">Total {anio_sel}</div>
-      <div style="font-size:1.4rem;font-weight:900;color:#92400e;">{_m(total_anio)}</div>
-    </div>
-    <div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);padding:16px 20px;flex:1;min-width:140px;border-left:4px solid #6366f1;">
-      <div style="font-size:.7rem;color:#6b7280;font-weight:700;text-transform:uppercase;">Promedio mensual</div>
-      <div style="font-size:1.4rem;font-weight:900;color:#6366f1;">{_m(prom_mensual)}</div>
-    </div>
-    <div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);padding:16px 20px;flex:1;min-width:140px;border-left:4px solid #6b7280;">
-      <div style="font-size:.7rem;color:#6b7280;font-weight:700;text-transform:uppercase;">Meses cargados</div>
-      <div style="font-size:1.4rem;font-weight:900;color:#1e293b;">{len(por_mes)}</div>
-    </div>
-  </div>
-  <!-- Filtro año -->
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-    <span style="font-size:.8rem;font-weight:700;color:#374151;">Año:</span>
-    {anio_tabs}
-  </div>
-  <!-- Tabla -->
-  <div class="card">
-    <div class="ct">📋 Gastos registrados — {anio_sel}</div>
-    <div style="overflow-x:auto;">
-      <table>
-        <thead><tr>
-          <th>Concepto</th><th></th>
-          <th style="text-align:right;">Monto</th>
-          <th style="text-align:center;width:50px;"></th>
-        </tr></thead>
-        <tbody>
-          {filas_html if filas_html else '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:24px;">Sin gastos registrados para este año.</td></tr>'}
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div></body></html>"""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1289,13 +1461,23 @@ def economico_dashboard_ejecutivo():
               GG reales cobrados en proyectos vs total real de estructura
             </span>
           </div>
-          <div style="display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:4px;">
-            <span>GG reales cobrados en proyectos</span>
+          <div style="display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:8px;">
+            <span style="font-weight:700;color:#6366f1;">GG reales cobrados en proyectos</span>
             <span style="font-weight:700;color:#6366f1;">{_m(total_gg_real)}</span>
           </div>
-          <div style="display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:8px;">
-            <span>Total costo de estructura</span>
-            <span style="font-weight:700;">{_m(total_estructura_real)}</span>
+          <div style="border-left:3px solid #e5e7eb;margin-left:8px;padding-left:10px;margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;font-size:.79rem;margin-bottom:4px;color:#374151;">
+              <span>⚒️ Obras mant. (ADM OBRAS · ADM TALLER — trabajos menores)</span>
+              <span style="font-weight:700;">{_m(total_mant_real)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:.79rem;color:#374151;">
+              <span>🏭 Gastos fijos (sueldos + servicios + alquiler)</span>
+              <span style="font-weight:700;">{_m(total_gf_real)}</span>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:.82rem;font-weight:700;margin-bottom:8px;border-top:1px solid #d1fae5;padding-top:6px;">
+            <span>Total estructura</span>
+            <span>{_m(total_estructura_real)}</span>
           </div>
           <div style="background:#e5e7eb;border-radius:4px;height:12px;margin-bottom:6px;">
             <div style="background:{bar_real_c};border-radius:4px;height:12px;width:{bar_real_w:.1f}%;"></div>
