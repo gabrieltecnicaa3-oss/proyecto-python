@@ -1412,21 +1412,36 @@ def economico_dashboard_ejecutivo():
 
     # ── Distribución de gastos de estructura por costo directo ────────────────
     # Cada proyecto absorbe overhead en proporción a su CD real.
-    # Costo ajustado = r_cd + GG_dist + r_imp (los impuestos se mantienen sobre CD propio)
+    # Costo ajustado = r_cd + GG_dist + r_imp.
     _sum_r_cd = sum(o["r_cd"] for o in obras_data)
     dist_rows_html = ""
     total_gg_dist_check = 0.0
+    gg_dist_map = {}
+    costo_real_aj_map = {}
+    costo_proy_aj_map = {}
+    mg_proy_aj_map = {}
     for o in obras_data:
-        _pct_cd  = (o["r_cd"] / _sum_r_cd * 100.0) if _sum_r_cd > 0 else 0.0
+        _pct_cd = (o["r_cd"] / _sum_r_cd * 100.0) if _sum_r_cd > 0 else 0.0
         _gg_dist = total_estructura_real * (o["r_cd"] / _sum_r_cd) if _sum_r_cd > 0 else 0.0
         total_gg_dist_check += _gg_dist
-        _imp     = o["agg"]["r_imp"]                        # impuestos (% sobre CD real)
-        _costo_aj = o["r_cd"] + _gg_dist + _imp            # CD real + overhead asignado + imp
-        _mg_aj   = ((o["pv"] - _costo_aj) / o["pv"] * 100.0) if o["pv"] > 0 else 0.0
-        _mc_aj   = _cm(_mg_aj)
-        _delta   = _mg_aj - o["mg_proy"]                   # diferencia vs margen proyectado
+        _imp = o["agg"]["r_imp"]
+        _costo_aj = o["r_cd"] + _gg_dist + _imp
+        _costo_proy_aj = (_costo_aj / (o["af"] / 100.0)) if o["af"] > 0 else _costo_aj
+        _mg_aj = ((o["pv"] - _costo_proy_aj) / o["pv"] * 100.0) if o["pv"] > 0 else 0.0
+        _mc_aj = _cm(_mg_aj)
+        _delta = _mg_aj - o["mg_proy"]
         _delta_c = "#166534" if _delta >= 0 else "#991b1b"
         _delta_s = f'{"▲" if _delta>=0 else "▼"} {abs(_delta):.1f}pp'
+
+        gg_dist_map[o["obra"]] = _gg_dist
+        costo_real_aj_map[o["obra"]] = _costo_aj
+        costo_proy_aj_map[o["obra"]] = _costo_proy_aj
+        mg_proy_aj_map[o["obra"]] = _mg_aj
+        o["gg_dist"] = _gg_dist
+        o["r_tot_aj"] = _costo_aj
+        o["costo_proy_aj"] = _costo_proy_aj
+        o["mg_proy_aj"] = _mg_aj
+
         dist_rows_html += f"""<tr>
           <td style="font-weight:700;color:#6366f1;">{_E(o['obra'])}</td>
           <td style="text-align:right;">{_m(o['r_cd'])}</td>
@@ -1437,8 +1452,10 @@ def economico_dashboard_ejecutivo():
           <td style="text-align:right;font-weight:700;color:{_mc_aj};">{_mg_aj:.1f}%</td>
           <td style="text-align:right;font-size:.75rem;color:{_delta_c};">{_delta_s}</td>
         </tr>"""
-    # Fila total — margen ajustado a nivel portfolio con overhead distribuido
-    _mg_total_aj = ((_pv_total - (_cproy_total + total_estructura_real)) / _pv_total * 100.0) if _pv_total > 0 else 0.0
+
+    _total_costo_proy_aj = sum(costo_proy_aj_map.values()) if costo_proy_aj_map else 0.0
+    _mg_total_aj = ((_pv_total - _total_costo_proy_aj) / _pv_total * 100.0) if _pv_total > 0 else 0.0
+    mg_prom = _mg_total_aj
 
     # ── HTML ──────────────────────────────────────────────────────────────────
     # Tabla de obras
@@ -1447,20 +1464,21 @@ def economico_dashboard_ejecutivo():
         af_bar = f'<div style="background:#e5e7eb;border-radius:3px;height:8px;width:100%;min-width:50px;"><div style="background:#3b82f6;border-radius:3px;height:8px;width:{min(o["af"],100):.1f}%;"></div></div><span style="font-size:.72rem;color:#6b7280;">{o["af"]:.1f}%</span>'
         ae_c   = "#991b1b" if o["ae"] > o["af"]+5 else ("#166534" if o["ae"] <= o["af"] else "#92400e")
         ae_bar = f'<div style="background:#e5e7eb;border-radius:3px;height:8px;width:100%;min-width:50px;"><div style="background:{ae_c};border-radius:3px;height:8px;width:{min(o["ae"],100):.1f}%;"></div></div><span style="font-size:.72rem;color:{ae_c};">{o["ae"]:.1f}%</span>'
-        mc     = _cm(o["mg_proy"])
+        mg_aj  = o.get("mg_proy_aj", o["mg_proy"])
+        mc     = _cm(mg_aj)
         tabla_obras += f"""<tr>
           <td style="font-weight:700;"><a href="/modulo/economico/obra/{_E(o['obra'])}" style="color:#6366f1;text-decoration:none;">{_E(o['obra'])}</a></td>
           <td style="font-size:.75rem;color:#6b7280;">{_E(o['cliente'])}</td>
           <td>{af_bar}</td>
           <td>{ae_bar}</td>
-          <td style="text-align:right;font-weight:700;color:{mc};">{o['mg_proy']:.1f}%</td>
+          <td style="text-align:right;font-weight:700;color:{mc};">{mg_aj:.1f}%</td>
           <td style="text-align:right;color:#6b7280;">{_m(o['pv'])}</td>
-          <td style="text-align:right;color:#6b7280;">{_m(o['r_tot'])}</td>
+          <td style="text-align:right;color:#6b7280;">{_m(o.get('r_tot_aj', o['r_tot']))}</td>
           <td style="text-align:center;font-size:1.3rem;">{o['sem_em']}</td>
         </tr>"""
     # Fila de totales — reutiliza _pv_total y _cproy_total calculados en KPIs globales
     total_pv   = _pv_total
-    total_real = sum(o['r_tot'] for o in obras_data)
+    total_real = sum(o.get('r_tot_aj', o['r_tot']) for o in obras_data)
     total_mg   = mg_prom  # idéntico cálculo ponderado
     mc_tot     = _cm(total_mg)
     tabla_obras += f"""<tr style="background:#f1f5f9;font-weight:700;border-top:2px solid #cbd5e1;">
@@ -1524,9 +1542,9 @@ def economico_dashboard_ejecutivo():
     import json as _json2
     chart2_labels_js = _json2.dumps([o["obra"] for o in obras_data])
     chart2_pv_js     = _json2.dumps([round(o["pv"], 0) for o in obras_data])
-    chart2_costo_js  = _json2.dumps([round(o["r_tot"], 0) for o in obras_data])
+    chart2_costo_js  = _json2.dumps([round(o.get("r_tot_aj", o["r_tot"]), 0) for o in obras_data])
     chart2_colors_js = _json2.dumps([
-        "rgba(16,185,129,0.75)" if o["pv"] >= o["r_tot"] else "rgba(239,68,68,0.75)"
+      "rgba(16,185,129,0.75)" if o["pv"] >= o.get("r_tot_aj", o["r_tot"]) else "rgba(239,68,68,0.75)"
         for o in obras_data
     ])
 
