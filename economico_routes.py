@@ -1266,7 +1266,6 @@ def economico_dashboard_ejecutivo():
             ("Consumibles",     agg["p_cons"], agg["r_cons"]),
             ("Ingeniería",      agg["p_ing"],  agg["r_ing"]),
             ("Subcontratos",    0.0,           agg["r_sub"]),
-            ("Gastos Generales",agg["p_gg"],agg["r_gg"]),
             ("Impuestos",       agg["p_imp"],  agg["r_imp"]),
         ]:
             rubros_global[nm]["prev"] += prev
@@ -1299,7 +1298,7 @@ def economico_dashboard_ejecutivo():
     pct_overhead    = (total_mant_real / total_prod_real * 100.0) if total_prod_real > 0 else 0.0
     # Gastos Generales de los proyectos productivos (deberían cubrir el overhead total)
     total_gg_prev   = sum(o["agg"]["p_gg"] for o in obras_data)
-    total_gg_real   = sum(o["agg"]["r_gg"] for o in obras_data)
+    total_gg_real   = 0.0  # GG ya no se calcula por %; se usa el overhead distribuido
     # Nota: saldo_real se recalcula después de obtener total_gf_real
     # Por ahora inicializar; se actualizará con total_estructura_real en el panel HTML
 
@@ -1438,8 +1437,8 @@ def economico_dashboard_ejecutivo():
           <td style="text-align:right;font-weight:700;color:{_mc_aj};">{_mg_aj:.1f}%</td>
           <td style="text-align:right;font-size:.75rem;color:{_delta_c};">{_delta_s}</td>
         </tr>"""
-    # Fila total
-    _mg_total_aj = ((_pv_total - (_cproy_total - sum(o["agg"]["r_gg"] for o in obras_data) + total_estructura_real)) / _pv_total * 100.0) if _pv_total > 0 else 0.0
+    # Fila total — margen ajustado a nivel portfolio con overhead distribuido
+    _mg_total_aj = ((_pv_total - (_cproy_total + total_estructura_real)) / _pv_total * 100.0) if _pv_total > 0 else 0.0
 
     # ── HTML ──────────────────────────────────────────────────────────────────
     # Tabla de obras
