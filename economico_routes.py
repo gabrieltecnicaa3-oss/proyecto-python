@@ -288,18 +288,26 @@ tr:last-child td{border-bottom:none;}
 
 @economico_bp.route("/modulo/economico/config", methods=["GET", "POST"])
 def economico_config():
-    db = get_db(); _ensure_schema(db)
-    if request.method == "POST":
-        try:
-            db.execute("UPDATE economico_config SET precio_hora_mo=?,precio_hora_cons=?,pct_gastos_gen=?,pct_impuestos=?,updated_at=CURRENT_TIMESTAMP",
-                (float(request.form.get("precio_hora_mo") or 0),
-                 float(request.form.get("precio_hora_cons") or 0),
-                 float(request.form.get("pct_gastos_gen") or 5),
-                 float(request.form.get("pct_impuestos") or 3)))
-            db.commit(); mensaje = "Config global guardada."
-        except Exception as exc: error = str(exc)
-    cfg = _get_global_config(db)
-    return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+  db = get_db()
+  _ensure_schema(db)
+  mensaje = error = ""
+  if request.method == "POST":
+    try:
+      db.execute(
+        "UPDATE economico_config SET precio_hora_mo=?,precio_hora_cons=?,pct_gastos_gen=?,pct_impuestos=?,updated_at=CURRENT_TIMESTAMP",
+        (
+          float(request.form.get("precio_hora_mo") or 0),
+          float(request.form.get("precio_hora_cons") or 0),
+          float(request.form.get("pct_gastos_gen") or 5),
+          float(request.form.get("pct_impuestos") or 3),
+        ),
+      )
+      db.commit()
+      mensaje = "Config global guardada."
+    except Exception as exc:
+      error = str(exc)
+  cfg = _get_global_config(db)
+  return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Config Global</title>
 <style>{_CSS_COMMON}
 .card{{max-width:480px;margin:auto;}}.card .cb{{padding:20px;}}
@@ -1625,6 +1633,8 @@ def economico_dashboard_ejecutivo():
 
     # ── Panel Mantenimiento HTML ──────────────────────────────────────────────
     total_estructura_real = total_mant_real + total_gf_real
+    saldo_real_c  = "#166534" if saldo_prev >= 0 else "#991b1b"
+    saldo_real_ic = "▲" if saldo_prev >= 0 else "▼"
     pct_oh_c = "#991b1b" if pct_overhead > 25 else ("#92400e" if pct_overhead > 15 else "#166534")
     if mant_data or total_gf_real > 0:
         # Cobertura GG (solo real — sin presupuesto de estructura)
@@ -1842,6 +1852,29 @@ def economico_dashboard_ejecutivo():
       </div>
       <div class="cb" style="position:relative;height:260px;">
         <canvas id="chartIngEgr"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ct">🏭 Gastos Generales — Previsto vs Real</div>
+      <div class="cb">
+        <div style="display:flex;flex-wrap:wrap;gap:12px;">
+          <div style="flex:1;min-width:160px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 16px;">
+            <div style="font-size:.72rem;color:#166534;font-weight:700;text-transform:uppercase;">GG previstos</div>
+            <div style="font-size:1.35rem;font-weight:900;color:#166534;">{_m(total_gg_prev)}</div>
+            <div style="font-size:.72rem;color:#6b7280;">presupuestados en obras</div>
+          </div>
+          <div style="flex:1;min-width:160px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 16px;">
+            <div style="font-size:.72rem;color:#92400e;font-weight:700;text-transform:uppercase;">GG reales</div>
+            <div style="font-size:1.35rem;font-weight:900;color:#92400e;">{_m(total_estructura_real)}</div>
+            <div style="font-size:.72rem;color:#6b7280;">mantenimiento + gastos fijos</div>
+          </div>
+          <div style="flex:1;min-width:160px;background:{'#f0fdf4' if saldo_prev >= 0 else '#fef2f2'};border:1px solid {'#bbf7d0' if saldo_prev >= 0 else '#fecaca'};border-radius:10px;padding:14px 16px;">
+            <div style="font-size:.72rem;color:{'#166534' if saldo_prev >= 0 else '#991b1b'};font-weight:700;text-transform:uppercase;">Saldo / cobertura</div>
+            <div style="font-size:1.35rem;font-weight:900;color:{saldo_real_c};">{saldo_real_ic} {_m(abs(saldo_prev))}</div>
+            <div style="font-size:.72rem;color:#6b7280;">{pct_cob_prev:.0f}% de cobertura</div>
+          </div>
+        </div>
       </div>
     </div>
 
