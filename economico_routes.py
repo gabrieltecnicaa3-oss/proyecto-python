@@ -707,9 +707,50 @@ def economico_ot(ot_id):
     data = _calc_economico(db, ot_id, cfg)
     p = data["p"]; rm = data["rm"]; ra = data["ra"]; r = data["r"]
     avf = data["avf"]; ave = data["ave"]
-    mg = ((p["pv"]-r["tot"])/p["pv"]*100.0) if p["pv"]>0 else 0.0
+
+    # Prorratear el overhead real de la cartera a esta OT.
+    ots_all = db.execute(
+      "SELECT id, obra, COALESCE(es_mantenimiento,0) FROM ordenes_trabajo ORDER BY obra, id"
+    ).fetchall()
+    obras_all = {}
+    mant_all = {}
+    for _ot_id, _obra_key, _es_mant in ots_all:
+      _obra_key = str(_obra_key or "Sin obra").strip()
+      _dest = mant_all if _es_mant else obras_all
+      if _obra_key not in _dest:
+        _dest[_obra_key] = {"ots": []}
+      _dest[_obra_key]["ots"].append(_ot_id)
+
+    total_prod_cd = 0.0
+    for _obra_key, _info in obras_all.items():
+      _cfg_obra = _get_config_obra(db, _obra_key)
+      _ots_d = []
+      for _prod_ot_id in _info["ots"]:
+        _d = _calc_economico(db, _prod_ot_id, _cfg_obra)
+        _ots_d.append(_d)
+      _agg_obra = _aggregate_obra(_ots_d)
+      total_prod_cd += _agg_obra["r_cd"]
+
+    total_mant_real = 0.0
+    for _obra_key, _info in mant_all.items():
+      _cfg_obra = _get_config_obra(db, _obra_key)
+      _ots_d = []
+      for _mant_ot_id in _info["ots"]:
+        _d = _calc_economico(db, _mant_ot_id, _cfg_obra)
+        _ots_d.append(_d)
+      _agg_obra = _aggregate_obra(_ots_d)
+      total_mant_real += _agg_obra["r_tot"]
+
+    total_gf_real = db.execute("SELECT COALESCE(SUM(monto),0) FROM economico_gastos_fijos").fetchone()[0] or 0.0
+    total_estructura_real = float(total_mant_real or 0.0) + float(total_gf_real or 0.0)
+    gg_asig_obra = (total_estructura_real * (agg["r_cd"] / total_prod_cd)) if total_prod_cd > 0 else 0.0
+    r_tot_adj = r["tot"] + gg_asig_obra
+    mg_adj = ((p["pv"]-r_tot_adj)/p["pv"]*100.0) if p["pv"]>0 else 0.0
+    ave_adj = min((r_tot_adj / p["tc"] * 100.0) if p["tc"]>0 else 0.0, 999.9)
+
+    mg = mg_adj
     mc = _cm(mg)
-    ac = "#991b1b" if ave>avf+5 else ("#166534" if ave<=avf else "#92400e")
+    ac = "#991b1b" if ave_adj>avf+5 else ("#166534" if ave_adj<=avf else "#92400e")
 
     def _kc(t,v,s="",c="#6366f1"):
         return (f'<div style="background:#fff;border-radius:8px;box-shadow:0 1px 5px rgba(0,0,0,.06);'
@@ -720,18 +761,18 @@ def economico_ot(ot_id):
 
     kpi_html = (
         _kc("$/kg Prev.", _m(p["pv"]/data["kg"] if data["kg"]>0 else 0), f"{data['kg']:,.1f} kg") +
-        _kc("$/kg Real",  _m(r["tot"]/data["kg"] if data["kg"]>0 else 0), "", "#1e293b") +
+      _kc("$/kg Real",  _m(r_tot_adj/data["kg"] if data["kg"]>0 else 0), "", "#1e293b") +
         _kc("Margen Prev.", _pct(p["ben"]/p["pv"]*100 if p["pv"]>0 else 0), _m(p["ben"]), "#3b82f6") +
-        _kc("Margen Real",  _pct(mg), f"PV {_m(p['pv'])}", mc) +
+      _kc("Margen Real",  _pct(mg), f"PV {_m(p['pv'])}", mc) +
         _kc("Av.Físico", _pct(avf), "estado OT", "#10b981") +
-        _kc("Av.Econ.", _pct(ave), "gasto/presup.", ac))
+      _kc("Av.Econ.", _pct(ave_adj), "gasto/presup.", ac))
 
     desv_rows = ""
     for nombre, prev, real in [
         ("Materiales",p["mat"],rm["mat"]),("Pintura",p["pintura"],rm["pintura"]),
         ("Mano de Obra",p["mo"],ra["mo"]),("Consumibles",p["cons"],ra["cons"]),
         ("Ingeniería",p["ing"],rm["ing"]),("Subcontratos",0.0,rm["sub"]),
-        ("Gastos Generales",p["gg"],gg_asig_obra),("Impuestos",p["imp"],ra["imp"])]:        
+      ("Gastos Generales",p["gg"],gg_asig_obra),("Impuestos",p["imp"],ra["imp"])]:
         da=real-prev; dp=(da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c=_cd(da); ic="▲" if da>0 else ("▼" if da<0 else "–")
         desv_rows += f"""<tr>
@@ -1335,7 +1376,7 @@ def economico_dashboard_ejecutivo():
     pct_overhead    = (total_mant_real / total_prod_real * 100.0) if total_prod_real > 0 else 0.0
     # Gastos Generales de los proyectos productivos (deberían cubrir el overhead total)
     total_gg_prev   = sum(o["agg"]["p_gg"] for o in obras_data)
-    total_gg_real   = 0.0  # GG ya no se calcula por %; se usa el overhead distribuido
+    total_gg_real   = 0.0  # se completa más abajo con el overhead real total
     # Nota: saldo_real se recalcula después de obtener total_gf_real
     # Por ahora inicializar; se actualizará con total_estructura_real en el panel HTML
 
@@ -1373,6 +1414,7 @@ def economico_dashboard_ejecutivo():
 
     # Ahora calculamos saldo con total de estructura (mantenimiento + gastos fijos)
     total_estructura_real = total_mant_real + total_gf_real
+    total_gg_real = total_estructura_real
     saldo_prev   = total_gg_prev - total_estructura_real
     pct_cob_prev = min((total_gg_prev / total_estructura_real * 100.0) if total_estructura_real > 0 else 100.0, 200.0)
 
@@ -1622,8 +1664,8 @@ def economico_dashboard_ejecutivo():
             <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">presupuestados para cubrir overhead</div>
           </div>
           <div style="background:#fff7ed;border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid #f59e0b;">
-            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">Total Estructura Real</div>
-            <div style="font-size:1.6rem;font-weight:900;color:#92400e;line-height:1;">{_m(total_estructura_real)}</div>
+            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">GG Reales / Overhead</div>
+            <div style="font-size:1.6rem;font-weight:900;color:#92400e;line-height:1;">{_m(total_gg_real)}</div>
             <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">mant. {_m(total_mant_real)} + gastos fijos {_m(total_gf_real)}</div>
           </div>
           <div style="background:{'#f0fdf4' if saldo_prev>=0 else '#fef2f2'};border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid {saldo_real_c};">
@@ -1674,7 +1716,7 @@ def economico_dashboard_ejecutivo():
           </div>
           <div style="display:flex;justify-content:space-between;font-size:.82rem;">
             <span style="color:#6366f1;font-weight:700;">GG Prev: {_m(total_gg_prev)}</span>
-            <span style="color:#92400e;font-weight:700;">Estructura: {_m(total_estructura_real)}</span>
+            <span style="color:#92400e;font-weight:700;">GG Real: {_m(total_gg_real)}</span>
           </div>
         </div>
         <!-- Tabla OTs + Gráfico -->
