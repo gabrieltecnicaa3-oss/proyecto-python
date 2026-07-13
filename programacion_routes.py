@@ -1378,7 +1378,7 @@ def programacion_index():
     entradas_semana = [
         {"ot_id": r[0], "obra": r[1], "titulo": r[2], "fecha_entrega": r[3]}
         for r in ots_activas_cumpl
-        if int(r[0] or 0) in ot_ids_con_actividad_semana or int(avance_live_by_ot.get(int(r[0] or 0), 0)) > 0
+        if int(r[0] or 0) in ot_ids_con_actividad_semana
     ]
     if obra_fil:
         entradas_semana = [e for e in entradas_semana if obra_fil.lower() in (e.get("obra") or "").lower()]
