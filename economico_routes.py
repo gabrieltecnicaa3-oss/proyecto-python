@@ -854,6 +854,7 @@ _GRUPOS_FIJOS = {
         "Sueldo Jefe de Taller",
         "Sueldo Jefe de Calidad",
         "Sueldo Oficina Técnica",
+        "Sueldo Administración",
     ],
     "🏢 Servicios y Gastos": [
         "Alquiler",
@@ -1340,8 +1341,8 @@ def economico_dashboard_ejecutivo():
 
     # Ahora calculamos saldo real con total de estructura (mantenimiento + gastos fijos)
     _total_estructura = total_mant_real + total_gf_real
-    saldo_real  = total_gg_real - _total_estructura
-    pct_cob_real = min((total_gg_real / _total_estructura * 100.0) if _total_estructura > 0 else 100.0, 200.0)
+    saldo_prev   = total_gg_prev - _total_estructura
+    pct_cob_prev = min((total_gg_prev / _total_estructura * 100.0) if _total_estructura > 0 else 100.0, 200.0)
 
     # Series para el chart — unión de todos los meses con datos
     _all_meses = sorted(set(mant_mes_costs.keys()) | set(gf_mes_costs.keys()))
@@ -1509,10 +1510,10 @@ def economico_dashboard_ejecutivo():
     pct_oh_c = "#991b1b" if pct_overhead > 25 else ("#92400e" if pct_overhead > 15 else "#166534")
     if mant_data or total_gf_real > 0:
         # Cobertura GG (solo real — sin presupuesto de estructura)
-        saldo_real_c  = "#166534" if saldo_real >= 0 else "#991b1b"
-        saldo_real_ic = "▲" if saldo_real >= 0 else "▼"
-        bar_real_w    = min(pct_cob_real, 100)
-        bar_real_c    = "#16a34a" if pct_cob_real >= 100 else ("#f59e0b" if pct_cob_real >= 70 else "#dc2626")
+        saldo_real_c  = "#166534" if saldo_prev >= 0 else "#991b1b"
+        saldo_real_ic = "▲" if saldo_prev >= 0 else "▼"
+        bar_real_w    = min(pct_cob_prev, 100)
+        bar_real_c    = "#16a34a" if pct_cob_prev >= 100 else ("#f59e0b" if pct_cob_prev >= 70 else "#dc2626")
         mant_filas = ""
         for d in mant_data:
             mant_filas += f"""<tr>
@@ -1560,12 +1561,12 @@ def economico_dashboard_ejecutivo():
           <div style="font-weight:700;color:#14532d;font-size:.82rem;margin-bottom:10px;">
             📊 Cobertura del overhead con Gastos Generales de proyectos
             <span style="font-weight:400;color:#6b7280;font-size:.74rem;margin-left:6px;">
-              GG reales cobrados en proyectos vs total real de estructura
+              GG Previstos (presupuestados) vs total real de estructura
             </span>
           </div>
           <div style="display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:8px;">
-            <span style="font-weight:700;color:#6366f1;">GG reales cobrados en proyectos</span>
-            <span style="font-weight:700;color:#6366f1;">{_m(total_gg_real)}</span>
+            <span style="font-weight:700;color:#6366f1;">GG Previstos en proyectos</span>
+            <span style="font-weight:700;color:#6366f1;">{_m(total_gg_prev)}</span>
           </div>
           <div style="border-left:3px solid #e5e7eb;margin-left:8px;padding-left:10px;margin-bottom:8px;">
             <div style="display:flex;justify-content:space-between;font-size:.79rem;margin-bottom:4px;color:#374151;">
@@ -1585,8 +1586,8 @@ def economico_dashboard_ejecutivo():
             <div style="background:{bar_real_c};border-radius:4px;height:12px;width:{bar_real_w:.1f}%;"></div>
           </div>
           <div style="font-size:.82rem;font-weight:700;color:{saldo_real_c};">
-            {saldo_real_ic} Saldo: {_m(abs(saldo_real))} &nbsp;
-            <span style="font-weight:400;color:#6b7280;">({pct_cob_real:.0f}% del overhead cubierto por GG)</span>
+            {saldo_real_ic} Saldo: {_m(abs(saldo_prev))} &nbsp;
+            <span style="font-weight:400;color:#6b7280;">({pct_cob_prev:.0f}% del overhead cubierto por GG previstos)</span>
           </div>
         </div>
         <!-- Tabla OTs + Gráfico -->
