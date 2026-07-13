@@ -133,15 +133,15 @@ def _get_config_obra(db, obra):
     }
 
 
-def _save_config_obra(db, obra, pmo, pcons, pgg, pimp):
+def _save_config_obra(db, obra, pmo, pcons, pimp):
     ex = db.execute("SELECT id FROM economico_config_obra WHERE obra=?", (obra,)).fetchone()
     if ex:
         db.execute("""UPDATE economico_config_obra
-            SET precio_hora_mo=?,precio_hora_cons=?,pct_gastos_gen=?,pct_impuestos=?,updated_at=CURRENT_TIMESTAMP
-            WHERE obra=?""", (pmo, pcons, pgg, pimp, obra))
+            SET precio_hora_mo=?,precio_hora_cons=?,pct_impuestos=?,updated_at=CURRENT_TIMESTAMP
+            WHERE obra=?""", (pmo, pcons, pimp, obra))
     else:
-        db.execute("INSERT INTO economico_config_obra(obra,precio_hora_mo,precio_hora_cons,pct_gastos_gen,pct_impuestos) VALUES(?,?,?,?,?)",
-                   (obra, pmo, pcons, pgg, pimp))
+        db.execute("INSERT INTO economico_config_obra(obra,precio_hora_mo,precio_hora_cons,pct_impuestos) VALUES(?,?,?,?)",
+                   (obra, pmo, pcons, pimp))
     db.commit()
 
 
@@ -345,7 +345,6 @@ def economico_dashboard():
                 _save_config_obra(db, obra_cfg,
                     float(request.form.get("precio_hora_mo") or 0),
                     float(request.form.get("precio_hora_cons") or 0),
-                    float(request.form.get("pct_gastos_gen") or 5),
                     float(request.form.get("pct_impuestos") or 3))
                 mensaje = f"Tasas de '{obra_cfg}' guardadas."
             except Exception as exc: error = str(exc)
@@ -418,8 +417,6 @@ def economico_dashboard():
       <input type="number" name="precio_hora_mo" step="0.01" min="0" value="{_fv(cfg['precio_hora_mo'])}" style="width:115px;padding:5px 8px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;"></div>
     <div><label style="font-size:.7rem;font-weight:700;color:#374151;display:block;margin-bottom:2px;">$/HH Consumibles</label>
       <input type="number" name="precio_hora_cons" step="0.01" min="0" value="{_fv(cfg['precio_hora_cons'])}" style="width:115px;padding:5px 8px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;"></div>
-    <div><label style="font-size:.7rem;font-weight:700;color:#374151;display:block;margin-bottom:2px;">% Gastos Gen.</label>
-      <input type="number" name="pct_gastos_gen" step="0.01" min="0" max="100" value="{_fv(cfg['pct_gastos_gen'])}" style="width:85px;padding:5px 8px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;"></div>
     <div><label style="font-size:.7rem;font-weight:700;color:#374151;display:block;margin-bottom:2px;">% Impuestos</label>
       <input type="number" name="pct_impuestos" step="0.01" min="0" max="100" value="{_fv(cfg['pct_impuestos'])}" style="width:85px;padding:5px 8px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;"></div>
     <button type="submit" class="btn" style="background:#0891b2;color:#fff;font-size:.8rem;padding:6px 12px;">💾 Guardar tasas</button>
@@ -473,7 +470,6 @@ def economico_obra(obra_nombre):
             _save_config_obra(db, obra_nombre,
                 float(request.form.get("precio_hora_mo") or 0),
                 float(request.form.get("precio_hora_cons") or 0),
-                float(request.form.get("pct_gastos_gen") or 5),
                 float(request.form.get("pct_impuestos") or 3))
             mensaje = "Tasas actualizadas."
         except Exception as exc: error = str(exc)
@@ -704,7 +700,6 @@ def economico_ot(ot_id):
                 _save_config_obra(db, obra,
                     float(request.form.get("precio_hora_mo") or 0),
                     float(request.form.get("precio_hora_cons") or 0),
-                    float(request.form.get("pct_gastos_gen") or 5),
                     float(request.form.get("pct_impuestos") or 3))
                 cfg = _get_config_obra(db, obra); mensaje = "Tasas actualizadas."
         except Exception as exc: error = str(exc)
@@ -837,8 +832,6 @@ def economico_ot(ot_id):
         <input type="number" name="precio_hora_mo" step="0.01" min="0" value="{_fv(cfg['precio_hora_mo'])}"></div>
       <div style="min-width:120px;"><label>$/HH Consumibles</label>
         <input type="number" name="precio_hora_cons" step="0.01" min="0" value="{_fv(cfg['precio_hora_cons'])}"></div>
-      <div style="min-width:100px;"><label>% Gastos Generales</label>
-        <input type="number" name="pct_gastos_gen" step="0.01" min="0" max="100" value="{_fv(cfg['pct_gastos_gen'])}"></div>
       <div style="min-width:100px;"><label>% Impuestos</label>
         <input type="number" name="pct_impuestos" step="0.01" min="0" max="100" value="{_fv(cfg['pct_impuestos'])}"></div>
       <button type="submit" class="btn" style="background:#0891b2;color:#fff;">💾 Guardar tasas</button>
