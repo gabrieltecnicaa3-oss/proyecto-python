@@ -289,7 +289,6 @@ tr:last-child td{border-bottom:none;}
 @economico_bp.route("/modulo/economico/config", methods=["GET", "POST"])
 def economico_config():
     db = get_db(); _ensure_schema(db)
-    mensaje = error = ""
     if request.method == "POST":
         try:
             db.execute("UPDATE economico_config SET precio_hora_mo=?,precio_hora_cons=?,pct_gastos_gen=?,pct_impuestos=?,updated_at=CURRENT_TIMESTAMP",
@@ -487,10 +486,48 @@ def economico_obra(obra_nombre):
         ots_data.append(d)
 
     agg = _aggregate_obra(ots_data)
-    mg  = ((agg["p_pv"]-agg["r_tot"])/agg["p_pv"]*100.0) if agg["p_pv"]>0 else 0.0
+    # Distribuir overhead real de toda la cartera a esta obra según costo directo real.
+    ots_all = db.execute(
+      "SELECT id, obra, COALESCE(es_mantenimiento,0) FROM ordenes_trabajo ORDER BY obra, id"
+    ).fetchall()
+    obras_all = {}
+    mant_all = {}
+    for _ot_id, _obra_key, _es_mant in ots_all:
+      _obra_key = str(_obra_key or "Sin obra").strip()
+      _dest = mant_all if _es_mant else obras_all
+      if _obra_key not in _dest:
+        _dest[_obra_key] = {"ots": []}
+      _dest[_obra_key]["ots"].append(_ot_id)
+
+    total_prod_cd = 0.0
+    for _obra_key, _info in obras_all.items():
+      _cfg_obra = _get_config_obra(db, _obra_key)
+      _ots_d = []
+      for _prod_ot_id in _info["ots"]:
+        _d = _calc_economico(db, _prod_ot_id, _cfg_obra)
+        _ots_d.append(_d)
+      _agg_obra = _aggregate_obra(_ots_d)
+      total_prod_cd += _agg_obra["r_cd"]
+
+    total_mant_real = 0.0
+    for _obra_key, _info in mant_all.items():
+      _cfg_obra = _get_config_obra(db, _obra_key)
+      _ots_d = []
+      for _mant_ot_id in _info["ots"]:
+        _d = _calc_economico(db, _mant_ot_id, _cfg_obra)
+        _ots_d.append(_d)
+      _agg_obra = _aggregate_obra(_ots_d)
+      total_mant_real += _agg_obra["r_tot"]
+
+    total_gf_real = db.execute("SELECT COALESCE(SUM(monto),0) FROM economico_gastos_fijos").fetchone()[0] or 0.0
+    total_estructura_real = float(total_mant_real or 0.0) + float(total_gf_real or 0.0)
+    gg_asig_obra = (total_estructura_real * (agg["r_cd"] / total_prod_cd)) if total_prod_cd > 0 else 0.0
+    r_tot_adj = agg["r_tot"] + gg_asig_obra
+    mg  = ((agg["p_pv"]-r_tot_adj)/agg["p_pv"]*100.0) if agg["p_pv"]>0 else 0.0
     mc  = _cm(mg)
     af  = agg["avf"]; ae = agg["ave"]
-    ac  = "#991b1b" if ae>af+5 else ("#166534" if ae<=af else "#92400e")
+    ae_adj = min((r_tot_adj / agg["p_tc"] * 100.0) if agg["p_tc"] > 0 else 0.0, 999.9)
+    ac  = "#991b1b" if ae_adj>af+5 else ("#166534" if ae_adj<=af else "#92400e")
 
     ots_filas = ""
     for d in ots_data:
@@ -514,7 +551,7 @@ def economico_obra(obra_nombre):
       <td colspan="3">TOTAL OBRA</td>
       <td style="text-align:right;">{agg['kg']:,.1f}</td><td style="text-align:right;">{agg['hh']:,.1f}</td>
       <td style="text-align:right;color:#6366f1;">{_m(agg['p_pv'])}</td>
-      <td style="text-align:right;">{_m(agg['r_tot'])}</td>
+      <td style="text-align:right;">{_m(r_tot_adj)}</td>
       <td style="text-align:right;color:{mc};">{_pct(mg)}</td>
       <td>{_pb(af,'#3b82f6',7)}</td><td style="color:{ac};">{_pct(ae)}</td><td></td>
     </tr>"""
@@ -524,7 +561,7 @@ def economico_obra(obra_nombre):
         ("Materiales",agg["p_mat"],agg["r_mat"]),("Pintura",agg["p_pint"],agg["r_pint"]),
         ("Mano de Obra",agg["p_mo"],agg["r_mo"]),("Consumibles",agg["p_cons"],agg["r_cons"]),
         ("Ingeniería",agg["p_ing"],agg["r_ing"]),("Subcontratos",0.0,agg["r_sub"]),
-        ("Impuestos",agg["p_imp"],agg["r_imp"])]:
+        ("Gastos Generales",agg["p_gg"],gg_asig_obra),("Impuestos",agg["p_imp"],agg["r_imp"])]:
         da = real-prev; dp = (da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c = _cd(da); ic = "▲" if da>0 else ("▼" if da<0 else "–")
         desv_filas += f"""<tr>
@@ -565,21 +602,21 @@ def economico_obra(obra_nombre):
       <div style="font-size:1.1rem;font-weight:800;color:#6366f1;">{_m(agg['p_pv'])}</div></div>
     <div style="flex:1;min-width:120px;border-top:3px solid #1e293b;padding-top:8px;">
       <div style="font-size:.66rem;color:#9ca3af;font-weight:700;">COSTO REAL TOTAL</div>
-      <div style="font-size:1.1rem;font-weight:800;color:#1e293b;">{_m(agg['r_tot'])}</div></div>
+      <div style="font-size:1.1rem;font-weight:800;color:#1e293b;">{_m(r_tot_adj)}</div></div>
     <div style="flex:1;min-width:100px;border-top:3px solid {mc};padding-top:8px;">
       <div style="font-size:.66rem;color:#9ca3af;font-weight:700;">MARGEN REAL</div>
       <div style="font-size:1.1rem;font-weight:800;color:{mc};">{_pct(mg)}</div>
-      <div style="font-size:.7rem;color:#9ca3af;">{_m(agg['p_pv']-agg['r_tot'])}</div></div>
+      <div style="font-size:.7rem;color:#9ca3af;">{_m(agg['p_pv']-r_tot_adj)}</div></div>
     <div style="flex:1;min-width:100px;border-top:3px solid #10b981;padding-top:8px;">
       <div style="font-size:.66rem;color:#9ca3af;font-weight:700;">$/KG REAL</div>
-      <div style="font-size:1.1rem;font-weight:800;color:#10b981;">{_m(agg['r_tot']/agg['kg'] if agg['kg']>0 else 0)}</div>
+      <div style="font-size:1.1rem;font-weight:800;color:#10b981;">{_m(r_tot_adj/agg['kg'] if agg['kg']>0 else 0)}</div>
       <div style="font-size:.7rem;color:#9ca3af;">prev: {_m(agg['p_pv']/agg['kg'] if agg['kg']>0 else 0)}</div></div>
     <div style="flex:2;min-width:220px;border-top:3px solid #e5e7eb;padding-top:8px;">
       <div style="font-size:.66rem;color:#9ca3af;font-weight:700;margin-bottom:5px;">AVANCE FÍSICO vs ECONÓMICO</div>
       <div style="display:flex;align-items:center;gap:7px;margin-bottom:4px;">
         <span style="font-size:.7rem;color:#3b82f6;width:72px;">Físico</span>{_pb(af,'#3b82f6',10)}</div>
       <div style="display:flex;align-items:center;gap:7px;">
-        <span style="font-size:.7rem;color:{ac};width:72px;">Económico</span>{_pb(ae,ac,10)}</div>
+        <span style="font-size:.7rem;color:{ac};width:72px;">Económico</span>{_pb(ae_adj,ac,10)}</div>
     </div>
   </div></div>
   <div class="card"><div class="ct">📋 Órdenes de Trabajo</div>
@@ -597,11 +634,11 @@ def economico_obra(obra_nombre):
         <tr style="background:#f1f5f9;font-weight:700;">
           <td>TOTAL COSTOS</td>
           <td style="text-align:right;">{_m(agg['p_tc'])}</td>
-          <td style="text-align:right;">{_m(agg['r_tot'])}</td>
-          <td style="text-align:right;color:{_cd(agg['r_tot']-agg['p_tc'])};">
-            {"▲" if agg['r_tot']>agg['p_tc'] else "▼"} {_m(abs(agg['r_tot']-agg['p_tc']))}</td>
-          <td style="text-align:right;color:{_cd(agg['r_tot']-agg['p_tc'])};">
-            {_pct(abs((agg['r_tot']-agg['p_tc'])/agg['p_tc']*100) if agg['p_tc'] else 0)}</td>
+          <td style="text-align:right;">{_m(r_tot_adj)}</td>
+          <td style="text-align:right;color:{_cd(r_tot_adj-agg['p_tc'])};">
+            {"▲" if r_tot_adj>agg['p_tc'] else "▼"} {_m(abs(r_tot_adj-agg['p_tc']))}</td>
+          <td style="text-align:right;color:{_cd(r_tot_adj-agg['p_tc'])};">
+            {_pct(abs((r_tot_adj-agg['p_tc'])/agg['p_tc']*100) if agg['p_tc'] else 0)}</td>
         </tr>
       </tbody>
     </table></div>
@@ -694,7 +731,7 @@ def economico_ot(ot_id):
         ("Materiales",p["mat"],rm["mat"]),("Pintura",p["pintura"],rm["pintura"]),
         ("Mano de Obra",p["mo"],ra["mo"]),("Consumibles",p["cons"],ra["cons"]),
         ("Ingeniería",p["ing"],rm["ing"]),("Subcontratos",0.0,rm["sub"]),
-        ("Impuestos",p["imp"],ra["imp"])]:        
+        ("Gastos Generales",p["gg"],gg_asig_obra),("Impuestos",p["imp"],ra["imp"])]:        
         da=real-prev; dp=(da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c=_cd(da); ic="▲" if da>0 else ("▼" if da<0 else "–")
         desv_rows += f"""<tr>
@@ -752,7 +789,7 @@ def economico_ot(ot_id):
     <div style="display:flex;align-items:center;gap:7px;margin-bottom:3px;">
       <span style="font-size:.7rem;color:#3b82f6;width:72px;">Físico</span>{_pb(avf,'#3b82f6',10)}</div>
     <div style="display:flex;align-items:center;gap:7px;">
-      <span style="font-size:.7rem;color:{ac};width:72px;">Económico</span>{_pb(ave,ac,10)}</div>
+      <span style="font-size:.7rem;color:{ac};width:72px;">Económico</span>{_pb(ave_adj,ac,10)}</div>
   </div></div>
   <div class="card"><div class="ct">⚙️ Tasas de la obra {_E(obra)} <span style="font-size:.72rem;font-weight:400;color:#6b7280;">(aplica a todas las OTs de esta obra)</span></div><div class="cb">
     <form method="post" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;">
@@ -816,10 +853,10 @@ def economico_ot(ot_id):
       <div class="fg"><label>Impuestos <span class="auto">{cfg['pct_impuestos']:.1f}% costo directo</span></label><div class="rv">{_m(ra['imp'])}</div></div>
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">
       <div style="display:flex;justify-content:space-between;"><span style="font-size:.78rem;font-weight:700;">Total Costo Real</span>
-        <span style="font-weight:800;">{_m(r['tot'])}</span></div>
+        <span style="font-weight:800;">{_m(r_tot_adj)}</span></div>
       <div style="padding:8px;border-radius:6px;background:#fafafe;border:1px solid #e0e7ff;margin-top:6px;">
-        <div style="font-size:.7rem;color:#6b7280;">Resultado (PV − Costo Real)</div>
-        <div style="font-weight:800;font-size:1rem;color:{mc};">{_m(p['pv']-r['tot'])} <span style="font-size:.8rem;">({_pct(mg)})</span></div>
+        <div style="font-size:.7rem;color:#6b7280;">Resultado (PV − Costo Real Ajustado)</div>
+        <div style="font-weight:800;font-size:1rem;color:{mc};">{_m(p['pv']-r_tot_adj)} <span style="font-size:.8rem;">({_pct(mg_adj)})</span></div>
       </div>
     </div></div>
   </div>
