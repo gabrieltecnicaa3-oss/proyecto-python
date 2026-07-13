@@ -64,6 +64,34 @@ def _ensure_schema(db):
     except Exception:
         pass
     db.execute("""
+    CREATE TABLE IF NOT EXISTS economico_costos_reales_mensual (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        ot_id      INTEGER NOT NULL,
+        mes        VARCHAR(7)   NOT NULL,
+        concepto   VARCHAR(100) NOT NULL,
+        monto      REAL         DEFAULT 0,
+        updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP
+    )""")
+    # Migración única: mover datos del sistema anterior (fila única por OT) a la nueva tabla mensual
+    try:
+        import datetime as _dt
+        _mes_hoy = _dt.date.today().strftime("%Y-%m")
+        _old_rows = db.execute(
+            "SELECT ot_id,mat_real,pintura_real,subcontratos_real,COALESCE(ingenieria_real,0) "
+            "FROM economico_costos_reales "
+            "WHERE (mat_real>0 OR pintura_real>0 OR subcontratos_real>0 OR COALESCE(ingenieria_real,0)>0)"
+        ).fetchall()
+        for _r in _old_rows:
+            _oid, _mat, _pint, _sub, _ing = _r
+            _ya = db.execute("SELECT COUNT(*) FROM economico_costos_reales_mensual WHERE ot_id=?", (_oid,)).fetchone()[0]
+            if _ya == 0:
+                for _conc, _val in [("Materiales",_mat),("Pintura",_pint),("Subcontratos",_sub),("Ingeniería",_ing)]:
+                    if float(_val or 0) > 0:
+                        db.execute("INSERT INTO economico_costos_reales_mensual(ot_id,mes,concepto,monto) VALUES(?,?,?,?)",
+                                   (_oid, _mes_hoy, _conc, float(_val)))
+    except Exception:
+        pass
+    db.execute("""
     CREATE TABLE IF NOT EXISTS economico_gastos_fijos (
         id        INTEGER PRIMARY KEY AUTOINCREMENT,
         mes       VARCHAR(7)   NOT NULL,
@@ -138,11 +166,14 @@ def _calc_economico(db, ot_id, cfg):
     p_tc = p_cd + p_gg + p_imp
     p_pv = p_tc + p_ben
 
-    rm = db.execute("SELECT mat_real,pintura_real,subcontratos_real,COALESCE(ingenieria_real,0) FROM economico_costos_reales WHERE ot_id=?", (ot_id,)).fetchone()
-    r_mat  = float(rm[0] or 0) if rm else 0.0
-    r_pint = float(rm[1] or 0) if rm else 0.0
-    r_sub  = float(rm[2] or 0) if rm else 0.0
-    r_ing_real = float(rm[3] or 0) if rm else 0.0
+    _rm_rows = db.execute(
+        "SELECT concepto, COALESCE(SUM(monto),0) FROM economico_costos_reales_mensual "
+        "WHERE ot_id=? GROUP BY concepto", (ot_id,)).fetchall()
+    _rm = {row[0]: float(row[1] or 0) for row in _rm_rows}
+    r_mat      = _rm.get("Materiales",   0.0)
+    r_pint     = _rm.get("Pintura",      0.0)
+    r_sub      = _rm.get("Subcontratos", 0.0)
+    r_ing_real = _rm.get("Ingeniería",   0.0)
 
     hh = db.execute("SELECT COALESCE(SUM(horas),0) FROM partes_trabajo WHERE ot_id=?", (ot_id,)).fetchone()
     hh_total = float(hh[0] or 0) if hh else 0.0
@@ -615,17 +646,21 @@ def economico_ot(ot_id):
                          ingenieria_previsto,gastos_gen_previsto,impuestos_previsto,beneficio_previsto)
                         VALUES(?,?,?,?,?,?,?,?,?)""", (ot_id, *vals))
                 db.commit(); mensaje = "Presupuesto guardado."
-            elif accion == "guardar_costos_reales":
-                mat  = float(request.form.get("mat_real") or 0)
-                pint = float(request.form.get("pintura_real") or 0)
-                sub  = float(request.form.get("subcontratos_real") or 0)
-                ing  = float(request.form.get("ingenieria_real") or 0)
-                ex = db.execute("SELECT id FROM economico_costos_reales WHERE ot_id=?", (ot_id,)).fetchone()
-                if ex:
-                    db.execute("UPDATE economico_costos_reales SET mat_real=?,pintura_real=?,subcontratos_real=?,ingenieria_real=?,updated_at=CURRENT_TIMESTAMP WHERE ot_id=?", (mat,pint,sub,ing,ot_id))
+            elif accion == "agregar_costo_mensual":
+                mes_c    = (request.form.get("mes") or "").strip()
+                concepto = (request.form.get("concepto") or "").strip()
+                monto_c  = float(request.form.get("monto") or 0)
+                if not mes_c or not concepto or monto_c <= 0:
+                    error = "Completá mes, concepto y monto mayor a 0."
                 else:
-                    db.execute("INSERT INTO economico_costos_reales(ot_id,mat_real,pintura_real,subcontratos_real,ingenieria_real) VALUES(?,?,?,?,?)", (ot_id,mat,pint,sub,ing))
-                db.commit(); mensaje = "Costos reales guardados."
+                    db.execute(
+                        "INSERT INTO economico_costos_reales_mensual(ot_id,mes,concepto,monto) VALUES(?,?,?,?)",
+                        (ot_id, mes_c, concepto, monto_c))
+                    db.commit(); mensaje = f"Costo agregado: {concepto} {mes_c}."
+            elif accion == "eliminar_costo_mensual":
+                costo_id = int(request.form.get("costo_id") or 0)
+                db.execute("DELETE FROM economico_costos_reales_mensual WHERE id=? AND ot_id=?", (costo_id, ot_id))
+                db.commit(); mensaje = "Entrada eliminada."
             elif accion == "config_obra":
                 _save_config_obra(db, obra,
                     float(request.form.get("precio_hora_mo") or 0),
@@ -674,6 +709,34 @@ def economico_ot(ot_id):
 
     msg = (f'<div class="ok" style="margin-bottom:12px;">{_E(mensaje)}</div>' if mensaje else "")
     err = (f'<div class="er" style="margin-bottom:12px;">{_E(error)}</div>' if error else "")
+
+    import datetime as _dt_ec
+    _mes_actual = _dt_ec.date.today().strftime("%Y-%m")
+    _cr_rows = db.execute(
+        "SELECT id,mes,concepto,monto FROM economico_costos_reales_mensual "
+        "WHERE ot_id=? ORDER BY mes DESC, concepto", (ot_id,)).fetchall()
+    if _cr_rows:
+        _hist_filas = "".join(
+            f'<tr><td>{r[1]}</td><td>{_E(r[2])}</td>'
+            f'<td style="text-align:right;">{_m(r[3])}</td>'
+            f'<td><form method="post" style="margin:0;">'
+            f'<input type="hidden" name="accion" value="eliminar_costo_mensual">'
+            f'<input type="hidden" name="costo_id" value="{r[0]}">'
+            f'<button type="submit" style="background:none;border:none;color:#991b1b;cursor:pointer;" '
+            f'onclick="return confirm(\'Eliminar esta entrada?\');">&#128465;</button>'
+            f'</form></td></tr>'
+            for r in _cr_rows
+        )
+        _historial_html = (
+            '<div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:6px;'
+            'border-bottom:1px solid #e5e7eb;padding-bottom:4px;">Historial de cargas</div>'
+            '<div style="overflow-x:auto;"><table style="font-size:.8rem;width:100%;">'
+            '<thead><tr><th>Mes</th><th>Concepto</th>'
+            '<th style="text-align:right;">Monto</th><th></th></tr></thead>'
+            f'<tbody>{_hist_filas}</tbody></table></div>'
+        )
+    else:
+        _historial_html = '<div style="color:#9ca3af;font-size:.8rem;">Sin entradas cargadas aún.</div>'
 
     return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Económico OT {ot_id}</title>
@@ -730,16 +793,26 @@ def economico_ot(ot_id):
         <button type="submit" class="btn" style="background:#6366f1;color:#fff;width:100%;margin-top:8px;">💾 Guardar presupuesto</button>
       </form>
     </div></div>
-    <div class="card"><div class="ct">💸 Costos Reales</div><div class="cb">
+    <div class="card"><div class="ct">💸 Costos Reales — Carga Mensual</div><div class="cb">
       <form method="post" style="margin-bottom:16px;">
-        <input type="hidden" name="accion" value="guardar_costos_reales">
-        <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">Carga Manual</div>
-        <div class="fg"><label>Materiales reales ($)</label><input type="number" name="mat_real" step="0.01" min="0" value="{_fv(rm['mat'])}"></div>
-        <div class="fg"><label>Pintura real ($)</label><input type="number" name="pintura_real" step="0.01" min="0" value="{_fv(rm['pintura'])}"></div>
-        <div class="fg"><label>Ingeniería real ($)</label><input type="number" name="ingenieria_real" step="0.01" min="0" value="{_fv(rm['ing'])}"></div>
-        <div class="fg"><label>Subcontratos ($)</label><input type="number" name="subcontratos_real" step="0.01" min="0" value="{_fv(rm['sub'])}"></div>
-        <button type="submit" class="btn" style="background:#0891b2;color:#fff;width:100%;">💾 Guardar costos manuales</button>
+        <input type="hidden" name="accion" value="agregar_costo_mensual">
+        <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">Agregar entrada</div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
+          <div><label style="font-size:.75rem;">Mes</label><br>
+            <input type="month" name="mes" required style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;"
+            value="{_mes_actual}"></div>
+          <div><label style="font-size:.75rem;">Concepto</label><br>
+            <select name="concepto" required style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">
+              <option>Materiales</option><option>Pintura</option>
+              <option>Ingeniería</option><option>Subcontratos</option>
+            </select></div>
+          <div><label style="font-size:.75rem;">Monto ($)</label><br>
+            <input type="number" name="monto" step="0.01" min="0.01" required
+              style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;width:140px;"></div>
+          <button type="submit" class="btn" style="background:#0891b2;color:#fff;">➕ Agregar</button>
+        </div>
       </form>
+      {_historial_html}
       <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">Calculados automáticamente <span class="auto">AUTO</span></div>
       <div class="fg"><label>Mano de Obra <span class="auto">{data['hh']:,.1f} HH × ${cfg['precio_hora_mo']:,.2f}</span></label><div class="rv">{_m(ra['mo'])}</div></div>
       <div class="fg"><label>Consumibles <span class="auto">{data['hh']:,.1f} HH × ${cfg['precio_hora_cons']:,.2f}</span></label><div class="rv">{_m(ra['cons'])}</div></div>
