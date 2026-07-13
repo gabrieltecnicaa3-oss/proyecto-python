@@ -1334,10 +1334,10 @@ def economico_dashboard_ejecutivo():
     gf_mes_costs = {str(r[0]): float(r[1] or 0) for r in gf_rows}
     total_gf_real = sum(gf_mes_costs.values())
 
-    # Ahora calculamos saldo real con total de estructura (mantenimiento + gastos fijos)
-    _total_estructura = total_mant_real + total_gf_real
-    saldo_prev   = total_gg_prev - _total_estructura
-    pct_cob_prev = min((total_gg_prev / _total_estructura * 100.0) if _total_estructura > 0 else 100.0, 200.0)
+    # Ahora calculamos saldo con total de estructura (mantenimiento + gastos fijos)
+    total_estructura_real = total_mant_real + total_gf_real
+    saldo_prev   = total_gg_prev - total_estructura_real
+    pct_cob_prev = min((total_gg_prev / total_estructura_real * 100.0) if total_estructura_real > 0 else 100.0, 200.0)
 
     # Series para el chart — unión de todos los meses con datos
     _all_meses = sorted(set(mant_mes_costs.keys()) | set(gf_mes_costs.keys()))
