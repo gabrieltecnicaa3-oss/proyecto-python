@@ -181,9 +181,8 @@ def _calc_economico(db, ot_id, cfg):
     r_mo   = hh_total * cfg["precio_hora_mo"]
     r_cons = hh_total * cfg["precio_hora_cons"]
     r_cd   = r_mat + r_pint + r_sub + r_mo + r_cons + r_ing_real
-    r_gg   = r_cd * cfg["pct_gastos_gen"] / 100.0
     r_imp  = r_cd * cfg["pct_impuestos"] / 100.0
-    r_tot  = r_cd + r_gg + r_imp
+    r_tot  = r_cd + r_imp
 
     kg_row = db.execute(
         """SELECT COALESCE(SUM(CAST(p.peso AS REAL)),0)
@@ -199,7 +198,7 @@ def _calc_economico(db, ot_id, cfg):
         "p":  {"mat":p_mat,"pintura":p_pint,"mo":p_mo,"cons":p_cons,
                "ing":p_ing,"gg":p_gg,"imp":p_imp,"ben":p_ben,"cd":p_cd,"tc":p_tc,"pv":p_pv},
         "rm": {"mat":r_mat,"pintura":r_pint,"sub":r_sub,"ing":r_ing_real},
-        "ra": {"mo":r_mo,"cons":r_cons,"gg":r_gg,"imp":r_imp},
+        "ra": {"mo":r_mo,"cons":r_cons,"imp":r_imp},
         "r":  {"cd":r_cd,"tot":r_tot},
         "hh": hh_total, "kg": kg, "avf": avf,
         "ave": min((r_tot/p_tc*100.0) if p_tc>0 else 0.0, 999.9),
@@ -209,7 +208,7 @@ def _calc_economico(db, ot_id, cfg):
 def _aggregate_obra(ots_data):
     agg = {k:0.0 for k in ["p_mat","p_pint","p_mo","p_cons","p_ing","p_gg","p_imp","p_ben",
                             "p_cd","p_tc","p_pv","r_mat","r_pint","r_sub","r_ing","r_mo","r_cons",
-                            "r_gg","r_imp","r_cd","r_tot","hh","kg"]}
+                            "r_imp","r_cd","r_tot","hh","kg"]}
     avf_list = []
     for d in ots_data:
         for k,v in [("p_mat",d["p"]["mat"]),("p_pint",d["p"]["pintura"]),("p_mo",d["p"]["mo"]),
@@ -217,7 +216,7 @@ def _aggregate_obra(ots_data):
                     ("p_imp",d["p"]["imp"]),("p_ben",d["p"]["ben"]),("p_cd",d["p"]["cd"]),
                     ("p_tc",d["p"]["tc"]),("p_pv",d["p"]["pv"]),
                     ("r_mat",d["rm"]["mat"]),("r_pint",d["rm"]["pintura"]),("r_sub",d["rm"]["sub"]),("r_ing",d["rm"]["ing"]),
-                    ("r_mo",d["ra"]["mo"]),("r_cons",d["ra"]["cons"]),("r_gg",d["ra"]["gg"]),
+                    ("r_mo",d["ra"]["mo"]),("r_cons",d["ra"]["cons"]),
                     ("r_imp",d["ra"]["imp"]),("r_cd",d["r"]["cd"]),("r_tot",d["r"]["tot"]),
                     ("hh",d["hh"]),("kg",d["kg"])]:
             agg[k] += v
@@ -319,7 +318,7 @@ def economico_config():
 <div class="fg"><label>$/HH — Consumibles</label>
   <input type="number" name="precio_hora_cons" step="0.01" min="0" value="{cfg['precio_hora_cons']}"></div>
 <div class="fg"><label>% Gastos Generales (sobre costo directo real)</label>
-  <input type="number" name="pct_gastos_gen" step="0.01" min="0" max="100" value="{cfg['pct_gastos_gen']}"></div>
+  <input type="number" name="pct_gastos_gen" step="0.01" min="0" max="100" value="{cfg['pct_gastos_gen']}"><p class="hint" style="color:#9ca3af;font-size:.7rem;">(ya no se usa en costos reales — GG se distribuye desde el overhead real)</p></div>
 <div class="fg"><label>% Impuestos (sobre costo directo real)</label>
   <input type="number" name="pct_impuestos" step="0.01" min="0" max="100" value="{cfg['pct_impuestos']}"></div>
 <button type="submit" class="btn" style="background:#6366f1;color:#fff;">Guardar config global</button>
@@ -525,7 +524,7 @@ def economico_obra(obra_nombre):
         ("Materiales",agg["p_mat"],agg["r_mat"]),("Pintura",agg["p_pint"],agg["r_pint"]),
         ("Mano de Obra",agg["p_mo"],agg["r_mo"]),("Consumibles",agg["p_cons"],agg["r_cons"]),
         ("Ingeniería",agg["p_ing"],agg["r_ing"]),("Subcontratos",0.0,agg["r_sub"]),
-        ("Gastos Generales",agg["p_gg"],agg["r_gg"]),("Impuestos",agg["p_imp"],agg["r_imp"])]:
+        ("Impuestos",agg["p_imp"],agg["r_imp"])]:
         da = real-prev; dp = (da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c = _cd(da); ic = "▲" if da>0 else ("▼" if da<0 else "–")
         desv_filas += f"""<tr>
@@ -555,8 +554,6 @@ def economico_obra(obra_nombre):
         <input type="number" name="precio_hora_mo" step="0.01" min="0" value="{_fv(cfg['precio_hora_mo'])}"></div>
       <div style="min-width:130px;"><label>$/HH Consumibles</label>
         <input type="number" name="precio_hora_cons" step="0.01" min="0" value="{_fv(cfg['precio_hora_cons'])}"></div>
-      <div style="min-width:110px;"><label>% Gastos Generales</label>
-        <input type="number" name="pct_gastos_gen" step="0.01" min="0" max="100" value="{_fv(cfg['pct_gastos_gen'])}"></div>
       <div style="min-width:110px;"><label>% Impuestos</label>
         <input type="number" name="pct_impuestos" step="0.01" min="0" max="100" value="{_fv(cfg['pct_impuestos'])}"></div>
       <button type="submit" class="btn" style="background:#0891b2;color:#fff;">💾 Guardar</button>
@@ -697,7 +694,7 @@ def economico_ot(ot_id):
         ("Materiales",p["mat"],rm["mat"]),("Pintura",p["pintura"],rm["pintura"]),
         ("Mano de Obra",p["mo"],ra["mo"]),("Consumibles",p["cons"],ra["cons"]),
         ("Ingeniería",p["ing"],rm["ing"]),("Subcontratos",0.0,rm["sub"]),
-        ("Gastos Generales",p["gg"],ra["gg"]),("Impuestos",p["imp"],ra["imp"])]:
+        ("Impuestos",p["imp"],ra["imp"])]:        
         da=real-prev; dp=(da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c=_cd(da); ic="▲" if da>0 else ("▼" if da<0 else "–")
         desv_rows += f"""<tr>
@@ -816,7 +813,6 @@ def economico_ot(ot_id):
       <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">Calculados automáticamente <span class="auto">AUTO</span></div>
       <div class="fg"><label>Mano de Obra <span class="auto">{data['hh']:,.1f} HH × ${cfg['precio_hora_mo']:,.2f}</span></label><div class="rv">{_m(ra['mo'])}</div></div>
       <div class="fg"><label>Consumibles <span class="auto">{data['hh']:,.1f} HH × ${cfg['precio_hora_cons']:,.2f}</span></label><div class="rv">{_m(ra['cons'])}</div></div>
-      <div class="fg"><label>Gastos Generales <span class="auto">{cfg['pct_gastos_gen']:.1f}% costo directo</span></label><div class="rv">{_m(ra['gg'])}</div></div>
       <div class="fg"><label>Impuestos <span class="auto">{cfg['pct_impuestos']:.1f}% costo directo</span></label><div class="rv">{_m(ra['imp'])}</div></div>
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">
       <div style="display:flex;justify-content:space-between;"><span style="font-size:.78rem;font-weight:700;">Total Costo Real</span>
@@ -1270,7 +1266,7 @@ def economico_dashboard_ejecutivo():
             ("Consumibles",     agg["p_cons"], agg["r_cons"]),
             ("Ingeniería",      agg["p_ing"],  agg["r_ing"]),
             ("Subcontratos",    0.0,           agg["r_sub"]),
-            ("Gastos Generales",agg["p_gg"],   agg["r_gg"]),
+            ("Gastos Generales",agg["p_gg"],agg["r_gg"]),
             ("Impuestos",       agg["p_imp"],  agg["r_imp"]),
         ]:
             rubros_global[nm]["prev"] += prev
@@ -1557,76 +1553,83 @@ def economico_dashboard_ejecutivo():
         mant_panel_html = f"""
     <!-- Costos de Estructura / Mantenimiento -->
     <div class="card" style="border-top:3px solid #f59e0b;">
-      <div class="ct" style="background:#fefce8;color:#92400e;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+      <div class="ct" style="background:#fefce8;color:#92400e;font-size:.95rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
         <span>🏭 Costos de Estructura &amp; Mantenimiento
-          <span style="font-size:.72rem;font-weight:400;color:#a16207;margin-left:8px;">Overhead — sin ingreso directo</span>
+          <span style="font-size:.78rem;font-weight:400;color:#a16207;margin-left:8px;">Overhead — sin ingreso directo</span>
         </span>
         {gf_link}
       </div>
       <div class="cb">
-        <!-- KPIs -->
-        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
-          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;border-left:4px solid #f59e0b;">
-            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Obras mantenimiento</div>
-            <div style="font-size:1.1rem;font-weight:800;color:#92400e;">{_m(total_mant_real)}</div>
-            <div style="font-size:.7rem;color:#9ca3af;">{sum(d['hh'] for d in mant_data):,.0f} HH</div>
+        <!-- KPIs fila 1: presupuesto vs realidad -->
+        <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:16px;">
+          <div style="background:#f0fdf4;border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid #6366f1;">
+            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">GG Previstos en proyectos</div>
+            <div style="font-size:1.6rem;font-weight:900;color:#6366f1;line-height:1;">{_m(total_gg_prev)}</div>
+            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">presupuestados para cubrir overhead</div>
           </div>
-          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;border-left:4px solid #dc2626;">
-            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Gastos fijos</div>
-            <div style="font-size:1.1rem;font-weight:800;color:#dc2626;">{_m(total_gf_real)}</div>
-            <div style="font-size:.7rem;color:#9ca3af;">alquiler · servicios · etc.</div>
+          <div style="background:#fff7ed;border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid #f59e0b;">
+            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">Total Estructura Real</div>
+            <div style="font-size:1.6rem;font-weight:900;color:#92400e;line-height:1;">{_m(total_estructura_real)}</div>
+            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">mant. {_m(total_mant_real)} + gastos fijos {_m(total_gf_real)}</div>
           </div>
-          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:140px;border-left:4px solid #1e293b;">
-            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Total estructura</div>
-            <div style="font-size:1.1rem;font-weight:800;color:#1e293b;">{_m(total_estructura_real)}</div>
+          <div style="background:{'#f0fdf4' if saldo_prev>=0 else '#fef2f2'};border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid {saldo_real_c};">
+            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">{'✅ Saldo positivo' if saldo_prev>=0 else '❌ Déficit'}</div>
+            <div style="font-size:1.6rem;font-weight:900;color:{saldo_real_c};line-height:1;">{saldo_real_ic} {_m(abs(saldo_prev))}</div>
+            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">{pct_cob_prev:.0f}% del overhead cubierto por GG presupuestados</div>
           </div>
-          <div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:150px;border-left:4px solid {pct_total_c};">
-            <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">% sobre obras productivas</div>
-            <div style="font-size:1.1rem;font-weight:800;color:{pct_total_c};">{pct_total_overhead:.1f}%</div>
-            <div style="font-size:.7rem;color:#9ca3af;">de {_m(total_prod_real)}</div>
+          <div style="background:#fff;border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid {pct_total_c};">
+            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">Overhead / Obras productivas</div>
+            <div style="font-size:1.6rem;font-weight:900;color:{pct_total_c};line-height:1;">{pct_total_overhead:.1f}%</div>
+            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">de {_m(total_prod_real)} en costos reales</div>
           </div>
         </div>
-        <!-- Cobertura por Gastos Generales (solo real) -->
-        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px 16px;margin-bottom:16px;">
-          <div style="font-weight:700;color:#14532d;font-size:.82rem;margin-bottom:10px;">
-            📊 Cobertura del overhead con Gastos Generales de proyectos
-            <span style="font-weight:400;color:#6b7280;font-size:.74rem;margin-left:6px;">
-              GG Previstos (presupuestados) vs total real de estructura
-            </span>
-          </div>
-          <div style="display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:8px;">
-            <span style="font-weight:700;color:#6366f1;">GG Previstos en proyectos</span>
-            <span style="font-weight:700;color:#6366f1;">{_m(total_gg_prev)}</span>
-          </div>
-          <div style="border-left:3px solid #e5e7eb;margin-left:8px;padding-left:10px;margin-bottom:8px;">
-            <div style="display:flex;justify-content:space-between;font-size:.79rem;margin-bottom:4px;color:#374151;">
-              <span>⚒️ Obras mant. (ADM OBRAS · ADM TALLER — trabajos menores)</span>
+        <!-- KPIs fila 2: breakdown mantenimiento vs gastos fijos -->
+        <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:16px;">
+          <div style="background:#fff;border-radius:10px;padding:14px 18px;flex:1;min-width:180px;border:1px solid #fde68a;">
+            <div style="font-size:.8rem;color:#92400e;font-weight:700;margin-bottom:8px;">⚒️ Obras de Mantenimiento</div>
+            <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:4px;">
+              <span style="color:#6b7280;">Previsto</span>
+              <span style="font-weight:700;">{_m(total_mant_prev)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:6px;">
+              <span style="color:#6b7280;">Real</span>
               <span style="font-weight:700;">{_m(total_mant_real)}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;font-size:.79rem;color:#374151;">
-              <span>🏭 Gastos fijos (sueldos + servicios + alquiler)</span>
+            {(lambda d,p: f'<div style="font-size:.82rem;font-weight:700;color:{"#991b1b" if d>0 else "#166534"};">{"▲" if d>0 else "▼"} {_m(abs(d))} ({"+" if d>0 else ""}{(d/p*100):.1f}%)</div>' if p>0 else ''
+              )(total_mant_real-total_mant_prev, total_mant_prev)}
+            <div style="font-size:.76rem;color:#9ca3af;margin-top:4px;">{sum(d['hh'] for d in mant_data):,.0f} HH acumuladas</div>
+          </div>
+          <div style="background:#fff;border-radius:10px;padding:14px 18px;flex:1;min-width:180px;border:1px solid #fca5a5;">
+            <div style="font-size:.8rem;color:#dc2626;font-weight:700;margin-bottom:8px;">🏢 Gastos Fijos de Estructura</div>
+            <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:4px;">
+              <span style="color:#6b7280;">Acumulado real</span>
               <span style="font-weight:700;">{_m(total_gf_real)}</span>
             </div>
+            <div style="font-size:.76rem;color:#9ca3af;margin-top:4px;">sueldos · alquiler · servicios</div>
           </div>
-          <div style="display:flex;justify-content:space-between;font-size:.82rem;font-weight:700;margin-bottom:8px;border-top:1px solid #d1fae5;padding-top:6px;">
-            <span>Total estructura</span>
-            <span>{_m(total_estructura_real)}</span>
+        </div>
+        <!-- Barra de cobertura -->
+        <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:16px;">
+          <div style="font-size:.84rem;font-weight:700;color:#374151;margin-bottom:10px;">
+            📊 Cobertura del overhead: <span style="color:{saldo_real_c};">{pct_cob_prev:.0f}%</span>
+            <span style="font-weight:400;color:#6b7280;font-size:.78rem;margin-left:6px;">GG presupuestados vs estructura real</span>
           </div>
-          <div style="background:#e5e7eb;border-radius:4px;height:12px;margin-bottom:6px;">
-            <div style="background:{bar_real_c};border-radius:4px;height:12px;width:{bar_real_w:.1f}%;"></div>
+          <div style="background:#e5e7eb;border-radius:6px;height:16px;margin-bottom:8px;position:relative;">
+            <div style="background:{bar_real_c};border-radius:6px;height:16px;width:{bar_real_w:.1f}%;transition:width .3s;"></div>
+            <div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:700;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4);">{pct_cob_prev:.0f}%</div>
           </div>
-          <div style="font-size:.82rem;font-weight:700;color:{saldo_real_c};">
-            {saldo_real_ic} Saldo: {_m(abs(saldo_prev))} &nbsp;
-            <span style="font-weight:400;color:#6b7280;">({pct_cob_prev:.0f}% del overhead cubierto por GG previstos)</span>
+          <div style="display:flex;justify-content:space-between;font-size:.82rem;">
+            <span style="color:#6366f1;font-weight:700;">GG Prev: {_m(total_gg_prev)}</span>
+            <span style="color:#92400e;font-weight:700;">Estructura: {_m(total_estructura_real)}</span>
           </div>
         </div>
         <!-- Tabla OTs + Gráfico -->
         <div class="two" style="margin-bottom:0;">
           <div>
-            {"<table style='font-size:.83rem;'><thead><tr><th>Obra mantenimiento</th><th style='text-align:right;'>Costo Real</th><th style='text-align:right;'>HH</th></tr></thead><tbody>" + mant_filas + "</tbody></table>" if mant_filas else ""}
+            {"<table style='font-size:.85rem;'><thead><tr><th>Obra mantenimiento</th><th style='text-align:right;'>Costo Real</th><th style='text-align:right;'>HH</th></tr></thead><tbody>" + mant_filas + "</tbody></table>" if mant_filas else ""}
           </div>
           <div style="position:relative;min-height:180px;">
-            <div style="font-size:.78rem;font-weight:700;color:#374151;margin-bottom:6px;">Evolución mensual — estructura total</div>
+            <div style="font-size:.82rem;font-weight:700;color:#374151;margin-bottom:6px;">Evolución mensual — estructura total</div>
             <div style="position:relative;height:160px;"><canvas id="chartMant"></canvas></div>
           </div>
         </div>
