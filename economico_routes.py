@@ -1283,14 +1283,22 @@ def economico_dashboard_ejecutivo():
     costo_cd      = sum(o["r_cd"]          for o in obras_data)
     costo_cd_prev = sum(o["agg"]["p_cd"]   for o in obras_data)
     ae_prom       = sum(o["ae"]             for o in obras_data) / n_obras
-    # Riesgo global
+    # Riesgo global — basado en margen promedio proyectado del portfolio
+    # El margen promedio refleja la compensación entre obras buenas y malas.
+    # pct_riesgo actúa solo como agravante secundario en casos extremos.
     pct_riesgo  = n_riesgo / n_obras
-    if n_criticos > 0 or pct_riesgo >= 0.5:
+    if mg_prom < 5:
         riesgo_em, riesgo_lbl, riesgo_c = "🔴", "Alto", "#991b1b"
-    elif pct_riesgo >= 0.25:
-        riesgo_em, riesgo_lbl, riesgo_c = "🟠", "Medio", "#92400e"
+    elif mg_prom < 15:
+        if pct_riesgo >= 0.5:
+            riesgo_em, riesgo_lbl, riesgo_c = "🔴", "Alto", "#991b1b"
+        else:
+            riesgo_em, riesgo_lbl, riesgo_c = "🟠", "Medio", "#92400e"
     else:
-        riesgo_em, riesgo_lbl, riesgo_c = "🟢", "Bajo", "#166534"
+        if pct_riesgo >= 0.5:
+            riesgo_em, riesgo_lbl, riesgo_c = "🟠", "Medio", "#92400e"
+        else:
+            riesgo_em, riesgo_lbl, riesgo_c = "🟢", "Bajo", "#166534"
 
     # ── Ranking de desvíos ────────────────────────────────────────────────────
     # Rubros que siempre aparecen aunque prev=0 y real=0
@@ -1339,10 +1347,23 @@ def economico_dashboard_ejecutivo():
           <td>{af_bar}</td>
           <td>{ae_bar}</td>
           <td style="text-align:right;font-weight:700;color:{mc};">{o['mg_proy']:.1f}%</td>
-          <td style="text-align:right;color:#6b7280;">{_m(o['p_tc'])}</td>
+          <td style="text-align:right;color:#6b7280;">{_m(o['pv'])}</td>
           <td style="text-align:right;color:#6b7280;">{_m(o['r_tot'])}</td>
           <td style="text-align:center;font-size:1.3rem;">{o['sem_em']}</td>
         </tr>"""
+    # Fila de totales
+    total_pv   = sum(o['pv']    for o in obras_data)
+    total_real = sum(o['r_tot'] for o in obras_data)
+    total_mg   = ((total_pv - total_real) / total_pv * 100.0) if total_pv > 0 else 0.0
+    mc_tot     = _cm(total_mg)
+    tabla_obras += f"""<tr style="background:#f1f5f9;font-weight:700;border-top:2px solid #cbd5e1;">
+      <td colspan="2" style="font-size:.82rem;color:#374151;">TOTAL ({n_obras} obras)</td>
+      <td></td><td></td>
+      <td style="text-align:right;color:{mc_tot};">{total_mg:.1f}%</td>
+      <td style="text-align:right;">{_m(total_pv)}</td>
+      <td style="text-align:right;">{_m(total_real)}</td>
+      <td></td>
+    </tr>"""
 
     # Semáforos
     semaforos_html = ""
@@ -1519,7 +1540,7 @@ def economico_dashboard_ejecutivo():
         _kpi("Costo directo ejecutado",  _m(costo_cd),      "#1e293b", "acumulado") +
         _kpi("Costo directo previsto",   _m(costo_cd_prev), "#3b82f6", "presupuestado") +
         _kpi("Av. económico promedio",   f"{ae_prom:.1f}%", "#3b82f6", "sobre presupuesto") +
-        _kpi("Riesgo global",            f"{riesgo_em} {riesgo_lbl}", riesgo_c, f"{n_criticos} crítico{'s' if n_criticos!=1 else ''}")
+        _kpi("Riesgo global",            f"{riesgo_em} {riesgo_lbl}", riesgo_c, f"mg prom. {mg_prom:.1f}% · {n_criticos} obra{'s' if n_criticos!=1 else ''} crítica{'s' if n_criticos!=1 else ''}")
     )
 
     return f"""<!DOCTYPE html>
@@ -1582,7 +1603,7 @@ def economico_dashboard_ejecutivo():
               <th style="min-width:110px;">Av. Físico <span title="Estado de Avance ingresado manualmente en la OT (0–100%)" style="cursor:help;opacity:.7;font-weight:400;">ⓘ</span></th>
               <th style="min-width:110px;">Av. Económico <span title="Costo Total Real / Costo Total Presupuestado × 100. Superar 100% indica sobrecosto." style="cursor:help;opacity:.7;font-weight:400;">ⓘ</span></th>
               <th style="text-align:right;">Margen Proy.</th>
-              <th style="text-align:right;">Costo Previsto</th>
+              <th style="text-align:right;">Precio de Venta</th>
               <th style="text-align:right;">Costo Real</th>
               <th style="text-align:center;">Estado</th>
             </tr></thead>
