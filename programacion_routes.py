@@ -1657,23 +1657,31 @@ def programacion_index():
 <div class="panel" id="cumplimiento-section">
     <div class="collapsible-header" onclick="toggleSection('cumpl-body','cumpl-toggle')">
         <h3>📋 Cumplimiento de objetivos semanales</h3>
-        <button class="collapsible-toggle" id="cumpl-toggle">▼ Mostrar</button>
+        <button class="collapsible-toggle" id="cumpl-toggle">▲ Ocultar</button>
     </div>
-    <div class="collapsible-body" id="cumpl-body" style="max-height:0;display:none;">
+    <div class="collapsible-body" id="cumpl-body">
     <div class="cumpl-head" style="margin-top:10px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
             <a href="/modulo/programacion/cumplimientos-historial" class="btn btn-sec btn-sm">📋 Ver historial completo</a>
             {'' if es_obra else '<button onclick="printCumplimiento()" class="btn btn-sec btn-sm">🖨️ Imprimir</button>'}
         </div>
     </div>
-    <form method="get" action="{base_path}" class="cumpl-filter-form" style="margin-bottom:10px;">
+    <div style="background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:10px 14px;margin-bottom:12px;">
+        <b style="font-size:13px;color:#9a3412;">📅 Semana a evaluar</b>
+        <form method="get" action="{base_path}" class="cumpl-filter-form" style="margin-top:6px;margin-bottom:0;">
+            <label>Lunes de la semana:</label>
+            <input type="date" id="semana" name="semana" value="{semana_str}" style="width:170px;">
+            <label>Obra:</label>
+            <select name="obra" style="min-width:160px;">{obras_opts}</select>
+            <input type="hidden" name="fi" value="{fi_str}">
+            <input type="hidden" name="ff" value="{ff_str}">
+            <input type="hidden" name="cumplimiento" value="1">
+            <button type="submit" class="btn">🔍 Ver OTs de esa semana</button>
+        </form>
+    </div>
+    <form method="get" action="{base_path}" class="cumpl-filter-form" style="display:none;">
         <label>Semana (lunes):</label>
-        <input type="date" id="semana" name="semana" value="{semana_str}" style="width:170px;">
-        <label>Obra:</label>
-        <select name="obra" style="min-width:160px;">{obras_opts}</select>
-        <input type="hidden" name="fi" value="{fi_str}">
-        <input type="hidden" name="ff" value="{ff_str}">
-        <button type="submit" class="btn btn-sec">Ver semana</button>
+        <input type="date" name="semana_old_hidden" value="{semana_str}">
     </form>
 
     <div class="kpis" style="margin-top:0;">
