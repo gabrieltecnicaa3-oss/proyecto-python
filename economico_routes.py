@@ -1415,6 +1415,36 @@ def economico_dashboard_ejecutivo():
 
     resumen_html = "\n".join(f"<li>{item}</li>" for item in resumen_items)
 
+    # ── Distribución de gastos de estructura por costo directo ────────────────
+    # Cada proyecto absorbe overhead en proporción a su CD real.
+    # Costo ajustado = r_cd + GG_dist + r_imp (los impuestos se mantienen sobre CD propio)
+    _sum_r_cd = sum(o["r_cd"] for o in obras_data)
+    dist_rows_html = ""
+    total_gg_dist_check = 0.0
+    for o in obras_data:
+        _pct_cd  = (o["r_cd"] / _sum_r_cd * 100.0) if _sum_r_cd > 0 else 0.0
+        _gg_dist = total_estructura_real * (o["r_cd"] / _sum_r_cd) if _sum_r_cd > 0 else 0.0
+        total_gg_dist_check += _gg_dist
+        _imp     = o["agg"]["r_imp"]                        # impuestos (% sobre CD real)
+        _costo_aj = o["r_cd"] + _gg_dist + _imp            # CD real + overhead asignado + imp
+        _mg_aj   = ((o["pv"] - _costo_aj) / o["pv"] * 100.0) if o["pv"] > 0 else 0.0
+        _mc_aj   = _cm(_mg_aj)
+        _delta   = _mg_aj - o["mg_proy"]                   # diferencia vs margen proyectado
+        _delta_c = "#166534" if _delta >= 0 else "#991b1b"
+        _delta_s = f'{"▲" if _delta>=0 else "▼"} {abs(_delta):.1f}pp'
+        dist_rows_html += f"""<tr>
+          <td style="font-weight:700;color:#6366f1;">{_E(o['obra'])}</td>
+          <td style="text-align:right;">{_m(o['r_cd'])}</td>
+          <td style="text-align:right;color:#6b7280;">{_pct_cd:.1f}%</td>
+          <td style="text-align:right;font-weight:700;color:#f59e0b;">{_m(_gg_dist)}</td>
+          <td style="text-align:right;">{_m(_costo_aj)}</td>
+          <td style="text-align:right;">{_m(o['pv'])}</td>
+          <td style="text-align:right;font-weight:700;color:{_mc_aj};">{_mg_aj:.1f}%</td>
+          <td style="text-align:right;font-size:.75rem;color:{_delta_c};">{_delta_s}</td>
+        </tr>"""
+    # Fila total
+    _mg_total_aj = ((_pv_total - (_cproy_total - sum(o["agg"]["r_gg"] for o in obras_data) + total_estructura_real)) / _pv_total * 100.0) if _pv_total > 0 else 0.0
+
     # ── HTML ──────────────────────────────────────────────────────────────────
     # Tabla de obras
     tabla_obras = ""
@@ -1746,6 +1776,47 @@ def economico_dashboard_ejecutivo():
     </div>
 
     {mant_panel_html}
+
+    <!-- Distribución de Gastos de Estructura por Obra -->
+    <div class="card" style="border-top:3px solid #f59e0b;">
+      <div class="ct" style="background:#fefce8;color:#92400e;">
+        ⚖️ Distribución de Gastos de Estructura por Obra
+        <span style="font-size:.72rem;font-weight:400;color:#a16207;margin-left:8px;">
+          overhead real ({_m(total_estructura_real)}) prorrateado por costo directo real de cada proyecto
+        </span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr>
+            <th>Obra</th>
+            <th style="text-align:right;">CD Real</th>
+            <th style="text-align:right;">% del total</th>
+            <th style="text-align:right;background:#fef3c7;color:#92400e;">GG asignado</th>
+            <th style="text-align:right;">Costo ajustado</th>
+            <th style="text-align:right;">Precio de Venta</th>
+            <th style="text-align:right;">Margen ajustado</th>
+            <th style="text-align:right;">Δ vs proy.</th>
+          </tr></thead>
+          <tbody>
+            {dist_rows_html}
+            <tr style="background:#f1f5f9;font-weight:700;border-top:2px solid #cbd5e1;">
+              <td>TOTAL</td>
+              <td style="text-align:right;">{_m(_sum_r_cd)}</td>
+              <td style="text-align:right;">100%</td>
+              <td style="text-align:right;color:#f59e0b;">{_m(total_estructura_real)}</td>
+              <td></td>
+              <td style="text-align:right;">{_m(_pv_total)}</td>
+              <td></td><td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:10px 16px;font-size:.74rem;color:#6b7280;border-top:1px solid #e5e7eb;">
+        <b>Costo ajustado</b> = CD Real + GG asignado + Impuestos propios.
+        <b>Δ vs proy.</b> = diferencia en puntos porcentuales respecto al margen proyectado por presupuesto.
+        Overhead total incluye obras de mantenimiento + gastos fijos de estructura.
+      </div>
+    </div>
 
   </div>
 
