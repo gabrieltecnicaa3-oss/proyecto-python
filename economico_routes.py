@@ -653,10 +653,10 @@ def economico_obra(obra_nombre):
 @economico_bp.route("/modulo/economico/ot/<int:ot_id>", methods=["GET", "POST"])
 def economico_ot(ot_id):
     db = get_db(); _ensure_schema(db)
-    ot = db.execute("SELECT id,cliente,obra,titulo,tipo_estructura,estado FROM ordenes_trabajo WHERE id=?", (ot_id,)).fetchone()
+    ot = db.execute("SELECT id,cliente,obra,titulo,tipo_estructura,estado,COALESCE(es_mantenimiento,0) FROM ordenes_trabajo WHERE id=?", (ot_id,)).fetchone()
     if not ot:
         return "OT no encontrada", 404
-    _, cliente, obra, titulo, tipo, estado = ot
+    _, cliente, obra, titulo, tipo, estado, es_mantenimiento = ot
     obra = obra or ""
     cfg  = _get_config_obra(db, obra)
     mensaje = error = ""
@@ -706,8 +706,42 @@ def economico_ot(ot_id):
 
     data = _calc_economico(db, ot_id, cfg)
     p = data["p"]; rm = data["rm"]; ra = data["ra"]; r = data["r"]
-    avf = data["avf"]; ave = data["ave"]
-    mg = ((p["pv"]-r["tot"])/p["pv"]*100.0) if p["pv"]>0 else 0.0
+    avf = data["avf"]
+
+    # GG real distribuido por OT (solo para OTs productivas):
+    # overhead real total * (CD real de la OT / CD real total de OTs productivas).
+    gg_real_ot = 0.0
+    if not int(es_mantenimiento or 0):
+      prod_rows = db.execute(
+        "SELECT id, obra FROM ordenes_trabajo WHERE COALESCE(es_mantenimiento,0)=0"
+      ).fetchall()
+      total_prod_cd = 0.0
+      cfg_cache = {}
+      for _id, _obra in prod_rows:
+        _obra = str(_obra or "")
+        if _obra not in cfg_cache:
+          cfg_cache[_obra] = _get_config_obra(db, _obra)
+        _d = _calc_economico(db, _id, cfg_cache[_obra])
+        total_prod_cd += _d["r"]["cd"]
+
+      mant_rows = db.execute(
+        "SELECT id, obra FROM ordenes_trabajo WHERE COALESCE(es_mantenimiento,0)=1"
+      ).fetchall()
+      total_mant_real = 0.0
+      for _id, _obra in mant_rows:
+        _obra = str(_obra or "")
+        if _obra not in cfg_cache:
+          cfg_cache[_obra] = _get_config_obra(db, _obra)
+        _d = _calc_economico(db, _id, cfg_cache[_obra])
+        total_mant_real += _d["r"]["tot"]
+
+      total_gf_real = float(db.execute("SELECT COALESCE(SUM(monto),0) FROM economico_gastos_fijos").fetchone()[0] or 0.0)
+      total_estructura_real = total_mant_real + total_gf_real
+      gg_real_ot = (total_estructura_real * (r["cd"] / total_prod_cd)) if total_prod_cd > 0 else 0.0
+
+    r_tot_adj = r["tot"] + gg_real_ot
+    ave = min((r_tot_adj / p["tc"] * 100.0) if p["tc"] > 0 else 0.0, 999.9)
+    mg = ((p["pv"]-r_tot_adj)/p["pv"]*100.0) if p["pv"]>0 else 0.0
     mc = _cm(mg)
     ac = "#991b1b" if ave>avf+5 else ("#166534" if ave<=avf else "#92400e")
 
@@ -720,7 +754,7 @@ def economico_ot(ot_id):
 
     kpi_html = (
         _kc("$/kg Prev.", _m(p["pv"]/data["kg"] if data["kg"]>0 else 0), f"{data['kg']:,.1f} kg") +
-        _kc("$/kg Real",  _m(r["tot"]/data["kg"] if data["kg"]>0 else 0), "", "#1e293b") +
+        _kc("$/kg Real",  _m(r_tot_adj/data["kg"] if data["kg"]>0 else 0), "", "#1e293b") +
         _kc("Margen Prev.", _pct(p["ben"]/p["pv"]*100 if p["pv"]>0 else 0), _m(p["ben"]), "#3b82f6") +
         _kc("Margen Real",  _pct(mg), f"PV {_m(p['pv'])}", mc) +
         _kc("Av.Físico", _pct(avf), "estado OT", "#10b981") +
@@ -731,7 +765,7 @@ def economico_ot(ot_id):
         ("Materiales",p["mat"],rm["mat"]),("Pintura",p["pintura"],rm["pintura"]),
         ("Mano de Obra",p["mo"],ra["mo"]),("Consumibles",p["cons"],ra["cons"]),
         ("Ingeniería",p["ing"],rm["ing"]),("Subcontratos",0.0,rm["sub"]),
-        ("Impuestos",p["imp"],ra["imp"])]:
+      ("Gastos Generales",p["gg"],gg_real_ot),("Impuestos",p["imp"],ra["imp"])]:
         da=real-prev; dp=(da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c=_cd(da); ic="▲" if da>0 else ("▼" if da<0 else "–")
         desv_rows += f"""<tr>
@@ -850,13 +884,14 @@ def economico_ot(ot_id):
       <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">Calculados automáticamente <span class="auto">AUTO</span></div>
       <div class="fg"><label>Mano de Obra <span class="auto">{data['hh']:,.1f} HH × ${cfg['precio_hora_mo']:,.2f}</span></label><div class="rv">{_m(ra['mo'])}</div></div>
       <div class="fg"><label>Consumibles <span class="auto">{data['hh']:,.1f} HH × ${cfg['precio_hora_cons']:,.2f}</span></label><div class="rv">{_m(ra['cons'])}</div></div>
+      <div class="fg"><label>Gastos Generales <span class="auto">distribución overhead real</span></label><div class="rv">{_m(gg_real_ot)}</div></div>
       <div class="fg"><label>Impuestos <span class="auto">{cfg['pct_impuestos']:.1f}% costo directo</span></label><div class="rv">{_m(ra['imp'])}</div></div>
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">
       <div style="display:flex;justify-content:space-between;"><span style="font-size:.78rem;font-weight:700;">Total Costo Real</span>
-        <span style="font-weight:800;">{_m(r['tot'])}</span></div>
+        <span style="font-weight:800;">{_m(r_tot_adj)}</span></div>
       <div style="padding:8px;border-radius:6px;background:#fafafe;border:1px solid #e0e7ff;margin-top:6px;">
         <div style="font-size:.7rem;color:#6b7280;">Resultado (PV − Costo Real)</div>
-        <div style="font-weight:800;font-size:1rem;color:{mc};">{_m(p['pv']-r['tot'])} <span style="font-size:.8rem;">({_pct(mg)})</span></div>
+        <div style="font-weight:800;font-size:1rem;color:{mc};">{_m(p['pv']-r_tot_adj)} <span style="font-size:.8rem;">({_pct(mg)})</span></div>
       </div>
     </div></div>
   </div>
@@ -867,9 +902,9 @@ def economico_ot(ot_id):
       <tbody>{desv_rows}
         <tr style="background:#f1f5f9;font-weight:700;">
           <td>TOTAL COSTOS</td>
-          <td style="text-align:right;">{_m(p['tc'])}</td><td style="text-align:right;">{_m(r['tot'])}</td>
-          <td style="text-align:right;color:{_cd(r['tot']-p['tc'])};">{"▲" if r["tot"]>p["tc"] else "▼"} {_m(abs(r["tot"]-p["tc"]))}</td>
-          <td style="text-align:right;color:{_cd(r['tot']-p['tc'])};">{_pct(abs((r["tot"]-p["tc"])/p["tc"]*100) if p["tc"] else 0)}</td>
+          <td style="text-align:right;">{_m(p['tc'])}</td><td style="text-align:right;">{_m(r_tot_adj)}</td>
+          <td style="text-align:right;color:{_cd(r_tot_adj-p['tc'])};">{"▲" if r_tot_adj>p["tc"] else "▼"} {_m(abs(r_tot_adj-p["tc"]))}</td>
+          <td style="text-align:right;color:{_cd(r_tot_adj-p['tc'])};">{_pct(abs((r_tot_adj-p["tc"])/p["tc"]*100) if p["tc"] else 0)}</td>
         </tr>
       </tbody>
     </table></div>
