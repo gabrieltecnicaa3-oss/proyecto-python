@@ -1352,9 +1352,15 @@ def economico_dashboard_ejecutivo():
           <td style="text-align:center;font-size:1.3rem;">{o['sem_em']}</td>
         </tr>"""
     # Fila de totales
+    # El margen proyectado del portfolio extrapola cada obra a su costo final
+    # (igual que hacen las filas individuales: r_tot / (af/100) si af>0)
     total_pv   = sum(o['pv']    for o in obras_data)
     total_real = sum(o['r_tot'] for o in obras_data)
-    total_mg   = ((total_pv - total_real) / total_pv * 100.0) if total_pv > 0 else 0.0
+    total_costo_proy = sum(
+        o['r_tot'] / (o['af'] / 100.0) if o['af'] > 0 else o['r_tot']
+        for o in obras_data
+    )
+    total_mg   = ((total_pv - total_costo_proy) / total_pv * 100.0) if total_pv > 0 else 0.0
     mc_tot     = _cm(total_mg)
     tabla_obras += f"""<tr style="background:#f1f5f9;font-weight:700;border-top:2px solid #cbd5e1;">
       <td colspan="2" style="font-size:.82rem;color:#374151;">TOTAL ({n_obras} obras)</td>
