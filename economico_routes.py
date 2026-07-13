@@ -294,11 +294,10 @@ def economico_config():
   if request.method == "POST":
     try:
       db.execute(
-        "UPDATE economico_config SET precio_hora_mo=?,precio_hora_cons=?,pct_gastos_gen=?,pct_impuestos=?,updated_at=CURRENT_TIMESTAMP",
+        "UPDATE economico_config SET precio_hora_mo=?,precio_hora_cons=?,pct_impuestos=?,updated_at=CURRENT_TIMESTAMP",
         (
           float(request.form.get("precio_hora_mo") or 0),
           float(request.form.get("precio_hora_cons") or 0),
-          float(request.form.get("pct_gastos_gen") or 5),
           float(request.form.get("pct_impuestos") or 3),
         ),
       )
@@ -324,8 +323,6 @@ def economico_config():
   <p class="hint">MO real = HH × este valor</p></div>
 <div class="fg"><label>$/HH — Consumibles</label>
   <input type="number" name="precio_hora_cons" step="0.01" min="0" value="{cfg['precio_hora_cons']}"></div>
-<div class="fg"><label>% Gastos Generales (sobre costo directo real)</label>
-  <input type="number" name="pct_gastos_gen" step="0.01" min="0" max="100" value="{cfg['pct_gastos_gen']}"><p class="hint" style="color:#9ca3af;font-size:.7rem;">(ya no se usa en costos reales — GG se distribuye desde el overhead real)</p></div>
 <div class="fg"><label>% Impuestos (sobre costo directo real)</label>
   <input type="number" name="pct_impuestos" step="0.01" min="0" max="100" value="{cfg['pct_impuestos']}"></div>
 <button type="submit" class="btn" style="background:#6366f1;color:#fff;">Guardar config global</button>
