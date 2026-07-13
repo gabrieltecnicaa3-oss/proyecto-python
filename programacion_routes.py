@@ -64,6 +64,7 @@ def _get_operarios_disponibles_cached(db) -> int:
         AND TRIM(COALESCE(nombre, '')) <> ''
         AND LOWER(TRIM(COALESCE(puesto_tipo, puesto, ''))) NOT LIKE '%supervisor%'
         AND LOWER(TRIM(COALESCE(puesto_tipo, puesto, ''))) NOT LIKE '%encargado%'
+        AND LOWER(TRIM(COALESCE(puesto_tipo, puesto, ''))) NOT LIKE '%subcontrat%'
         """
     ).fetchone()[0] or 0
 
