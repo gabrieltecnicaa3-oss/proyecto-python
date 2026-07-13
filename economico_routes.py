@@ -1279,10 +1279,18 @@ def economico_dashboard_ejecutivo():
     # ── KPIs globales ─────────────────────────────────────────────────────────
     n_riesgo    = sum(1 for o in obras_data if o["sem_lbl"] in ("Crítico","Atención"))
     n_criticos  = sum(1 for o in obras_data if o["sem_lbl"] == "Crítico")
-    mg_prom     = sum(o["mg_proy"] for o in obras_data) / n_obras
     costo_cd      = sum(o["r_cd"]          for o in obras_data)
     costo_cd_prev = sum(o["agg"]["p_cd"]   for o in obras_data)
     ae_prom       = sum(o["ae"]             for o in obras_data) / n_obras
+    # Margen proyectado del portfolio: ponderado por valor de obra (mismo criterio
+    # que la fila TOTAL). Evita que obras sin avance (af=0, costo=0) inflen el promedio
+    # con un 100% ficticio, y que obras pequeñas pesen igual que grandes.
+    _pv_total   = sum(o["pv"] for o in obras_data)
+    _cproy_total = sum(
+        o["r_tot"] / (o["af"] / 100.0) if o["af"] > 0 else o["r_tot"]
+        for o in obras_data
+    )
+    mg_prom = ((_pv_total - _cproy_total) / _pv_total * 100.0) if _pv_total > 0 else 0.0
     # Riesgo global — basado en margen promedio proyectado del portfolio
     # El margen promedio refleja la compensación entre obras buenas y malas.
     # pct_riesgo actúa solo como agravante secundario en casos extremos.
@@ -1351,16 +1359,10 @@ def economico_dashboard_ejecutivo():
           <td style="text-align:right;color:#6b7280;">{_m(o['r_tot'])}</td>
           <td style="text-align:center;font-size:1.3rem;">{o['sem_em']}</td>
         </tr>"""
-    # Fila de totales
-    # El margen proyectado del portfolio extrapola cada obra a su costo final
-    # (igual que hacen las filas individuales: r_tot / (af/100) si af>0)
-    total_pv   = sum(o['pv']    for o in obras_data)
+    # Fila de totales — reutiliza _pv_total y _cproy_total calculados en KPIs globales
+    total_pv   = _pv_total
     total_real = sum(o['r_tot'] for o in obras_data)
-    total_costo_proy = sum(
-        o['r_tot'] / (o['af'] / 100.0) if o['af'] > 0 else o['r_tot']
-        for o in obras_data
-    )
-    total_mg   = ((total_pv - total_costo_proy) / total_pv * 100.0) if total_pv > 0 else 0.0
+    total_mg   = mg_prom  # idéntico cálculo ponderado
     mc_tot     = _cm(total_mg)
     tabla_obras += f"""<tr style="background:#f1f5f9;font-weight:700;border-top:2px solid #cbd5e1;">
       <td colspan="2" style="font-size:.82rem;color:#374151;">TOTAL ({n_obras} obras)</td>
