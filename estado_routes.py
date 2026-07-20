@@ -917,6 +917,15 @@ body {
       <option value="mes-ano">Este mes vs Mismo mes año anterior</option>
     </select>
   </div>
+
+  <div class="filter-card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <label style="color:#9a3412; font-weight:bold; margin-right:4px;">📆 Ver semana específica:</label>
+    <select id="semana-selector" onchange="cambiarSemanaSelector()" style="padding:8px 12px; border:1px solid #fdba74; border-radius:6px; color:#7c2d12; font-weight:bold; min-width:220px;">
+      <option value="">— Todas las semanas —</option>
+    </select>
+    <button onclick="limpiarFiltroSemana()" style="padding:8px 14px; background:#94a3b8; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:bold;">✕ Limpiar semana</button>
+    <span id="semana-label-txt" style="font-size:0.85em; color:#9a3412; font-style:italic;"></span>
+  </div>
   
   <div id="comparacion-seccion" style="display:none; background:rgba(255,255,255,0.88); border-radius:12px; padding:20px; border:2px solid #f97316; margin-bottom:20px; box-shadow:0 6px 18px rgba(154,52,18,0.1);">
     <h3 style="color:#7c2d12; margin-bottom:16px; text-align:center;">📈 Comparación de Períodos</h3>
@@ -1041,7 +1050,7 @@ body {
     </div>
 
         <div class="chart-full">
-                                <h3>⏱ HS Consumidas vs HS Previstas por Obra (OTs agrupadas)</h3>
+                                <h3>⏱ HS Reales Acumuladas vs Previstas vs Programadas por Obra</h3>
         <div id="no-data-hs" class="no-data-msg" style="display:none">Sin datos de horas por obra para el período seleccionado.</div>
         <canvas id="chartHS"></canvas>
     </div>
@@ -1306,6 +1315,64 @@ function limpiarFiltroFechas() {
     
     // Recargar con el período actual sin filtro de fechas
     cargarDatos(periodoActivo);
+}
+
+function _llenarSelectorSemanas() {
+    const sel = document.getElementById('semana-selector');
+    if (!sel) return;
+    const today = new Date();
+    // Calcular el lunes de la semana actual
+    const dow = today.getDay() === 0 ? 6 : today.getDay() - 1; // 0=lunes
+    const lunesActual = new Date(today);
+    lunesActual.setDate(today.getDate() - dow);
+    lunesActual.setHours(0,0,0,0);
+    for (let i = 0; i < 16; i++) {
+        const inicio = new Date(lunesActual);
+        inicio.setDate(lunesActual.getDate() - i * 7);
+        const fin = new Date(inicio);
+        fin.setDate(inicio.getDate() + 6);
+        const pad = n => String(n).padStart(2, '0');
+        const fmtVal = d => d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
+        const label = (i === 0 ? 'Semana actual: ' : '') +
+            pad(inicio.getDate()) + '/' + pad(inicio.getMonth()+1) + ' al ' +
+            pad(fin.getDate()) + '/' + pad(fin.getMonth()+1) + '/' + fin.getFullYear();
+        const opt = document.createElement('option');
+        opt.value = fmtVal(inicio) + '|' + fmtVal(fin);
+        opt.textContent = label;
+        sel.appendChild(opt);
+    }
+}
+
+function cambiarSemanaSelector() {
+    const sel = document.getElementById('semana-selector');
+    const val = sel.value;
+    const lblEl = document.getElementById('semana-label-txt');
+    if (!val) {
+        filtroFechaInicio = null;
+        filtroFechaFin = null;
+        if (document.getElementById('filtro-fecha-inicio').value === filtroFechaInicio) {
+            document.getElementById('filtro-fecha-inicio').value = '';
+            document.getElementById('filtro-fecha-fin').value = '';
+        }
+        if (lblEl) lblEl.textContent = '';
+        cargarDatos(periodoActivo);
+        return;
+    }
+    const parts = val.split('|');
+    filtroFechaInicio = parts[0];
+    filtroFechaFin = parts[1];
+    document.getElementById('filtro-fecha-inicio').value = parts[0];
+    document.getElementById('filtro-fecha-fin').value = parts[1];
+    if (lblEl) lblEl.textContent = 'Mostrando: ' + sel.options[sel.selectedIndex].text;
+    cargarDatos(periodoActivo);
+}
+
+function limpiarFiltroSemana() {
+    const sel = document.getElementById('semana-selector');
+    if (sel) sel.value = '';
+    const lblEl = document.getElementById('semana-label-txt');
+    if (lblEl) lblEl.textContent = '';
+    limpiarFiltroFechas();
 }
 
 function mostrarComparacion() {
@@ -1587,14 +1654,14 @@ function renderDashboard(data) {
                 labels: hsObra.map(o => o.label),
                 datasets: [
                     {
-                        label: 'HS Totales Previstas',
+                        label: 'HS Previstas Totales',
                         data: hsObra.map(o => o.hs_previstas),
-                        backgroundColor: 'rgba(59, 130, 246, 0.18)', // azul claro translúcido
+                        backgroundColor: 'rgba(59, 130, 246, 0.18)',
                         borderColor: 'rgba(59, 130, 246, 0.35)',
                         borderWidth: 2,
                         borderRadius: 8,
-                        barPercentage: 1.0,
-                        categoryPercentage: 1.0,
+                        barPercentage: 0.85,
+                        categoryPercentage: 0.85,
                         type: 'bar',
                         order: 1,
                         z: 1
@@ -1602,25 +1669,25 @@ function renderDashboard(data) {
                     {
                         label: 'HS Según Avance Actual',
                         data: hsObra.map(o => o.hs_segun_avance || 0),
-                        backgroundColor: 'rgba(59, 130, 246, 0.85)', // azul intenso
+                        backgroundColor: 'rgba(59, 130, 246, 0.75)',
                         borderColor: '#1e40af',
                         borderWidth: 2,
                         borderRadius: 8,
-                        barPercentage: 0.7,
-                        categoryPercentage: 0.7,
+                        barPercentage: 0.85,
+                        categoryPercentage: 0.85,
                         type: 'bar',
                         order: 2,
                         z: 2
                     },
                     {
-                        label: 'HS Reales Totales',
-                        data: hsObra.map(o => o.hs_cargadas),
-                        backgroundColor: 'rgba(34, 197, 94, 0.85)', // verde
+                        label: 'HS Reales Acumuladas',
+                        data: hsObra.map(o => o.hs_reales_acumuladas || 0),
+                        backgroundColor: 'rgba(34, 197, 94, 0.85)',
                         borderColor: '#15803d',
                         borderWidth: 2,
                         borderRadius: 8,
-                        barPercentage: 0.45,
-                        categoryPercentage: 0.45,
+                        barPercentage: 0.85,
+                        categoryPercentage: 0.85,
                         type: 'bar',
                         order: 3,
                         z: 3
@@ -1763,6 +1830,7 @@ function renderDashboard(data) {
 }
 
 // Cargar datos iniciales
+_llenarSelectorSemanas();
 cargarDatos('mes');
 actualizarDescripcionTipo(tipoObraActivo);
 </script>
@@ -1965,6 +2033,24 @@ def api_dashboard_estado():
     """, tipo_params).fetchall()
     obras_disponibles = [str(r[0]) for r in obras_disponibles_rows if str(r[0] or '').strip()]
 
+    # HS acumuladas totales por obra (sin filtro de período)
+    _ot_ids_for_acum = [int(r[0]) for r in ots if r and r[0] is not None]
+    hs_acum_by_obra: dict = {}
+    if _ot_ids_for_acum:
+        _ph_acum = ",".join(["?"] * len(_ot_ids_for_acum))
+        _hs_acum_rows = db.execute(
+            f"""
+            SELECT COALESCE(NULLIF(TRIM(ot.obra),''), 'SIN OBRA') AS obra,
+                   COALESCE(SUM(pt.horas), 0) AS hs_totales
+            FROM ordenes_trabajo ot
+            LEFT JOIN partes_trabajo pt ON pt.ot_id = ot.id
+            WHERE ot.id IN ({_ph_acum})
+            GROUP BY obra
+            """,
+            tuple(_ot_ids_for_acum),
+        ).fetchall()
+        hs_acum_by_obra = {str(r[0] or 'SIN OBRA'): round(float(r[1] or 0), 1) for r in _hs_acum_rows}
+
     hs_por_obra = []
     for row in obras:
         obra_nombre = str(row[0] or 'SIN OBRA')
@@ -1976,6 +2062,7 @@ def api_dashboard_estado():
             "label": obra_nombre[:24],
             "hs_previstas": round(float(row[1] or 0), 1),
             "hs_cargadas": round(float(row[2] or 0), 1),
+            "hs_reales_acumuladas": hs_acum_by_obra.get(obra_nombre, 0.0),
             "hs_segun_avance": round(hs_segun_avance_suma, 1)
         })
     _perf_mark("obras_y_hs")
