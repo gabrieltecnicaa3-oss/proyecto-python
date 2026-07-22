@@ -482,6 +482,78 @@ def _calcular_kg_por_estacion_y_despachados(rows):
 @estado_bp.route("/modulo/estado")
 def estado_produccion():
     btn_pdf_html = "" if _es_usuario_obra() else '<a id="btn-pdf" href="#" onclick="exportarVistaPDF(); return false;" class="btn btn-pdf">📄 Generar reporte PDF</a>'
+
+    # ── Comparativa de períodos: HH y KG (servidor) ──────────────────────────
+    import json as _json_est
+    _db_est = get_db()
+    _today = date.today()
+    _w_start  = _today - timedelta(days=_today.weekday())
+    _w_end    = _today
+    _pw_start = _w_start - timedelta(days=7)
+    _pw_end   = _w_start - timedelta(days=1)
+    _m_start  = _today.replace(day=1)
+    _m_end    = _today
+    _pm_end   = _m_start - timedelta(days=1)
+    _pm_start = _pm_end.replace(day=1)
+
+    def _hh_p(d1, d2):
+        r = _db_est.execute(
+            "SELECT COALESCE(SUM(horas),0) FROM partes_trabajo WHERE fecha >= ? AND fecha <= ?",
+            (d1.isoformat(), d2.isoformat())).fetchone()
+        return float(r[0] or 0)
+
+    def _kg_p(d1, d2):
+        r = _db_est.execute(
+            """SELECT COALESCE(SUM(CAST(p.peso AS DECIMAL(12,4))), 0)
+               FROM (SELECT MAX(CAST(peso AS DECIMAL(12,4))) AS peso
+                     FROM procesos
+                     WHERE fecha >= ? AND fecha <= ?
+                       AND UPPER(TRIM(proceso)) = 'ARMADO'
+                       AND UPPER(TRIM(estado)) = 'OK'
+                       AND peso IS NOT NULL
+                     GROUP BY posicion, obra) p""",
+            (d1.isoformat(), d2.isoformat())).fetchone()
+        return float(r[0] or 0)
+
+    _hh_sa = _hh_p(_w_start,  _w_end)
+    _hh_sp = _hh_p(_pw_start, _pw_end)
+    _hh_ma = _hh_p(_m_start,  _m_end)
+    _hh_mp = _hh_p(_pm_start, _pm_end)
+    _kg_sa = _kg_p(_w_start,  _w_end)
+    _kg_sp = _kg_p(_pw_start, _pw_end)
+    _kg_ma = _kg_p(_m_start,  _m_end)
+    _kg_mp = _kg_p(_pm_start, _pm_end)
+
+    def _d(act, ant):
+        d = act - ant
+        p = (d / ant * 100) if ant > 0 else (100.0 if act > 0 else 0.0)
+        c = '#166534' if d >= 0 else '#991b1b'
+        a = '▲' if d > 0 else ('▼' if d < 0 else '–')
+        return d, p, c, a
+
+    _dHH_s = _d(_hh_sa, _hh_sp)
+    _dKG_s = _d(_kg_sa, _kg_sp)
+    _dHH_m = _d(_hh_ma, _hh_mp)
+    _dKG_m = _d(_kg_ma, _kg_mp)
+
+    def _badge(d, pct, color, arrow):
+        bg = '#dcfce7' if color == '#166534' else '#fee2e2'
+        return f'<span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;background:{bg};color:{color};white-space:nowrap;">{arrow} {abs(pct):.1f}%</span>'
+
+    _lbl_sa = f"Sem. act ({_w_start.strftime('%d/%m')}–{_w_end.strftime('%d/%m')})"
+    _lbl_sp = f"Sem. ant ({_pw_start.strftime('%d/%m')}–{_pw_end.strftime('%d/%m')})"
+    _lbl_ma = _m_start.strftime('%b %Y')
+    _lbl_mp = _pm_start.strftime('%b %Y')
+
+    _comp_chart = _json_est.dumps({
+        "hh": {"labels": [_lbl_sp, _lbl_sa, _lbl_mp, _lbl_ma],
+               "values": [round(_hh_sp,1), round(_hh_sa,1), round(_hh_mp,1), round(_hh_ma,1)],
+               "colors": ['#fdba74','#f97316','#fcd34d','#f59e0b']},
+        "kg": {"labels": [_lbl_sp, _lbl_sa, _lbl_mp, _lbl_ma],
+               "values": [round(_kg_sp,0), round(_kg_sa,0), round(_kg_mp,0), round(_kg_ma,0)],
+               "colors": ['#93c5fd','#3b82f6','#a5b4fc','#6366f1']},
+    })
+
     html = """<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -552,6 +624,23 @@ body {
     font-size: 0.8em;
 }
 .fecha-desde { margin-left: auto; color: #9a3412; font-size: 0.85em; font-style: italic; }
+.comp-periodo-panel {
+    background: rgba(255,255,255,0.92); border: 1px solid #fdba74; border-radius: 14px;
+    padding: 16px 20px; margin-bottom: 20px;
+    box-shadow: 0 4px 12px rgba(154,52,18,0.08);
+}
+.comp-periodo-title { font-size: 13px; font-weight: 700; color: #9a3412; margin-bottom: 12px; }
+.comp-bloques { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+.comp-bloque { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 10px; padding: 12px 16px; }
+.comp-bloque-title { font-size: 11px; font-weight: 700; color: #9a3412; text-transform: uppercase; margin-bottom: 10px; letter-spacing:.04em; }
+.comp-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.comp-lbl { font-size: 12px; color: #7c2d12; font-weight: 700; width: 26px; flex-shrink: 0; }
+.comp-val { font-size: 19px; font-weight: 900; color: #7c2d12; }
+.comp-prev { font-size: 11px; color: #9ca3af; }
+.comp-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.comp-chart-wrap { position: relative; height: 175px; }
+.comp-chart-lbl { font-size: 11px; font-weight: 700; color: #9a3412; margin-bottom: 4px; }
+@media (max-width: 700px) { .comp-bloques, .comp-charts { grid-template-columns: 1fr; } }
 .kpi-row {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
     gap: 16px; margin-bottom: 20px;
@@ -1838,6 +1927,85 @@ actualizarDescripcionTipo(tipoObraActivo);
 </html>
 """
     html = html.replace("__BTN_PDF_HTML__", btn_pdf_html)
+
+    # ── Panel comparativa HH/KG insertado server-side ────────────────────────
+    _comp_panel_html = f"""
+    <div class="comp-periodo-panel">
+      <div class="comp-periodo-title">📅 Comparativa de producción por período — HH y KG</div>
+      <div class="comp-bloques">
+        <div class="comp-bloque">
+          <div class="comp-bloque-title">📆 Esta semana vs semana anterior</div>
+          <div class="comp-row">
+            <span class="comp-lbl">HH</span>
+            <span class="comp-val">{_hh_sa:,.1f}</span>
+            <span class="comp-prev">ant: {_hh_sp:,.1f}</span>
+            {_badge(*_dHH_s)}
+          </div>
+          <div class="comp-row">
+            <span class="comp-lbl">KG</span>
+            <span class="comp-val">{_kg_sa:,.0f}</span>
+            <span class="comp-prev">ant: {_kg_sp:,.0f}</span>
+            {_badge(*_dKG_s)}
+          </div>
+          <div style="font-size:10px;color:#9ca3af;margin-top:4px;">{_lbl_sa} / {_lbl_sp}</div>
+        </div>
+        <div class="comp-bloque">
+          <div class="comp-bloque-title">📆 Este mes vs mes anterior</div>
+          <div class="comp-row">
+            <span class="comp-lbl">HH</span>
+            <span class="comp-val">{_hh_ma:,.1f}</span>
+            <span class="comp-prev">ant: {_hh_mp:,.1f}</span>
+            {_badge(*_dHH_m)}
+          </div>
+          <div class="comp-row">
+            <span class="comp-lbl">KG</span>
+            <span class="comp-val">{_kg_ma:,.0f}</span>
+            <span class="comp-prev">ant: {_kg_mp:,.0f}</span>
+            {_badge(*_dKG_m)}
+          </div>
+          <div style="font-size:10px;color:#9ca3af;margin-top:4px;">{_lbl_ma} / {_lbl_mp}</div>
+        </div>
+      </div>
+      <div class="comp-charts">
+        <div>
+          <div class="comp-chart-lbl">⏱ HH por período</div>
+          <div class="comp-chart-wrap"><canvas id="compChartHH"></canvas></div>
+        </div>
+        <div>
+          <div class="comp-chart-lbl">⚖️ KG armados por período</div>
+          <div class="comp-chart-wrap"><canvas id="compChartKG"></canvas></div>
+        </div>
+      </div>
+    </div>
+    <script>
+    (function() {{
+      var cd = {_comp_chart};
+      function mk(id, ds) {{
+        var ctx = document.getElementById(id);
+        if (!ctx) return;
+        new Chart(ctx, {{
+          type: 'bar',
+          data: {{ labels: ds.labels,
+                   datasets: [{{ data: ds.values, backgroundColor: ds.colors,
+                                 borderRadius: 5, borderSkipped: false }}] }},
+          options: {{
+            responsive: true, maintainAspectRatio: false,
+            plugins: {{ legend: {{ display: false }},
+                        tooltip: {{ callbacks: {{ label: function(c) {{ return ' ' + c.parsed.y.toLocaleString('es-AR'); }} }} }} }},
+            scales: {{
+              x: {{ ticks: {{ font: {{ size: 10 }}, maxRotation: 30 }} }},
+              y: {{ beginAtZero: true, ticks: {{ font: {{ size: 10 }} }}, grid: {{ color: '#fff7ed' }} }}
+            }}
+          }}
+        }});
+      }}
+      mk('compChartHH', cd.hh);
+      mk('compChartKG', cd.kg);
+    }})();
+    </script>
+    """
+    html = html.replace('<div class="tipos-board">', _comp_panel_html + '<div class="tipos-board">', 1)
+
     return html
 
 
