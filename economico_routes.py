@@ -1,10 +1,9 @@
-
 """
 Módulo Económico — Costos previstos vs reales agrupados por Obra
 KPIs: $/kg · Margen · Desvíos por rubro · Avance físico vs económico
 """
 import html as html_lib
-from flask import Blueprint, request, redirect
+from flask import Blueprint, request
 
 from db_utils import get_db
 
@@ -60,6 +59,46 @@ def _ensure_schema(db):
     )""")
     if not db.execute("SELECT id FROM economico_config LIMIT 1").fetchone():
         db.execute("INSERT INTO economico_config (precio_hora_mo,precio_hora_cons,pct_gastos_gen,pct_impuestos) VALUES (0,0,5.0,3.0)")
+    try:
+        db.execute("ALTER TABLE economico_costos_reales ADD COLUMN ingenieria_real REAL DEFAULT 0")
+    except Exception:
+        pass
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS economico_costos_reales_mensual (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        ot_id      INTEGER NOT NULL,
+        mes        VARCHAR(7)   NOT NULL,
+        concepto   VARCHAR(100) NOT NULL,
+        monto      REAL         DEFAULT 0,
+        updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP
+    )""")
+    # Migración única: mover datos del sistema anterior (fila única por OT) a la nueva tabla mensual
+    try:
+        import datetime as _dt
+        _mes_hoy = _dt.date.today().strftime("%Y-%m")
+        _old_rows = db.execute(
+            "SELECT ot_id,mat_real,pintura_real,subcontratos_real,COALESCE(ingenieria_real,0) "
+            "FROM economico_costos_reales "
+            "WHERE (mat_real>0 OR pintura_real>0 OR subcontratos_real>0 OR COALESCE(ingenieria_real,0)>0)"
+        ).fetchall()
+        for _r in _old_rows:
+            _oid, _mat, _pint, _sub, _ing = _r
+            _ya = db.execute("SELECT COUNT(*) FROM economico_costos_reales_mensual WHERE ot_id=?", (_oid,)).fetchone()[0]
+            if _ya == 0:
+                for _conc, _val in [("Materiales",_mat),("Pintura",_pint),("Subcontratos",_sub),("Ingeniería",_ing)]:
+                    if float(_val or 0) > 0:
+                        db.execute("INSERT INTO economico_costos_reales_mensual(ot_id,mes,concepto,monto) VALUES(?,?,?,?)",
+                                   (_oid, _mes_hoy, _conc, float(_val)))
+    except Exception:
+        pass
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS economico_gastos_fijos (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        mes       VARCHAR(7)   NOT NULL,
+        concepto  VARCHAR(255) NOT NULL,
+        monto     REAL         DEFAULT 0,
+        updated_at DATETIME   DEFAULT CURRENT_TIMESTAMP
+    )""")
     db.commit()
 
 
@@ -94,15 +133,15 @@ def _get_config_obra(db, obra):
     }
 
 
-def _save_config_obra(db, obra, pmo, pcons, pgg, pimp):
+def _save_config_obra(db, obra, pmo, pcons, pimp):
     ex = db.execute("SELECT id FROM economico_config_obra WHERE obra=?", (obra,)).fetchone()
     if ex:
         db.execute("""UPDATE economico_config_obra
-            SET precio_hora_mo=?,precio_hora_cons=?,pct_gastos_gen=?,pct_impuestos=?,updated_at=CURRENT_TIMESTAMP
-            WHERE obra=?""", (pmo, pcons, pgg, pimp, obra))
+            SET precio_hora_mo=?,precio_hora_cons=?,pct_impuestos=?,updated_at=CURRENT_TIMESTAMP
+            WHERE obra=?""", (pmo, pcons, pimp, obra))
     else:
-        db.execute("INSERT INTO economico_config_obra(obra,precio_hora_mo,precio_hora_cons,pct_gastos_gen,pct_impuestos) VALUES(?,?,?,?,?)",
-                   (obra, pmo, pcons, pgg, pimp))
+        db.execute("INSERT INTO economico_config_obra(obra,precio_hora_mo,precio_hora_cons,pct_impuestos) VALUES(?,?,?,?)",
+                   (obra, pmo, pcons, pimp))
     db.commit()
 
 
@@ -127,20 +166,23 @@ def _calc_economico(db, ot_id, cfg):
     p_tc = p_cd + p_gg + p_imp
     p_pv = p_tc + p_ben
 
-    rm = db.execute("SELECT mat_real,pintura_real,subcontratos_real FROM economico_costos_reales WHERE ot_id=?", (ot_id,)).fetchone()
-    r_mat  = float(rm[0] or 0) if rm else 0.0
-    r_pint = float(rm[1] or 0) if rm else 0.0
-    r_sub  = float(rm[2] or 0) if rm else 0.0
+    _rm_rows = db.execute(
+        "SELECT concepto, COALESCE(SUM(monto),0) FROM economico_costos_reales_mensual "
+        "WHERE ot_id=? GROUP BY concepto", (ot_id,)).fetchall()
+    _rm = {row[0]: float(row[1] or 0) for row in _rm_rows}
+    r_mat      = _rm.get("Materiales",   0.0)
+    r_pint     = _rm.get("Pintura",      0.0)
+    r_sub      = _rm.get("Subcontratos", 0.0)
+    r_ing_real = _rm.get("Ingeniería",   0.0)
 
     hh = db.execute("SELECT COALESCE(SUM(horas),0) FROM partes_trabajo WHERE ot_id=?", (ot_id,)).fetchone()
     hh_total = float(hh[0] or 0) if hh else 0.0
 
     r_mo   = hh_total * cfg["precio_hora_mo"]
     r_cons = hh_total * cfg["precio_hora_cons"]
-    r_cd   = r_mat + r_pint + r_sub + r_mo + r_cons
-    r_gg   = r_cd * cfg["pct_gastos_gen"] / 100.0
+    r_cd   = r_mat + r_pint + r_sub + r_mo + r_cons + r_ing_real
     r_imp  = r_cd * cfg["pct_impuestos"] / 100.0
-    r_tot  = r_cd + r_gg + r_imp
+    r_tot  = r_cd + r_imp
 
     kg_row = db.execute(
         """SELECT COALESCE(SUM(CAST(p.peso AS REAL)),0)
@@ -155,8 +197,8 @@ def _calc_economico(db, ot_id, cfg):
     return {
         "p":  {"mat":p_mat,"pintura":p_pint,"mo":p_mo,"cons":p_cons,
                "ing":p_ing,"gg":p_gg,"imp":p_imp,"ben":p_ben,"cd":p_cd,"tc":p_tc,"pv":p_pv},
-        "rm": {"mat":r_mat,"pintura":r_pint,"sub":r_sub},
-        "ra": {"mo":r_mo,"cons":r_cons,"gg":r_gg,"imp":r_imp},
+        "rm": {"mat":r_mat,"pintura":r_pint,"sub":r_sub,"ing":r_ing_real},
+        "ra": {"mo":r_mo,"cons":r_cons,"imp":r_imp},
         "r":  {"cd":r_cd,"tot":r_tot},
         "hh": hh_total, "kg": kg, "avf": avf,
         "ave": min((r_tot/p_tc*100.0) if p_tc>0 else 0.0, 999.9),
@@ -165,16 +207,16 @@ def _calc_economico(db, ot_id, cfg):
 
 def _aggregate_obra(ots_data):
     agg = {k:0.0 for k in ["p_mat","p_pint","p_mo","p_cons","p_ing","p_gg","p_imp","p_ben",
-                            "p_cd","p_tc","p_pv","r_mat","r_pint","r_sub","r_mo","r_cons",
-                            "r_gg","r_imp","r_cd","r_tot","hh","kg"]}
+                            "p_cd","p_tc","p_pv","r_mat","r_pint","r_sub","r_ing","r_mo","r_cons",
+                            "r_imp","r_cd","r_tot","hh","kg"]}
     avf_list = []
     for d in ots_data:
         for k,v in [("p_mat",d["p"]["mat"]),("p_pint",d["p"]["pintura"]),("p_mo",d["p"]["mo"]),
                     ("p_cons",d["p"]["cons"]),("p_ing",d["p"]["ing"]),("p_gg",d["p"]["gg"]),
                     ("p_imp",d["p"]["imp"]),("p_ben",d["p"]["ben"]),("p_cd",d["p"]["cd"]),
                     ("p_tc",d["p"]["tc"]),("p_pv",d["p"]["pv"]),
-                    ("r_mat",d["rm"]["mat"]),("r_pint",d["rm"]["pintura"]),("r_sub",d["rm"]["sub"]),
-                    ("r_mo",d["ra"]["mo"]),("r_cons",d["ra"]["cons"]),("r_gg",d["ra"]["gg"]),
+                    ("r_mat",d["rm"]["mat"]),("r_pint",d["rm"]["pintura"]),("r_sub",d["rm"]["sub"]),("r_ing",d["rm"]["ing"]),
+                    ("r_mo",d["ra"]["mo"]),("r_cons",d["ra"]["cons"]),
                     ("r_imp",d["ra"]["imp"]),("r_cd",d["r"]["cd"]),("r_tot",d["r"]["tot"]),
                     ("hh",d["hh"]),("kg",d["kg"])]:
             agg[k] += v
@@ -246,19 +288,25 @@ tr:last-child td{border-bottom:none;}
 
 @economico_bp.route("/modulo/economico/config", methods=["GET", "POST"])
 def economico_config():
-    db = get_db(); _ensure_schema(db)
-    mensaje = error = ""
-    if request.method == "POST":
-        try:
-            db.execute("UPDATE economico_config SET precio_hora_mo=?,precio_hora_cons=?,pct_gastos_gen=?,pct_impuestos=?,updated_at=CURRENT_TIMESTAMP",
-                (float(request.form.get("precio_hora_mo") or 0),
-                 float(request.form.get("precio_hora_cons") or 0),
-                 float(request.form.get("pct_gastos_gen") or 5),
-                 float(request.form.get("pct_impuestos") or 3)))
-            db.commit(); mensaje = "Config global guardada."
-        except Exception as exc: error = str(exc)
-    cfg = _get_global_config(db)
-    return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+  db = get_db()
+  _ensure_schema(db)
+  mensaje = error = ""
+  if request.method == "POST":
+    try:
+      db.execute(
+        "UPDATE economico_config SET precio_hora_mo=?,precio_hora_cons=?,pct_impuestos=?,updated_at=CURRENT_TIMESTAMP",
+        (
+          float(request.form.get("precio_hora_mo") or 0),
+          float(request.form.get("precio_hora_cons") or 0),
+          float(request.form.get("pct_impuestos") or 3),
+        ),
+      )
+      db.commit()
+      mensaje = "Config global guardada."
+    except Exception as exc:
+      error = str(exc)
+  cfg = _get_global_config(db)
+  return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Config Global</title>
 <style>{_CSS_COMMON}
 .card{{max-width:480px;margin:auto;}}.card .cb{{padding:20px;}}
@@ -275,8 +323,6 @@ def economico_config():
   <p class="hint">MO real = HH × este valor</p></div>
 <div class="fg"><label>$/HH — Consumibles</label>
   <input type="number" name="precio_hora_cons" step="0.01" min="0" value="{cfg['precio_hora_cons']}"></div>
-<div class="fg"><label>% Gastos Generales (sobre costo directo real)</label>
-  <input type="number" name="pct_gastos_gen" step="0.01" min="0" max="100" value="{cfg['pct_gastos_gen']}"></div>
 <div class="fg"><label>% Impuestos (sobre costo directo real)</label>
   <input type="number" name="pct_impuestos" step="0.01" min="0" max="100" value="{cfg['pct_impuestos']}"></div>
 <button type="submit" class="btn" style="background:#6366f1;color:#fff;">Guardar config global</button>
@@ -289,12 +335,6 @@ def economico_config():
 
 @economico_bp.route("/modulo/economico", methods=["GET", "POST"])
 def economico_dashboard():
-    """Pantalla principal: dashboard agrupado por obra con config de tasas."""
-    return economico_obras()
-
-
-@economico_bp.route("/modulo/economico/obras", methods=["GET", "POST"])
-def economico_obras():
     db = get_db(); _ensure_schema(db)
     mensaje = error = ""
 
@@ -305,7 +345,6 @@ def economico_obras():
                 _save_config_obra(db, obra_cfg,
                     float(request.form.get("precio_hora_mo") or 0),
                     float(request.form.get("precio_hora_cons") or 0),
-                    float(request.form.get("pct_gastos_gen") or 5),
                     float(request.form.get("pct_impuestos") or 3))
                 mensaje = f"Tasas de '{obra_cfg}' guardadas."
             except Exception as exc: error = str(exc)
@@ -378,8 +417,6 @@ def economico_obras():
       <input type="number" name="precio_hora_mo" step="0.01" min="0" value="{_fv(cfg['precio_hora_mo'])}" style="width:115px;padding:5px 8px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;"></div>
     <div><label style="font-size:.7rem;font-weight:700;color:#374151;display:block;margin-bottom:2px;">$/HH Consumibles</label>
       <input type="number" name="precio_hora_cons" step="0.01" min="0" value="{_fv(cfg['precio_hora_cons'])}" style="width:115px;padding:5px 8px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;"></div>
-    <div><label style="font-size:.7rem;font-weight:700;color:#374151;display:block;margin-bottom:2px;">% Gastos Gen.</label>
-      <input type="number" name="pct_gastos_gen" step="0.01" min="0" max="100" value="{_fv(cfg['pct_gastos_gen'])}" style="width:85px;padding:5px 8px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;"></div>
     <div><label style="font-size:.7rem;font-weight:700;color:#374151;display:block;margin-bottom:2px;">% Impuestos</label>
       <input type="number" name="pct_impuestos" step="0.01" min="0" max="100" value="{_fv(cfg['pct_impuestos'])}" style="width:85px;padding:5px 8px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;"></div>
     <button type="submit" class="btn" style="background:#0891b2;color:#fff;font-size:.8rem;padding:6px 12px;">💾 Guardar tasas</button>
@@ -407,7 +444,7 @@ def economico_obras():
     <div style="font-size:.76rem;opacity:.8;margin-top:2px;">Agrupado por obra · KPIs · Costos previstos vs reales</div></div>
   <div style="display:flex;gap:7px;flex-wrap:wrap;">
     <a href="/modulo/economico/dashboard-ejecutivo" style="background:#fff;color:#6366f1;font-weight:700;">📊 Dashboard Ejecutivo</a>
-    <a href="/modulo/economico/certificados" style="background:#fff;color:#10b981;font-weight:700;">📜 Certificados</a>
+    <a href="/modulo/economico/gastos-fijos" style="background:#fef3c7;color:#92400e;font-weight:700;">🏭 Gastos Fijos</a>
     <a href="/modulo/economico/config">⚙️ Config global</a>
     <a href="/">← Inicio</a>
   </div>
@@ -433,7 +470,6 @@ def economico_obra(obra_nombre):
             _save_config_obra(db, obra_nombre,
                 float(request.form.get("precio_hora_mo") or 0),
                 float(request.form.get("precio_hora_cons") or 0),
-                float(request.form.get("pct_gastos_gen") or 5),
                 float(request.form.get("pct_impuestos") or 3))
             mensaje = "Tasas actualizadas."
         except Exception as exc: error = str(exc)
@@ -451,10 +487,48 @@ def economico_obra(obra_nombre):
         ots_data.append(d)
 
     agg = _aggregate_obra(ots_data)
-    mg  = ((agg["p_pv"]-agg["r_tot"])/agg["p_pv"]*100.0) if agg["p_pv"]>0 else 0.0
+    # Distribuir overhead real de toda la cartera a esta obra según costo directo real.
+    ots_all = db.execute(
+      "SELECT id, obra, COALESCE(es_mantenimiento,0) FROM ordenes_trabajo ORDER BY obra, id"
+    ).fetchall()
+    obras_all = {}
+    mant_all = {}
+    for _ot_id, _obra_key, _es_mant in ots_all:
+      _obra_key = str(_obra_key or "Sin obra").strip()
+      _dest = mant_all if _es_mant else obras_all
+      if _obra_key not in _dest:
+        _dest[_obra_key] = {"ots": []}
+      _dest[_obra_key]["ots"].append(_ot_id)
+
+    total_prod_cd = 0.0
+    for _obra_key, _info in obras_all.items():
+      _cfg_obra = _get_config_obra(db, _obra_key)
+      _ots_d = []
+      for _prod_ot_id in _info["ots"]:
+        _d = _calc_economico(db, _prod_ot_id, _cfg_obra)
+        _ots_d.append(_d)
+      _agg_obra = _aggregate_obra(_ots_d)
+      total_prod_cd += _agg_obra["r_cd"]
+
+    total_mant_real = 0.0
+    for _obra_key, _info in mant_all.items():
+      _cfg_obra = _get_config_obra(db, _obra_key)
+      _ots_d = []
+      for _mant_ot_id in _info["ots"]:
+        _d = _calc_economico(db, _mant_ot_id, _cfg_obra)
+        _ots_d.append(_d)
+      _agg_obra = _aggregate_obra(_ots_d)
+      total_mant_real += _agg_obra["r_tot"]
+
+    total_gf_real = db.execute("SELECT COALESCE(SUM(monto),0) FROM economico_gastos_fijos").fetchone()[0] or 0.0
+    total_estructura_real = float(total_mant_real or 0.0) + float(total_gf_real or 0.0)
+    gg_asig_obra = (total_estructura_real * (agg["r_cd"] / total_prod_cd)) if total_prod_cd > 0 else 0.0
+    r_tot_adj = agg["r_tot"] + gg_asig_obra
+    mg  = ((agg["p_pv"]-r_tot_adj)/agg["p_pv"]*100.0) if agg["p_pv"]>0 else 0.0
     mc  = _cm(mg)
     af  = agg["avf"]; ae = agg["ave"]
-    ac  = "#991b1b" if ae>af+5 else ("#166534" if ae<=af else "#92400e")
+    ae_adj = min((r_tot_adj / agg["p_tc"] * 100.0) if agg["p_tc"] > 0 else 0.0, 999.9)
+    ac  = "#991b1b" if ae_adj>af+5 else ("#166534" if ae_adj<=af else "#92400e")
 
     ots_filas = ""
     for d in ots_data:
@@ -478,7 +552,7 @@ def economico_obra(obra_nombre):
       <td colspan="3">TOTAL OBRA</td>
       <td style="text-align:right;">{agg['kg']:,.1f}</td><td style="text-align:right;">{agg['hh']:,.1f}</td>
       <td style="text-align:right;color:#6366f1;">{_m(agg['p_pv'])}</td>
-      <td style="text-align:right;">{_m(agg['r_tot'])}</td>
+      <td style="text-align:right;">{_m(r_tot_adj)}</td>
       <td style="text-align:right;color:{mc};">{_pct(mg)}</td>
       <td>{_pb(af,'#3b82f6',7)}</td><td style="color:{ac};">{_pct(ae)}</td><td></td>
     </tr>"""
@@ -487,8 +561,8 @@ def economico_obra(obra_nombre):
     for nombre, prev, real in [
         ("Materiales",agg["p_mat"],agg["r_mat"]),("Pintura",agg["p_pint"],agg["r_pint"]),
         ("Mano de Obra",agg["p_mo"],agg["r_mo"]),("Consumibles",agg["p_cons"],agg["r_cons"]),
-        ("Ingeniería",agg["p_ing"],0.0),("Subcontratos",0.0,agg["r_sub"]),
-        ("Gastos Generales",agg["p_gg"],agg["r_gg"]),("Impuestos",agg["p_imp"],agg["r_imp"])]:
+        ("Ingeniería",agg["p_ing"],agg["r_ing"]),("Subcontratos",0.0,agg["r_sub"]),
+        ("Gastos Generales",agg["p_gg"],gg_asig_obra),("Impuestos",agg["p_imp"],agg["r_imp"])]:
         da = real-prev; dp = (da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c = _cd(da); ic = "▲" if da>0 else ("▼" if da<0 else "–")
         desv_filas += f"""<tr>
@@ -518,8 +592,6 @@ def economico_obra(obra_nombre):
         <input type="number" name="precio_hora_mo" step="0.01" min="0" value="{_fv(cfg['precio_hora_mo'])}"></div>
       <div style="min-width:130px;"><label>$/HH Consumibles</label>
         <input type="number" name="precio_hora_cons" step="0.01" min="0" value="{_fv(cfg['precio_hora_cons'])}"></div>
-      <div style="min-width:110px;"><label>% Gastos Generales</label>
-        <input type="number" name="pct_gastos_gen" step="0.01" min="0" max="100" value="{_fv(cfg['pct_gastos_gen'])}"></div>
       <div style="min-width:110px;"><label>% Impuestos</label>
         <input type="number" name="pct_impuestos" step="0.01" min="0" max="100" value="{_fv(cfg['pct_impuestos'])}"></div>
       <button type="submit" class="btn" style="background:#0891b2;color:#fff;">💾 Guardar</button>
@@ -531,21 +603,21 @@ def economico_obra(obra_nombre):
       <div style="font-size:1.1rem;font-weight:800;color:#6366f1;">{_m(agg['p_pv'])}</div></div>
     <div style="flex:1;min-width:120px;border-top:3px solid #1e293b;padding-top:8px;">
       <div style="font-size:.66rem;color:#9ca3af;font-weight:700;">COSTO REAL TOTAL</div>
-      <div style="font-size:1.1rem;font-weight:800;color:#1e293b;">{_m(agg['r_tot'])}</div></div>
+      <div style="font-size:1.1rem;font-weight:800;color:#1e293b;">{_m(r_tot_adj)}</div></div>
     <div style="flex:1;min-width:100px;border-top:3px solid {mc};padding-top:8px;">
       <div style="font-size:.66rem;color:#9ca3af;font-weight:700;">MARGEN REAL</div>
       <div style="font-size:1.1rem;font-weight:800;color:{mc};">{_pct(mg)}</div>
-      <div style="font-size:.7rem;color:#9ca3af;">{_m(agg['p_pv']-agg['r_tot'])}</div></div>
+      <div style="font-size:.7rem;color:#9ca3af;">{_m(agg['p_pv']-r_tot_adj)}</div></div>
     <div style="flex:1;min-width:100px;border-top:3px solid #10b981;padding-top:8px;">
       <div style="font-size:.66rem;color:#9ca3af;font-weight:700;">$/KG REAL</div>
-      <div style="font-size:1.1rem;font-weight:800;color:#10b981;">{_m(agg['r_tot']/agg['kg'] if agg['kg']>0 else 0)}</div>
+      <div style="font-size:1.1rem;font-weight:800;color:#10b981;">{_m(r_tot_adj/agg['kg'] if agg['kg']>0 else 0)}</div>
       <div style="font-size:.7rem;color:#9ca3af;">prev: {_m(agg['p_pv']/agg['kg'] if agg['kg']>0 else 0)}</div></div>
     <div style="flex:2;min-width:220px;border-top:3px solid #e5e7eb;padding-top:8px;">
       <div style="font-size:.66rem;color:#9ca3af;font-weight:700;margin-bottom:5px;">AVANCE FÍSICO vs ECONÓMICO</div>
       <div style="display:flex;align-items:center;gap:7px;margin-bottom:4px;">
         <span style="font-size:.7rem;color:#3b82f6;width:72px;">Físico</span>{_pb(af,'#3b82f6',10)}</div>
       <div style="display:flex;align-items:center;gap:7px;">
-        <span style="font-size:.7rem;color:{ac};width:72px;">Económico</span>{_pb(ae,ac,10)}</div>
+        <span style="font-size:.7rem;color:{ac};width:72px;">Económico</span>{_pb(ae_adj,ac,10)}</div>
     </div>
   </div></div>
   <div class="card"><div class="ct">📋 Órdenes de Trabajo</div>
@@ -563,11 +635,11 @@ def economico_obra(obra_nombre):
         <tr style="background:#f1f5f9;font-weight:700;">
           <td>TOTAL COSTOS</td>
           <td style="text-align:right;">{_m(agg['p_tc'])}</td>
-          <td style="text-align:right;">{_m(agg['r_tot'])}</td>
-          <td style="text-align:right;color:{_cd(agg['r_tot']-agg['p_tc'])};">
-            {"▲" if agg['r_tot']>agg['p_tc'] else "▼"} {_m(abs(agg['r_tot']-agg['p_tc']))}</td>
-          <td style="text-align:right;color:{_cd(agg['r_tot']-agg['p_tc'])};">
-            {_pct(abs((agg['r_tot']-agg['p_tc'])/agg['p_tc']*100) if agg['p_tc'] else 0)}</td>
+          <td style="text-align:right;">{_m(r_tot_adj)}</td>
+          <td style="text-align:right;color:{_cd(r_tot_adj-agg['p_tc'])};">
+            {"▲" if r_tot_adj>agg['p_tc'] else "▼"} {_m(abs(r_tot_adj-agg['p_tc']))}</td>
+          <td style="text-align:right;color:{_cd(r_tot_adj-agg['p_tc'])};">
+            {_pct(abs((r_tot_adj-agg['p_tc'])/agg['p_tc']*100) if agg['p_tc'] else 0)}</td>
         </tr>
       </tbody>
     </table></div>
@@ -582,10 +654,10 @@ def economico_obra(obra_nombre):
 @economico_bp.route("/modulo/economico/ot/<int:ot_id>", methods=["GET", "POST"])
 def economico_ot(ot_id):
     db = get_db(); _ensure_schema(db)
-    ot = db.execute("SELECT id,cliente,obra,titulo,tipo_estructura,estado FROM ordenes_trabajo WHERE id=?", (ot_id,)).fetchone()
+    ot = db.execute("SELECT id,cliente,obra,titulo,tipo_estructura,estado,COALESCE(es_mantenimiento,0) FROM ordenes_trabajo WHERE id=?", (ot_id,)).fetchone()
     if not ot:
         return "OT no encontrada", 404
-    _, cliente, obra, titulo, tipo, estado = ot
+    _, cliente, obra, titulo, tipo, estado, es_mantenimiento = ot
     obra = obra or ""
     cfg  = _get_config_obra(db, obra)
     mensaje = error = ""
@@ -609,29 +681,67 @@ def economico_ot(ot_id):
                          ingenieria_previsto,gastos_gen_previsto,impuestos_previsto,beneficio_previsto)
                         VALUES(?,?,?,?,?,?,?,?,?)""", (ot_id, *vals))
                 db.commit(); mensaje = "Presupuesto guardado."
-            elif accion == "guardar_costos_reales":
-                mat = float(request.form.get("mat_real") or 0)
-                pint = float(request.form.get("pintura_real") or 0)
-                sub  = float(request.form.get("subcontratos_real") or 0)
-                ex = db.execute("SELECT id FROM economico_costos_reales WHERE ot_id=?", (ot_id,)).fetchone()
-                if ex:
-                    db.execute("UPDATE economico_costos_reales SET mat_real=?,pintura_real=?,subcontratos_real=?,updated_at=CURRENT_TIMESTAMP WHERE ot_id=?", (mat,pint,sub,ot_id))
+            elif accion == "agregar_costo_mensual":
+                mes_c    = (request.form.get("mes") or "").strip()
+                concepto = (request.form.get("concepto") or "").strip()
+                monto_c  = float(request.form.get("monto") or 0)
+                if not mes_c or not concepto or monto_c <= 0:
+                    error = "Completá mes, concepto y monto mayor a 0."
                 else:
-                    db.execute("INSERT INTO economico_costos_reales(ot_id,mat_real,pintura_real,subcontratos_real) VALUES(?,?,?,?)", (ot_id,mat,pint,sub))
-                db.commit(); mensaje = "Costos reales guardados."
+                    db.execute(
+                        "INSERT INTO economico_costos_reales_mensual(ot_id,mes,concepto,monto) VALUES(?,?,?,?)",
+                        (ot_id, mes_c, concepto, monto_c))
+                    db.commit(); mensaje = f"Costo agregado: {concepto} {mes_c}."
+            elif accion == "eliminar_costo_mensual":
+                costo_id = int(request.form.get("costo_id") or 0)
+                db.execute("DELETE FROM economico_costos_reales_mensual WHERE id=? AND ot_id=?", (costo_id, ot_id))
+                db.commit(); mensaje = "Entrada eliminada."
             elif accion == "config_obra":
                 _save_config_obra(db, obra,
                     float(request.form.get("precio_hora_mo") or 0),
                     float(request.form.get("precio_hora_cons") or 0),
-                    float(request.form.get("pct_gastos_gen") or 5),
                     float(request.form.get("pct_impuestos") or 3))
                 cfg = _get_config_obra(db, obra); mensaje = "Tasas actualizadas."
         except Exception as exc: error = str(exc)
 
     data = _calc_economico(db, ot_id, cfg)
     p = data["p"]; rm = data["rm"]; ra = data["ra"]; r = data["r"]
-    avf = data["avf"]; ave = data["ave"]
-    mg = ((p["pv"]-r["tot"])/p["pv"]*100.0) if p["pv"]>0 else 0.0
+    avf = data["avf"]
+
+    # GG real distribuido por OT (solo para OTs productivas):
+    # overhead real total * (CD real de la OT / CD real total de OTs productivas).
+    gg_real_ot = 0.0
+    if not int(es_mantenimiento or 0):
+      prod_rows = db.execute(
+        "SELECT id, obra FROM ordenes_trabajo WHERE COALESCE(es_mantenimiento,0)=0"
+      ).fetchall()
+      total_prod_cd = 0.0
+      cfg_cache = {}
+      for _id, _obra in prod_rows:
+        _obra = str(_obra or "")
+        if _obra not in cfg_cache:
+          cfg_cache[_obra] = _get_config_obra(db, _obra)
+        _d = _calc_economico(db, _id, cfg_cache[_obra])
+        total_prod_cd += _d["r"]["cd"]
+
+      mant_rows = db.execute(
+        "SELECT id, obra FROM ordenes_trabajo WHERE COALESCE(es_mantenimiento,0)=1"
+      ).fetchall()
+      total_mant_real = 0.0
+      for _id, _obra in mant_rows:
+        _obra = str(_obra or "")
+        if _obra not in cfg_cache:
+          cfg_cache[_obra] = _get_config_obra(db, _obra)
+        _d = _calc_economico(db, _id, cfg_cache[_obra])
+        total_mant_real += _d["r"]["tot"]
+
+      total_gf_real = float(db.execute("SELECT COALESCE(SUM(monto),0) FROM economico_gastos_fijos").fetchone()[0] or 0.0)
+      total_estructura_real = total_mant_real + total_gf_real
+      gg_real_ot = (total_estructura_real * (r["cd"] / total_prod_cd)) if total_prod_cd > 0 else 0.0
+
+    r_tot_adj = r["tot"] + gg_real_ot
+    ave = min((r_tot_adj / p["tc"] * 100.0) if p["tc"] > 0 else 0.0, 999.9)
+    mg = ((p["pv"]-r_tot_adj)/p["pv"]*100.0) if p["pv"]>0 else 0.0
     mc = _cm(mg)
     ac = "#991b1b" if ave>avf+5 else ("#166534" if ave<=avf else "#92400e")
 
@@ -644,7 +754,7 @@ def economico_ot(ot_id):
 
     kpi_html = (
         _kc("$/kg Prev.", _m(p["pv"]/data["kg"] if data["kg"]>0 else 0), f"{data['kg']:,.1f} kg") +
-        _kc("$/kg Real",  _m(r["tot"]/data["kg"] if data["kg"]>0 else 0), "", "#1e293b") +
+        _kc("$/kg Real",  _m(r_tot_adj/data["kg"] if data["kg"]>0 else 0), "", "#1e293b") +
         _kc("Margen Prev.", _pct(p["ben"]/p["pv"]*100 if p["pv"]>0 else 0), _m(p["ben"]), "#3b82f6") +
         _kc("Margen Real",  _pct(mg), f"PV {_m(p['pv'])}", mc) +
         _kc("Av.Físico", _pct(avf), "estado OT", "#10b981") +
@@ -654,8 +764,8 @@ def economico_ot(ot_id):
     for nombre, prev, real in [
         ("Materiales",p["mat"],rm["mat"]),("Pintura",p["pintura"],rm["pintura"]),
         ("Mano de Obra",p["mo"],ra["mo"]),("Consumibles",p["cons"],ra["cons"]),
-        ("Ingeniería",p["ing"],0.0),("Subcontratos",0.0,rm["sub"]),
-        ("Gastos Generales",p["gg"],ra["gg"]),("Impuestos",p["imp"],ra["imp"])]:
+        ("Ingeniería",p["ing"],rm["ing"]),("Subcontratos",0.0,rm["sub"]),
+      ("Gastos Generales",p["gg"],gg_real_ot),("Impuestos",p["imp"],ra["imp"])]:
         da=real-prev; dp=(da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c=_cd(da); ic="▲" if da>0 else ("▼" if da<0 else "–")
         desv_rows += f"""<tr>
@@ -667,6 +777,34 @@ def economico_ot(ot_id):
 
     msg = (f'<div class="ok" style="margin-bottom:12px;">{_E(mensaje)}</div>' if mensaje else "")
     err = (f'<div class="er" style="margin-bottom:12px;">{_E(error)}</div>' if error else "")
+
+    import datetime as _dt_ec
+    _mes_actual = _dt_ec.date.today().strftime("%Y-%m")
+    _cr_rows = db.execute(
+        "SELECT id,mes,concepto,monto FROM economico_costos_reales_mensual "
+        "WHERE ot_id=? ORDER BY mes DESC, concepto", (ot_id,)).fetchall()
+    if _cr_rows:
+        _hist_filas = "".join(
+            f'<tr><td>{r[1]}</td><td>{_E(r[2])}</td>'
+            f'<td style="text-align:right;">{_m(r[3])}</td>'
+            f'<td><form method="post" style="margin:0;">'
+            f'<input type="hidden" name="accion" value="eliminar_costo_mensual">'
+            f'<input type="hidden" name="costo_id" value="{r[0]}">'
+            f'<button type="submit" style="background:none;border:none;color:#991b1b;cursor:pointer;" '
+            f'onclick="return confirm(\'Eliminar esta entrada?\');">&#128465;</button>'
+            f'</form></td></tr>'
+            for r in _cr_rows
+        )
+        _historial_html = (
+            '<div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:6px;'
+            'border-bottom:1px solid #e5e7eb;padding-bottom:4px;">Historial de cargas</div>'
+            '<div style="overflow-x:auto;"><table style="font-size:.8rem;width:100%;">'
+            '<thead><tr><th>Mes</th><th>Concepto</th>'
+            '<th style="text-align:right;">Monto</th><th></th></tr></thead>'
+            f'<tbody>{_hist_filas}</tbody></table></div>'
+        )
+    else:
+        _historial_html = '<div style="color:#9ca3af;font-size:.8rem;">Sin entradas cargadas aún.</div>'
 
     return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Económico OT {ot_id}</title>
@@ -694,8 +832,6 @@ def economico_ot(ot_id):
         <input type="number" name="precio_hora_mo" step="0.01" min="0" value="{_fv(cfg['precio_hora_mo'])}"></div>
       <div style="min-width:120px;"><label>$/HH Consumibles</label>
         <input type="number" name="precio_hora_cons" step="0.01" min="0" value="{_fv(cfg['precio_hora_cons'])}"></div>
-      <div style="min-width:100px;"><label>% Gastos Generales</label>
-        <input type="number" name="pct_gastos_gen" step="0.01" min="0" max="100" value="{_fv(cfg['pct_gastos_gen'])}"></div>
       <div style="min-width:100px;"><label>% Impuestos</label>
         <input type="number" name="pct_impuestos" step="0.01" min="0" max="100" value="{_fv(cfg['pct_impuestos'])}"></div>
       <button type="submit" class="btn" style="background:#0891b2;color:#fff;">💾 Guardar tasas</button>
@@ -723,26 +859,37 @@ def economico_ot(ot_id):
         <button type="submit" class="btn" style="background:#6366f1;color:#fff;width:100%;margin-top:8px;">💾 Guardar presupuesto</button>
       </form>
     </div></div>
-    <div class="card"><div class="ct">💸 Costos Reales</div><div class="cb">
+    <div class="card"><div class="ct">💸 Costos Reales — Carga Mensual</div><div class="cb">
       <form method="post" style="margin-bottom:16px;">
-        <input type="hidden" name="accion" value="guardar_costos_reales">
-        <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">Carga Manual</div>
-        <div class="fg"><label>Materiales reales ($)</label><input type="number" name="mat_real" step="0.01" min="0" value="{_fv(rm['mat'])}"></div>
-        <div class="fg"><label>Pintura real ($)</label><input type="number" name="pintura_real" step="0.01" min="0" value="{_fv(rm['pintura'])}"></div>
-        <div class="fg"><label>Subcontratos ($)</label><input type="number" name="subcontratos_real" step="0.01" min="0" value="{_fv(rm['sub'])}"></div>
-        <button type="submit" class="btn" style="background:#0891b2;color:#fff;width:100%;">💾 Guardar costos manuales</button>
+        <input type="hidden" name="accion" value="agregar_costo_mensual">
+        <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">Agregar entrada</div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
+          <div><label style="font-size:.75rem;">Mes</label><br>
+            <input type="month" name="mes" required style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;"
+            value="{_mes_actual}"></div>
+          <div><label style="font-size:.75rem;">Concepto</label><br>
+            <select name="concepto" required style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">
+              <option>Materiales</option><option>Pintura</option>
+              <option>Ingeniería</option><option>Subcontratos</option>
+            </select></div>
+          <div><label style="font-size:.75rem;">Monto ($)</label><br>
+            <input type="number" name="monto" step="0.01" min="0.01" required
+              style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;width:140px;"></div>
+          <button type="submit" class="btn" style="background:#0891b2;color:#fff;">➕ Agregar</button>
+        </div>
       </form>
+      {_historial_html}
       <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">Calculados automáticamente <span class="auto">AUTO</span></div>
       <div class="fg"><label>Mano de Obra <span class="auto">{data['hh']:,.1f} HH × ${cfg['precio_hora_mo']:,.2f}</span></label><div class="rv">{_m(ra['mo'])}</div></div>
       <div class="fg"><label>Consumibles <span class="auto">{data['hh']:,.1f} HH × ${cfg['precio_hora_cons']:,.2f}</span></label><div class="rv">{_m(ra['cons'])}</div></div>
-      <div class="fg"><label>Gastos Generales <span class="auto">{cfg['pct_gastos_gen']:.1f}% costo directo</span></label><div class="rv">{_m(ra['gg'])}</div></div>
+      <div class="fg"><label>Gastos Generales <span class="auto">distribución overhead real</span></label><div class="rv">{_m(gg_real_ot)}</div></div>
       <div class="fg"><label>Impuestos <span class="auto">{cfg['pct_impuestos']:.1f}% costo directo</span></label><div class="rv">{_m(ra['imp'])}</div></div>
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">
       <div style="display:flex;justify-content:space-between;"><span style="font-size:.78rem;font-weight:700;">Total Costo Real</span>
-        <span style="font-weight:800;">{_m(r['tot'])}</span></div>
+        <span style="font-weight:800;">{_m(r_tot_adj)}</span></div>
       <div style="padding:8px;border-radius:6px;background:#fafafe;border:1px solid #e0e7ff;margin-top:6px;">
         <div style="font-size:.7rem;color:#6b7280;">Resultado (PV − Costo Real)</div>
-        <div style="font-weight:800;font-size:1rem;color:{mc};">{_m(p['pv']-r['tot'])} <span style="font-size:.8rem;">({_pct(mg)})</span></div>
+        <div style="font-weight:800;font-size:1rem;color:{mc};">{_m(p['pv']-r_tot_adj)} <span style="font-size:.8rem;">({_pct(mg)})</span></div>
       </div>
     </div></div>
   </div>
@@ -753,14 +900,365 @@ def economico_ot(ot_id):
       <tbody>{desv_rows}
         <tr style="background:#f1f5f9;font-weight:700;">
           <td>TOTAL COSTOS</td>
-          <td style="text-align:right;">{_m(p['tc'])}</td><td style="text-align:right;">{_m(r['tot'])}</td>
-          <td style="text-align:right;color:{_cd(r['tot']-p['tc'])};">{"▲" if r["tot"]>p["tc"] else "▼"} {_m(abs(r["tot"]-p["tc"]))}</td>
-          <td style="text-align:right;color:{_cd(r['tot']-p['tc'])};">{_pct(abs((r["tot"]-p["tc"])/p["tc"]*100) if p["tc"] else 0)}</td>
+          <td style="text-align:right;">{_m(p['tc'])}</td><td style="text-align:right;">{_m(r_tot_adj)}</td>
+          <td style="text-align:right;color:{_cd(r_tot_adj-p['tc'])};">{"▲" if r_tot_adj>p["tc"] else "▼"} {_m(abs(r_tot_adj-p["tc"]))}</td>
+          <td style="text-align:right;color:{_cd(r_tot_adj-p['tc'])};">{_pct(abs((r_tot_adj-p["tc"])/p["tc"]*100) if p["tc"] else 0)}</td>
         </tr>
       </tbody>
     </table></div>
   </div>
 </div></body></html>"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RUTA: GASTOS FIJOS DE ESTRUCTURA
+# ─────────────────────────────────────────────────────────────────────────────
+
+_GRUPOS_FIJOS = {
+    "💼 Sueldos": [
+        "Sueldo Coordinador",
+        "Sueldo Jefe de Taller",
+        "Sueldo Jefe de Calidad",
+        "Sueldo Oficina Técnica",
+        "Sueldo Administración",
+    ],
+    "🏢 Servicios y Gastos": [
+        "Alquiler",
+        "Electricidad",
+        "Gas",
+        "Agua",
+        "Internet",
+        "Limpieza",
+        "Viandas",
+        "Seguro",
+        "Telefonía",
+        "Mantenimiento edilicio",
+    ],
+}
+_CONCEPTOS_FIJOS = [c for conceptos in _GRUPOS_FIJOS.values() for c in conceptos]
+_CONCEPTOS_SUGERIDOS = _CONCEPTOS_FIJOS + ["Otros"]
+
+
+@economico_bp.route("/modulo/economico/gastos-fijos", methods=["GET", "POST"])
+def economico_gastos_fijos_page():
+    db = get_db(); _ensure_schema(db)
+    from datetime import date as _date
+    mensaje = error = ""
+    hoy = _date.today()
+    mes_sel = request.args.get("mes") or request.form.get("mes_nav") or hoy.strftime("%Y-%m")
+    anio_sel = mes_sel[:4]
+
+    if request.method == "POST":
+        accion = (request.form.get("accion") or "").strip()
+        try:
+            if accion == "guardar_mes":
+                mes = (request.form.get("mes") or "").strip()
+                if mes:
+                    for i, concepto in enumerate(_CONCEPTOS_FIJOS):
+                        monto = float(request.form.get(f"monto_{i}") or 0)
+                        db.execute("DELETE FROM economico_gastos_fijos WHERE mes=? AND concepto=?", (mes, concepto))
+                        if monto > 0:
+                            db.execute("INSERT INTO economico_gastos_fijos (mes, concepto, monto) VALUES (?,?,?)",
+                                       (mes, concepto, monto))
+                    db.commit(); mensaje = f"Gastos fijos de {mes} guardados."
+                    mes_sel = mes
+            elif accion == "agregar_manual":
+                mes = (request.form.get("mes") or "").strip()
+                concepto = (request.form.get("concepto_manual") or "").strip()
+                monto = float(request.form.get("monto_manual") or 0)
+                if mes and concepto and monto > 0:
+                    db.execute("INSERT INTO economico_gastos_fijos (mes, concepto, monto) VALUES (?,?,?)",
+                               (mes, concepto, monto))
+                    db.commit(); mensaje = "Gasto adicional agregado."
+                    mes_sel = mes
+                else:
+                    error = "Completá concepto y monto."
+            elif accion == "eliminar":
+                gasto_id = int(request.form.get("gasto_id") or 0)
+                if gasto_id:
+                    db.execute("DELETE FROM economico_gastos_fijos WHERE id=?", (gasto_id,))
+                    db.commit(); mensaje = "Gasto eliminado."
+        except Exception as exc:
+            error = str(exc)
+
+    # Cargar valores del mes seleccionado
+    filas_mes = db.execute(
+        "SELECT id, concepto, monto FROM economico_gastos_fijos WHERE mes=? ORDER BY concepto",
+        (mes_sel,)
+    ).fetchall()
+    vals_mes = {r[1]: (r[2], r[0]) for r in filas_mes}  # concepto → (monto, id)
+    manuales_mes = [(r[0], r[1], r[2]) for r in filas_mes if r[1] not in _CONCEPTOS_FIJOS]
+
+    # Totales por mes (todo el año)
+    filas_anio = db.execute(
+        "SELECT mes, SUM(monto) FROM economico_gastos_fijos WHERE mes LIKE ? GROUP BY mes ORDER BY mes",
+        (f"{anio_sel}-%",)
+    ).fetchall()
+    por_mes = {r[0]: float(r[1] or 0) for r in filas_anio}
+    total_anio  = sum(por_mes.values())
+    prom_mes    = total_anio / len(por_mes) if por_mes else 0.0
+    total_mes_sel = sum(v for v, _ in vals_mes.values())
+
+    # Años disponibles para navegación
+    anios_db = db.execute("SELECT DISTINCT substr(mes,1,4) FROM economico_gastos_fijos ORDER BY 1 DESC").fetchall()
+    anios = sorted({r[0] for r in anios_db} | {str(hoy.year)}, reverse=True)
+
+    # Generar campos fijos por grupo
+    grupos_html = ""
+    for grupo, conceptos in _GRUPOS_FIJOS.items():
+        campos = ""
+        for concepto in conceptos:
+            idx = _CONCEPTOS_FIJOS.index(concepto)
+            val = vals_mes.get(concepto, (0, None))[0]
+            val_fmt = f"{val:.2f}" if val else ""
+            campos += f"""<div class="fg">
+              <label>{_E(concepto)}</label>
+              <input type="number" name="monto_{idx}" step="0.01" min="0"
+                     value="{val_fmt}" placeholder="0.00" class="monto-input">
+            </div>"""
+        grupos_html += f"""<div class="card" style="flex:1;min-width:220px;">
+          <div class="ct" style="font-size:.82rem;">{grupo}</div>
+          <div class="cb">{campos}</div>
+        </div>"""
+
+    # Tabla historial año
+    hist_html = ""
+    for mes_k in sorted(por_mes.keys()):
+        activo = "background:#fef3c7;" if mes_k == mes_sel else ""
+        hist_html += f"""<tr style="{activo}">
+          <td><a href="?mes={mes_k}" style="font-weight:700;color:#92400e;text-decoration:none;">{mes_k}</a></td>
+          <td style="text-align:right;">{_m(por_mes[mes_k])}</td>
+          <td><a href="?mes={mes_k}" style="font-size:.75rem;padding:2px 8px;background:#fef3c7;color:#92400e;border-radius:4px;text-decoration:none;">Editar</a></td>
+        </tr>"""
+
+    # Manuales del mes
+    manuales_html = ""
+    for gid, concepto, monto in manuales_mes:
+        manuales_html += f"""<tr>
+          <td style="color:#374151;">{_E(concepto)}</td>
+          <td style="text-align:right;">{_m(float(monto or 0))}</td>
+          <td style="text-align:center;">
+            <form method="post" style="display:inline;" onsubmit="return confirm('¿Eliminar?')">
+              <input type="hidden" name="accion" value="eliminar">
+              <input type="hidden" name="gasto_id" value="{gid}">
+              <input type="hidden" name="mes_nav" value="{mes_sel}">
+              <button type="submit" style="background:none;border:none;cursor:pointer;color:#dc2626;">🗑️</button>
+            </form>
+          </td>
+        </tr>"""
+
+    anio_tabs = "".join(
+        f'<a href="?mes={a}-01" style="padding:4px 10px;border-radius:5px;text-decoration:none;font-size:.8rem;font-weight:600;'
+        f'{"background:#f59e0b;color:#fff;" if a==anio_sel else "background:#fef3c7;color:#92400e;"}">{a}</a>'
+        for a in anios)
+
+    msg     = f'<div style="background:#d1fae5;border-left:4px solid #10b981;padding:8px 14px;border-radius:4px;margin-bottom:12px;font-weight:700;">{_E(mensaje)}</div>' if mensaje else ""
+    err_html= f'<div style="background:#fee2e2;border-left:4px solid #ef4444;padding:8px 14px;border-radius:4px;margin-bottom:12px;">{_E(error)}</div>' if error else ""
+
+    return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gastos Fijos — {mes_sel}</title>
+<style>{_CSS_COMMON}
+  .two {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }}
+  @media(max-width:700px){{.two{{grid-template-columns:1fr;}}}}
+  .fg {{ margin-bottom:10px; }}
+  .fg label {{ font-size:.74rem; font-weight:700; color:#374151; display:block; margin-bottom:3px; }}
+  .fg input {{ width:100%; padding:6px 9px; border:1px solid #d1d5db; border-radius:5px; font-size:.88rem; }}
+  .fg input:focus {{ border-color:#f59e0b; outline:none; box-shadow:0 0 0 2px #fef3c7; }}
+</style></head><body>
+<div class="hdr" style="background:linear-gradient(135deg,#78350f,#92400e);">
+  <div>
+    <h1>🏭 Gastos Fijos de Estructura</h1>
+    <div style="font-size:.74rem;opacity:.75;margin-top:2px;">Sueldos · Alquiler · Servicios · y más</div>
+  </div>
+  <div style="display:flex;gap:7px;flex-wrap:wrap;">
+    <a href="/modulo/economico/dashboard-ejecutivo">📊 Dashboard</a>
+    <a href="/modulo/economico">← Módulo</a>
+  </div>
+</div>
+<div class="body">
+  {msg}{err_html}
+
+  <!-- KPIs año -->
+  <div style="display:flex;flex-wrap:wrap;gap:12px;">
+    <div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);padding:14px 18px;flex:1;min-width:120px;border-left:4px solid #f59e0b;">
+      <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Total {anio_sel}</div>
+      <div style="font-size:1.3rem;font-weight:900;color:#92400e;">{_m(total_anio)}</div>
+    </div>
+    <div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);padding:14px 18px;flex:1;min-width:120px;border-left:4px solid #6366f1;">
+      <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Promedio mensual</div>
+      <div style="font-size:1.3rem;font-weight:900;color:#6366f1;">{_m(prom_mes)}</div>
+    </div>
+    <div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);padding:14px 18px;flex:1;min-width:120px;border-left:4px solid #1e293b;">
+      <div style="font-size:.68rem;color:#9ca3af;font-weight:700;text-transform:uppercase;">Mes actual — {mes_sel}</div>
+      <div style="font-size:1.3rem;font-weight:900;color:#1e293b;">{_m(total_mes_sel)}</div>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">{anio_tabs}</div>
+  </div>
+
+  <!-- Selector de mes + formulario principal -->
+  <form method="post" id="frmMes">
+    <input type="hidden" name="accion" value="guardar_mes">
+    <input type="hidden" name="mes" value="{mes_sel}">
+
+    <!-- Navegación de mes -->
+    <div class="card">
+      <div class="ct" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <span>📅 Cargando mes: <b>{mes_sel}</b></span>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <input type="month" id="irMes" value="{mes_sel}"
+                 style="padding:5px 9px;border:1px solid #d1d5db;border-radius:5px;font-size:.85rem;"
+                 onchange="window.location='?mes='+this.value">
+        </div>
+      </div>
+    </div>
+
+    <!-- Grupos de campos -->
+    <div style="display:flex;flex-wrap:wrap;gap:16px;">
+      {grupos_html}
+    </div>
+
+    <!-- Total y guardar -->
+    <div class="card">
+      <div class="cb" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+        <div>
+          <div style="font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;">Total mes {mes_sel}</div>
+          <div style="font-size:1.4rem;font-weight:900;color:#92400e;" id="totalMes">{_m(total_mes_sel)}</div>
+        </div>
+        <button type="submit" class="btn" style="background:#f59e0b;color:#fff;font-size:.95rem;padding:10px 24px;">
+          💾 Guardar mes {mes_sel}
+        </button>
+      </div>
+    </div>
+  </form>
+
+  <!-- Otros gastos adicionales -->
+  <div class="card">
+    <div class="ct">➕ Otros gastos adicionales — {mes_sel}
+      <span style="font-size:.72rem;font-weight:400;color:#6b7280;margin-left:8px;">Gastos que no están en la lista fija</span>
+    </div>
+    <div class="cb">
+      <form method="post" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:14px;">
+        <input type="hidden" name="accion" value="agregar_manual">
+        <input type="hidden" name="mes" value="{mes_sel}">
+        <div class="fg" style="min-width:200px;flex:1;">
+          <label>Concepto</label>
+          <input type="text" name="concepto_manual" placeholder="Ej: Reparación calderas…" required>
+        </div>
+        <div class="fg" style="min-width:130px;">
+          <label>Monto ($)</label>
+          <input type="number" name="monto_manual" step="0.01" min="0.01" placeholder="0.00" required>
+        </div>
+        <button type="submit" class="btn" style="background:#6366f1;color:#fff;">➕ Agregar</button>
+      </form>
+      {"<table style='font-size:.85rem;'><thead><tr><th>Concepto</th><th style='text-align:right;'>Monto</th><th></th></tr></thead><tbody>" + manuales_html + "</tbody></table>" if manuales_mes else '<p style="color:#9ca3af;font-size:.82rem;">Sin gastos adicionales este mes.</p>'}
+    </div>
+  </div>
+
+  <!-- Historial del año -->
+  <div class="card">
+    <div class="ct">📋 Historial — {anio_sel}</div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>Mes</th><th style="text-align:right;">Total</th><th></th></tr></thead>
+        <tbody>{hist_html if hist_html else '<tr><td colspan="3" style="text-align:center;color:#9ca3af;padding:20px;">Sin datos.</td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+// Recalcular total en tiempo real
+document.querySelectorAll('.monto-input').forEach(inp => {{
+  inp.addEventListener('input', () => {{
+    let tot = 0;
+    document.querySelectorAll('.monto-input').forEach(i => {{ tot += parseFloat(i.value || 0); }});
+    const el = document.getElementById('totalMes');
+    if (el) el.textContent = '$ ' + tot.toLocaleString('es-AR', {{minimumFractionDigits:0, maximumFractionDigits:0}});
+  }});
+}});
+</script>
+</body></html>"""
+
+
+    db = get_db(); _ensure_schema(db)
+    from datetime import date as _date
+    mensaje = error = ""
+    anio_sel = request.args.get("anio") or str(_date.today().year)
+
+    if request.method == "POST":
+        accion = (request.form.get("accion") or "").strip()
+        try:
+            if accion == "agregar":
+                mes = (request.form.get("mes") or "").strip()
+                concepto = (request.form.get("concepto") or "").strip()
+                monto = float(request.form.get("monto") or 0)
+                if mes and concepto and monto > 0:
+                    db.execute(
+                        "INSERT INTO economico_gastos_fijos (mes, concepto, monto) VALUES (?,?,?)",
+                        (mes, concepto, monto))
+                    db.commit(); mensaje = "Gasto agregado."
+                else:
+                    error = "Completá mes, concepto y monto."
+            elif accion == "eliminar":
+                gasto_id = int(request.form.get("gasto_id") or 0)
+                if gasto_id:
+                    db.execute("DELETE FROM economico_gastos_fijos WHERE id=?", (gasto_id,))
+                    db.commit(); mensaje = "Gasto eliminado."
+        except Exception as exc:
+            error = str(exc)
+
+    filas = db.execute(
+        "SELECT id, mes, concepto, monto FROM economico_gastos_fijos WHERE mes LIKE ? ORDER BY mes, concepto",
+        (f"{anio_sel}-%",)
+    ).fetchall()
+
+    # Totales por mes
+    from collections import defaultdict as _dd
+    por_mes = _dd(float)
+    for _, mes, _, monto in filas:
+        por_mes[mes] += float(monto or 0)
+
+    # Años disponibles
+    anios_db = db.execute(
+        "SELECT DISTINCT substr(mes,1,4) FROM economico_gastos_fijos ORDER BY 1 DESC"
+    ).fetchall()
+    anios = list({r[0] for r in anios_db} | {str(_date.today().year)})
+    anios.sort(reverse=True)
+
+    filas_html = ""
+    mes_actual = None
+    for gid, mes, concepto, monto in filas:
+        if mes != mes_actual:
+            mes_actual = mes
+            total_mes = por_mes[mes]
+            filas_html += f"""<tr style="background:#f1f5f9;">
+              <td colspan="2" style="font-weight:700;color:#1e293b;">{mes}</td>
+              <td style="text-align:right;font-weight:700;color:#6366f1;">{_m(total_mes)}</td>
+              <td></td>
+            </tr>"""
+        filas_html += f"""<tr>
+          <td style="padding-left:20px;color:#374151;">{_E(concepto)}</td>
+          <td></td>
+          <td style="text-align:right;">{_m(float(monto or 0))}</td>
+          <td style="text-align:center;">
+            <form method="post" style="display:inline;" onsubmit="return confirm('¿Eliminar este gasto?')">
+              <input type="hidden" name="accion" value="eliminar">
+              <input type="hidden" name="gasto_id" value="{gid}">
+              <button type="submit" style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:1rem;">🗑️</button>
+            </form>
+          </td>
+        </tr>"""
+
+    total_anio = sum(por_mes.values())
+    prom_mensual = total_anio / len(por_mes) if por_mes else 0.0
+
+    anio_tabs = "".join(
+        f'<a href="?anio={a}" style="padding:5px 12px;border-radius:5px;text-decoration:none;font-size:.82rem;font-weight:600;'
+        f'{"background:#f59e0b;color:#fff;" if a==anio_sel else "background:#fef3c7;color:#92400e;"}">{a}</a>'
+        for a in anios)
+
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -783,15 +1281,17 @@ def economico_dashboard_ejecutivo():
     db = get_db(); _ensure_schema(db)
 
     ots_rows = db.execute(
-        "SELECT id, cliente, obra, tipo_estructura FROM ordenes_trabajo ORDER BY obra, id"
+        "SELECT id, cliente, obra, tipo_estructura, COALESCE(es_mantenimiento,0) FROM ordenes_trabajo ORDER BY obra, id"
     ).fetchall()
 
-    obras_dict = {}
-    for ot_id, cliente, obra, tipo in ots_rows:
+    obras_dict = {}   # obras productivas
+    mant_dict  = {}   # obras de mantenimiento / overhead
+    for ot_id, cliente, obra, tipo, es_mant in ots_rows:
         k = str(obra or "Sin obra").strip()
-        if k not in obras_dict:
-            obras_dict[k] = {"cliente": cliente or "", "ots": []}
-        obras_dict[k]["ots"].append({"id": ot_id, "tipo": tipo})
+        dest = mant_dict if es_mant else obras_dict
+        if k not in dest:
+            dest[k] = {"cliente": cliente or "", "ots": []}
+        dest[k]["ots"].append({"id": ot_id, "tipo": tipo})
 
     # ── Acumular datos por obra ───────────────────────────────────────────────
     obras_data = []   # lista de dicts por obra
@@ -821,7 +1321,7 @@ def economico_dashboard_ejecutivo():
         obras_data.append({
             "obra": obra_key, "cliente": info["cliente"],
             "n_ots": len(ots_d), "kg": agg["kg"], "hh": agg["hh"],
-            "pv": agg["p_pv"], "r_tot": agg["r_tot"], "r_cd": agg["r_cd"],
+            "pv": agg["p_pv"], "p_tc": agg["p_tc"], "r_tot": agg["r_tot"], "r_cd": agg["r_cd"],
             "mg": mg, "mg_proy": mg_proy, "af": af, "ae": ae,
             "sem_em": sem_em, "sem_bg": sem_bg, "sem_tc": sem_tc,
             "sem_lbl": sem_lbl, "sem_det": sem_det,
@@ -834,9 +1334,8 @@ def economico_dashboard_ejecutivo():
             ("Pintura",         agg["p_pint"], agg["r_pint"]),
             ("Mano de Obra",    agg["p_mo"],   agg["r_mo"]),
             ("Consumibles",     agg["p_cons"], agg["r_cons"]),
-            ("Ingeniería",      agg["p_ing"],  0.0),
+            ("Ingeniería",      agg["p_ing"],  agg["r_ing"]),
             ("Subcontratos",    0.0,           agg["r_sub"]),
-            ("Gastos Generales",agg["p_gg"],   agg["r_gg"]),
             ("Impuestos",       agg["p_imp"],  agg["r_imp"]),
         ]:
             rubros_global[nm]["prev"] += prev
@@ -846,20 +1345,110 @@ def economico_dashboard_ejecutivo():
     if n_obras == 0:
         return "<p>Sin datos de obras.</p><a href='/modulo/economico'>← Volver</a>"
 
+    # ── Mantenimiento / Overhead ──────────────────────────────────────────────
+    mant_data = []
+    for obra_key in sorted(mant_dict.keys()):
+        info = mant_dict[obra_key]
+        cfg  = _get_config_obra(db, obra_key)
+        ots_d = []
+        for oi in info["ots"]:
+            d = _calc_economico(db, oi["id"], cfg)
+            d["ot_id"] = oi["id"]
+            ots_d.append(d)
+        agg = _aggregate_obra(ots_d)
+        mant_data.append({
+            "obra": obra_key, "cliente": info["cliente"],
+            "n_ots": len(ots_d), "hh": agg["hh"],
+            "p_tc": agg["p_tc"], "r_tot": agg["r_tot"], "agg": agg,
+        })
+
+    total_mant_prev = sum(d["p_tc"]  for d in mant_data)
+    total_mant_real = sum(d["r_tot"] for d in mant_data)
+    total_prod_real = sum(o["r_tot"] for o in obras_data)
+    pct_overhead    = (total_mant_real / total_prod_real * 100.0) if total_prod_real > 0 else 0.0
+    # Gastos Generales de los proyectos productivos (deberían cubrir el overhead total)
+    total_gg_prev   = sum(o["agg"]["p_gg"] for o in obras_data)
+    total_gg_real   = 0.0  # GG ya no se calcula por %; se usa el overhead distribuido
+    # Nota: saldo_real se recalcula después de obtener total_gf_real
+    # Por ahora inicializar; se actualizará con total_estructura_real en el panel HTML
+
+    # Chart mensual de mantenimiento — HH × precio por mes + gastos fijos
+    from db_utils import DB_ENGINE as _DB_ENGINE3
+    from collections import defaultdict as _dd3
+    import json as _json3
+    _mysql3 = (_DB_ENGINE3 == "mysql")
+    fmt_mes3 = "DATE_FORMAT(fecha, '%Y-%m')" if _mysql3 else "strftime('%Y-%m', fecha)"
+    mant_ot_ids = [oi["id"] for info in mant_dict.values() for oi in info["ots"]]
+    mant_mes_costs = _dd3(float)
+    if mant_ot_ids:
+        _ph = ",".join("?" * len(mant_ot_ids))
+        _mant_hh = db.execute(
+            f"""SELECT ot_id, {fmt_mes3} AS mes, SUM(horas) AS hh
+                FROM partes_trabajo
+                WHERE ot_id IN ({_ph}) AND fecha IS NOT NULL AND fecha != ''
+                GROUP BY ot_id, mes ORDER BY mes""",
+            mant_ot_ids
+        ).fetchall()
+        _mant_cfg_cache = {}
+        for _ot_id, _mes, _hh in _mant_hh:
+            if _ot_id not in _mant_cfg_cache:
+                _r = db.execute("SELECT obra FROM ordenes_trabajo WHERE id=?", (_ot_id,)).fetchone()
+                _mant_cfg_cache[_ot_id] = _get_config_obra(db, (_r[0] or "") if _r else "")
+            _cfg3 = _mant_cfg_cache[_ot_id]
+            mant_mes_costs[_mes] += float(_hh or 0) * (_cfg3["precio_hora_mo"] + _cfg3["precio_hora_cons"])
+
+    # Gastos fijos por mes
+    gf_rows = db.execute(
+        "SELECT mes, SUM(monto) FROM economico_gastos_fijos GROUP BY mes ORDER BY mes"
+    ).fetchall()
+    gf_mes_costs = {str(r[0]): float(r[1] or 0) for r in gf_rows}
+    total_gf_real = sum(gf_mes_costs.values())
+
+    # Ahora calculamos saldo con total de estructura (mantenimiento + gastos fijos)
+    total_estructura_real = total_mant_real + total_gf_real
+    saldo_prev   = total_gg_prev - total_estructura_real
+    pct_cob_prev = min((total_gg_prev / total_estructura_real * 100.0) if total_estructura_real > 0 else 100.0, 200.0)
+    # Ranking de desvíos: GG reales vs previstos (real = overhead total de estructura)
+    rubros_global["Gastos Generales"]["prev"] = total_gg_prev
+    rubros_global["Gastos Generales"]["real"] = total_estructura_real
+
+    # Series para el chart — unión de todos los meses con datos
+    _all_meses = sorted(set(mant_mes_costs.keys()) | set(gf_mes_costs.keys()))
+    mant_mes_js   = _json3.dumps(_all_meses)
+    mant_costs_js = _json3.dumps([round(mant_mes_costs.get(m, 0), 0) for m in _all_meses])
+    gf_costs_js   = _json3.dumps([round(gf_mes_costs.get(m, 0), 0) for m in _all_meses])
+
     # ── KPIs globales ─────────────────────────────────────────────────────────
     n_riesgo    = sum(1 for o in obras_data if o["sem_lbl"] in ("Crítico","Atención"))
     n_criticos  = sum(1 for o in obras_data if o["sem_lbl"] == "Crítico")
-    mg_prom     = sum(o["mg_proy"] for o in obras_data) / n_obras
-    costo_cd    = sum(o["r_cd"]    for o in obras_data)
-    ae_prom     = sum(o["ae"]      for o in obras_data) / n_obras
-    # Riesgo global
+    costo_cd      = sum(o["r_cd"]          for o in obras_data)
+    costo_cd_prev = sum(o["agg"]["p_cd"]   for o in obras_data)
+    ae_prom       = sum(o["ae"]             for o in obras_data) / n_obras
+    # Margen proyectado del portfolio: ponderado por valor de obra (mismo criterio
+    # que la fila TOTAL). Evita que obras sin avance (af=0, costo=0) inflen el promedio
+    # con un 100% ficticio, y que obras pequeñas pesen igual que grandes.
+    _pv_total   = sum(o["pv"] for o in obras_data)
+    _cproy_total = sum(
+        o["r_tot"] / (o["af"] / 100.0) if o["af"] > 0 else o["r_tot"]
+        for o in obras_data
+    )
+    mg_prom = ((_pv_total - _cproy_total) / _pv_total * 100.0) if _pv_total > 0 else 0.0
+    # Riesgo global — basado en margen promedio proyectado del portfolio
+    # El margen promedio refleja la compensación entre obras buenas y malas.
+    # pct_riesgo actúa solo como agravante secundario en casos extremos.
     pct_riesgo  = n_riesgo / n_obras
-    if n_criticos > 0 or pct_riesgo >= 0.5:
+    if mg_prom < 5:
         riesgo_em, riesgo_lbl, riesgo_c = "🔴", "Alto", "#991b1b"
-    elif pct_riesgo >= 0.25:
-        riesgo_em, riesgo_lbl, riesgo_c = "🟠", "Medio", "#92400e"
+    elif mg_prom < 15:
+        if pct_riesgo >= 0.5:
+            riesgo_em, riesgo_lbl, riesgo_c = "🔴", "Alto", "#991b1b"
+        else:
+            riesgo_em, riesgo_lbl, riesgo_c = "🟠", "Medio", "#92400e"
     else:
-        riesgo_em, riesgo_lbl, riesgo_c = "🟢", "Bajo", "#166534"
+        if pct_riesgo >= 0.5:
+            riesgo_em, riesgo_lbl, riesgo_c = "🟠", "Medio", "#92400e"
+        else:
+            riesgo_em, riesgo_lbl, riesgo_c = "🟢", "Bajo", "#166534"
 
     # ── Ranking de desvíos ────────────────────────────────────────────────────
     # Rubros que siempre aparecen aunque prev=0 y real=0
@@ -894,6 +1483,53 @@ def economico_dashboard_ejecutivo():
 
     resumen_html = "\n".join(f"<li>{item}</li>" for item in resumen_items)
 
+    # ── Distribución de gastos de estructura por costo directo ────────────────
+    # Cada proyecto absorbe overhead en proporción a su CD real.
+    # Costo ajustado = r_cd + GG_dist + r_imp.
+    _sum_r_cd = sum(o["r_cd"] for o in obras_data)
+    dist_rows_html = ""
+    total_gg_dist_check = 0.0
+    gg_dist_map = {}
+    costo_real_aj_map = {}
+    costo_proy_aj_map = {}
+    mg_proy_aj_map = {}
+    for o in obras_data:
+        _pct_cd = (o["r_cd"] / _sum_r_cd * 100.0) if _sum_r_cd > 0 else 0.0
+        _gg_dist = total_estructura_real * (o["r_cd"] / _sum_r_cd) if _sum_r_cd > 0 else 0.0
+        total_gg_dist_check += _gg_dist
+        _imp = o["agg"]["r_imp"]
+        _costo_aj = o["r_cd"] + _gg_dist + _imp
+        _costo_proy_aj = (_costo_aj / (o["af"] / 100.0)) if o["af"] > 0 else _costo_aj
+        _mg_aj = ((o["pv"] - _costo_proy_aj) / o["pv"] * 100.0) if o["pv"] > 0 else 0.0
+        _mc_aj = _cm(_mg_aj)
+        _delta = _mg_aj - o["mg_proy"]
+        _delta_c = "#166534" if _delta >= 0 else "#991b1b"
+        _delta_s = f'{"▲" if _delta>=0 else "▼"} {abs(_delta):.1f}pp'
+
+        gg_dist_map[o["obra"]] = _gg_dist
+        costo_real_aj_map[o["obra"]] = _costo_aj
+        costo_proy_aj_map[o["obra"]] = _costo_proy_aj
+        mg_proy_aj_map[o["obra"]] = _mg_aj
+        o["gg_dist"] = _gg_dist
+        o["r_tot_aj"] = _costo_aj
+        o["costo_proy_aj"] = _costo_proy_aj
+        o["mg_proy_aj"] = _mg_aj
+
+        dist_rows_html += f"""<tr>
+          <td style="font-weight:700;color:#6366f1;">{_E(o['obra'])}</td>
+          <td style="text-align:right;">{_m(o['r_cd'])}</td>
+          <td style="text-align:right;color:#6b7280;">{_pct_cd:.1f}%</td>
+          <td style="text-align:right;font-weight:700;color:#f59e0b;">{_m(_gg_dist)}</td>
+          <td style="text-align:right;">{_m(_costo_aj)}</td>
+          <td style="text-align:right;">{_m(o['pv'])}</td>
+          <td style="text-align:right;font-weight:700;color:{_mc_aj};">{_mg_aj:.1f}%</td>
+          <td style="text-align:right;font-size:.75rem;color:{_delta_c};">{_delta_s}</td>
+        </tr>"""
+
+    _total_costo_proy_aj = sum(costo_proy_aj_map.values()) if costo_proy_aj_map else 0.0
+    _mg_total_aj = ((_pv_total - _total_costo_proy_aj) / _pv_total * 100.0) if _pv_total > 0 else 0.0
+    mg_prom = _mg_total_aj
+
     # ── HTML ──────────────────────────────────────────────────────────────────
     # Tabla de obras
     tabla_obras = ""
@@ -901,16 +1537,31 @@ def economico_dashboard_ejecutivo():
         af_bar = f'<div style="background:#e5e7eb;border-radius:3px;height:8px;width:100%;min-width:50px;"><div style="background:#3b82f6;border-radius:3px;height:8px;width:{min(o["af"],100):.1f}%;"></div></div><span style="font-size:.72rem;color:#6b7280;">{o["af"]:.1f}%</span>'
         ae_c   = "#991b1b" if o["ae"] > o["af"]+5 else ("#166534" if o["ae"] <= o["af"] else "#92400e")
         ae_bar = f'<div style="background:#e5e7eb;border-radius:3px;height:8px;width:100%;min-width:50px;"><div style="background:{ae_c};border-radius:3px;height:8px;width:{min(o["ae"],100):.1f}%;"></div></div><span style="font-size:.72rem;color:{ae_c};">{o["ae"]:.1f}%</span>'
-        mc     = _cm(o["mg_proy"])
+        mg_aj  = o.get("mg_proy_aj", o["mg_proy"])
+        mc     = _cm(mg_aj)
         tabla_obras += f"""<tr>
           <td style="font-weight:700;"><a href="/modulo/economico/obra/{_E(o['obra'])}" style="color:#6366f1;text-decoration:none;">{_E(o['obra'])}</a></td>
           <td style="font-size:.75rem;color:#6b7280;">{_E(o['cliente'])}</td>
           <td>{af_bar}</td>
           <td>{ae_bar}</td>
-          <td style="text-align:right;font-weight:700;color:{mc};">{o['mg_proy']:.1f}%</td>
-          <td style="text-align:right;color:#6b7280;">{_m(o['r_tot'])}</td>
+          <td style="text-align:right;font-weight:700;color:{mc};">{mg_aj:.1f}%</td>
+          <td style="text-align:right;color:#6b7280;">{_m(o['pv'])}</td>
+          <td style="text-align:right;color:#6b7280;">{_m(o.get('r_tot_aj', o['r_tot']))}</td>
           <td style="text-align:center;font-size:1.3rem;">{o['sem_em']}</td>
         </tr>"""
+    # Fila de totales — reutiliza _pv_total y _cproy_total calculados en KPIs globales
+    total_pv   = _pv_total
+    total_real = sum(o.get('r_tot_aj', o['r_tot']) for o in obras_data)
+    total_mg   = mg_prom  # idéntico cálculo ponderado
+    mc_tot     = _cm(total_mg)
+    tabla_obras += f"""<tr style="background:#f1f5f9;font-weight:700;border-top:2px solid #cbd5e1;">
+      <td colspan="2" style="font-size:.82rem;color:#374151;">TOTAL ({n_obras} obras)</td>
+      <td></td><td></td>
+      <td style="text-align:right;color:{mc_tot};">{total_mg:.1f}%</td>
+      <td style="text-align:right;">{_m(total_pv)}</td>
+      <td style="text-align:right;">{_m(total_real)}</td>
+      <td></td>
+    </tr>"""
 
     # Semáforos
     semaforos_html = ""
@@ -960,104 +1611,124 @@ def economico_dashboard_ejecutivo():
     chart_af_js     = _json.dumps(chart_af)
     chart_ae_js     = _json.dumps(chart_ae)
 
-    # ── Chart Ingresos vs Egresos por período ────────────────────────────────
-    periodo_sel = (request.args.get("periodo") or "mes").strip().lower()
-    if periodo_sel not in ("semana", "mes", "trimestre"):
-        periodo_sel = "mes"
+    # ── Chart Precio de Venta vs Costo Real por obra ────────────────────────
+    import json as _json2
+    chart2_labels_js = _json2.dumps([o["obra"] for o in obras_data])
+    chart2_pv_js     = _json2.dumps([round(o["pv"], 0) for o in obras_data])
+    chart2_costo_js  = _json2.dumps([round(o.get("r_tot_aj", o["r_tot"]), 0) for o in obras_data])
+    chart2_colors_js = _json2.dumps([
+      "rgba(16,185,129,0.75)" if o["pv"] >= o.get("r_tot_aj", o["r_tot"]) else "rgba(239,68,68,0.75)"
+        for o in obras_data
+    ])
 
-    from db_utils import DB_ENGINE
-    _mysql = (DB_ENGINE == "mysql")
-
-    if periodo_sel == "semana":
-        fmt_sql = "DATE_FORMAT(fecha, '%Y-%u')" if _mysql else "strftime('%Y-%W', fecha)"
-        fmt_lbl = "Semana"
-    elif periodo_sel == "trimestre":
-        fmt_sql = ("CONCAT(YEAR(fecha), '-Q', QUARTER(fecha))" if _mysql
-                   else "strftime('%Y', fecha) || '-Q' || CAST((CAST(strftime('%m', fecha) AS INTEGER) + 2) / 3 AS TEXT)")
-        fmt_lbl = "Trimestre"
+    # ── Panel Mantenimiento HTML ──────────────────────────────────────────────
+    total_estructura_real = total_mant_real + total_gf_real
+    saldo_real_c  = "#166534" if saldo_prev >= 0 else "#991b1b"
+    saldo_real_ic = "▲" if saldo_prev >= 0 else "▼"
+    pct_oh_c = "#991b1b" if pct_overhead > 25 else ("#92400e" if pct_overhead > 15 else "#166534")
+    if mant_data or total_gf_real > 0:
+        # Cobertura GG (solo real — sin presupuesto de estructura)
+        saldo_real_c  = "#166534" if saldo_prev >= 0 else "#991b1b"
+        saldo_real_ic = "▲" if saldo_prev >= 0 else "▼"
+        bar_real_w    = min(pct_cob_prev, 100)
+        bar_real_c    = "#16a34a" if pct_cob_prev >= 100 else ("#f59e0b" if pct_cob_prev >= 70 else "#dc2626")
+        mant_filas = ""
+        for d in mant_data:
+            mant_filas += f"""<tr>
+              <td style="font-weight:600;"><a href="/modulo/economico/obra/{_E(d['obra'])}" style="color:#6366f1;text-decoration:none;">{_E(d['obra'])}</a></td>
+              <td style="text-align:right;">{_m(d['r_tot'])}</td>
+              <td style="text-align:right;font-size:.78rem;color:#6b7280;">{d['hh']:,.1f} HH</td>
+            </tr>"""
+        gf_link = '<a href="/modulo/economico/gastos-fijos" style="font-size:.76rem;background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:5px;text-decoration:none;font-weight:700;margin-left:10px;">+ Cargar gastos fijos</a>'
+        pct_total_overhead = (total_estructura_real / total_prod_real * 100.0) if total_prod_real > 0 else 0.0
+        pct_total_c = "#991b1b" if pct_total_overhead > 25 else ("#92400e" if pct_total_overhead > 15 else "#166534")
+        mant_panel_html = f"""
+    <!-- Costos de Estructura / Mantenimiento -->
+    <div class="card" style="border-top:3px solid #f59e0b;">
+      <div class="ct" style="background:#fefce8;color:#92400e;font-size:.95rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+        <span>🏭 Costos de Estructura &amp; Mantenimiento
+          <span style="font-size:.78rem;font-weight:400;color:#a16207;margin-left:8px;">Overhead — sin ingreso directo</span>
+        </span>
+        {gf_link}
+      </div>
+      <div class="cb">
+        <!-- KPIs fila 1: presupuesto vs realidad -->
+        <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:16px;">
+          <div style="background:#f0fdf4;border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid #6366f1;">
+            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">GG Previstos en proyectos</div>
+            <div style="font-size:1.6rem;font-weight:900;color:#6366f1;line-height:1;">{_m(total_gg_prev)}</div>
+            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">presupuestados para cubrir overhead</div>
+          </div>
+          <div style="background:#fff7ed;border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid #f59e0b;">
+            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">Total Estructura Real</div>
+            <div style="font-size:1.6rem;font-weight:900;color:#92400e;line-height:1;">{_m(total_estructura_real)}</div>
+            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">mant. {_m(total_mant_real)} + gastos fijos {_m(total_gf_real)}</div>
+          </div>
+          <div style="background:{'#f0fdf4' if saldo_prev>=0 else '#fef2f2'};border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid {saldo_real_c};">
+            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">{'✅ Saldo positivo' if saldo_prev>=0 else '❌ Déficit'}</div>
+            <div style="font-size:1.6rem;font-weight:900;color:{saldo_real_c};line-height:1;">{saldo_real_ic} {_m(abs(saldo_prev))}</div>
+            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">{pct_cob_prev:.0f}% del overhead cubierto por GG presupuestados</div>
+          </div>
+          <div style="background:#fff;border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid {pct_total_c};">
+            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">Overhead / Obras productivas</div>
+            <div style="font-size:1.6rem;font-weight:900;color:{pct_total_c};line-height:1;">{pct_total_overhead:.1f}%</div>
+            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">de {_m(total_prod_real)} en costos reales</div>
+          </div>
+        </div>
+        <!-- KPIs fila 2: breakdown mantenimiento vs gastos fijos -->
+        <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:16px;">
+          <div style="background:#fff;border-radius:10px;padding:14px 18px;flex:1;min-width:180px;border:1px solid #fde68a;">
+            <div style="font-size:.8rem;color:#92400e;font-weight:700;margin-bottom:8px;">⚒️ Obras de Mantenimiento</div>
+            <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:4px;">
+              <span style="color:#6b7280;">Previsto</span>
+              <span style="font-weight:700;">{_m(total_mant_prev)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:6px;">
+              <span style="color:#6b7280;">Real</span>
+              <span style="font-weight:700;">{_m(total_mant_real)}</span>
+            </div>
+            {(lambda d,p: f'<div style="font-size:.82rem;font-weight:700;color:{"#991b1b" if d>0 else "#166534"};">{"▲" if d>0 else "▼"} {_m(abs(d))} ({"+" if d>0 else ""}{(d/p*100):.1f}%)</div>' if p>0 else ''
+              )(total_mant_real-total_mant_prev, total_mant_prev)}
+            <div style="font-size:.76rem;color:#9ca3af;margin-top:4px;">{sum(d['hh'] for d in mant_data):,.0f} HH acumuladas</div>
+          </div>
+          <div style="background:#fff;border-radius:10px;padding:14px 18px;flex:1;min-width:180px;border:1px solid #fca5a5;">
+            <div style="font-size:.8rem;color:#dc2626;font-weight:700;margin-bottom:8px;">🏢 Gastos Fijos de Estructura</div>
+            <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:4px;">
+              <span style="color:#6b7280;">Acumulado real</span>
+              <span style="font-weight:700;">{_m(total_gf_real)}</span>
+            </div>
+            <div style="font-size:.76rem;color:#9ca3af;margin-top:4px;">sueldos · alquiler · servicios</div>
+          </div>
+        </div>
+        <!-- Barra de cobertura -->
+        <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:16px;">
+          <div style="font-size:.84rem;font-weight:700;color:#374151;margin-bottom:10px;">
+            📊 Cobertura del overhead: <span style="color:{saldo_real_c};">{pct_cob_prev:.0f}%</span>
+            <span style="font-weight:400;color:#6b7280;font-size:.78rem;margin-left:6px;">GG presupuestados vs estructura real</span>
+          </div>
+          <div style="background:#e5e7eb;border-radius:6px;height:16px;margin-bottom:8px;position:relative;">
+            <div style="background:{bar_real_c};border-radius:6px;height:16px;width:{bar_real_w:.1f}%;transition:width .3s;"></div>
+            <div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:700;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4);">{pct_cob_prev:.0f}%</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:.82rem;">
+            <span style="color:#6366f1;font-weight:700;">GG Prev: {_m(total_gg_prev)}</span>
+            <span style="color:#92400e;font-weight:700;">Estructura: {_m(total_estructura_real)}</span>
+          </div>
+        </div>
+        <!-- Tabla OTs + Gráfico -->
+        <div class="two" style="margin-bottom:0;">
+          <div>
+            {"<table style='font-size:.85rem;'><thead><tr><th>Obra mantenimiento</th><th style='text-align:right;'>Costo Real</th><th style='text-align:right;'>HH</th></tr></thead><tbody>" + mant_filas + "</tbody></table>" if mant_filas else ""}
+          </div>
+          <div style="position:relative;min-height:180px;">
+            <div style="font-size:.82rem;font-weight:700;color:#374151;margin-bottom:6px;">Evolución mensual — estructura total</div>
+            <div style="position:relative;height:160px;"><canvas id="chartMant"></canvas></div>
+          </div>
+        </div>
+      </div>
+    </div>"""
     else:
-        fmt_sql = "DATE_FORMAT(fecha, '%Y-%m')" if _mysql else "strftime('%Y-%m', fecha)"
-        fmt_lbl = "Mes"
-
-    # HH por OT por período
-    hh_rows = db.execute(
-        f"""SELECT ot_id, {fmt_sql} AS periodo, SUM(horas) AS hh
-            FROM partes_trabajo
-            WHERE fecha IS NOT NULL AND fecha != ''
-            GROUP BY ot_id, periodo
-            ORDER BY periodo"""
-    ).fetchall()
-
-    # Mapa de hs_previstas y precio_venta por OT
-    ots_meta = {}
-    for r in db.execute(
-        """SELECT ot.id, COALESCE(ot.hs_previstas, 0),
-                  COALESCE(ep.mat_previsto,0)+COALESCE(ep.pintura_previsto,0)+
-                  COALESCE(ep.mo_previsto,0)+COALESCE(ep.consumibles_previsto,0)+
-                  COALESCE(ep.ingenieria_previsto,0)+COALESCE(ep.gastos_gen_previsto,0)+
-                  COALESCE(ep.impuestos_previsto,0)+COALESCE(ep.beneficio_previsto,0) AS pv,
-                  ot.obra
-           FROM ordenes_trabajo ot
-           LEFT JOIN economico_presupuesto ep ON ep.ot_id = ot.id"""
-    ).fetchall():
-        ot_id_, hs_prev, pv_, obra_ = r
-        cfg_ot = _get_config_obra(db, obra_ or "")
-        # costos reales manuales
-        rm_row = db.execute(
-            "SELECT COALESCE(mat_real,0)+COALESCE(pintura_real,0)+COALESCE(subcontratos_real,0) FROM economico_costos_reales WHERE ot_id=?",
-            (ot_id_,)).fetchone()
-        manual_real = float(rm_row[0] or 0) if rm_row else 0.0
-        # total HH de la OT
-        tot_hh_row = db.execute("SELECT COALESCE(SUM(horas),0) FROM partes_trabajo WHERE ot_id=?", (ot_id_,)).fetchone()
-        tot_hh = float(tot_hh_row[0] or 0) if tot_hh_row else 0.0
-        ots_meta[ot_id_] = {
-            "hs_prev":     float(hs_prev or 0),
-            "pv":          float(pv_ or 0),
-            "cfg":         cfg_ot,
-            "manual_real": manual_real,
-            "tot_hh":      tot_hh,
-        }
-
-    # Acumular ingresos y egresos por período
-    from collections import defaultdict
-    periodos_ing  = defaultdict(float)  # ingresos (valor ganado) por período
-    periodos_egr  = defaultdict(float)  # egresos (costos) por período
-
-    for ot_id_, periodo, hh_p in hh_rows:
-        ot_id_ = int(ot_id_); hh_p = float(hh_p or 0)
-        meta = ots_meta.get(ot_id_)
-        if not meta:
-            continue
-        cfg_ot  = meta["cfg"]
-        hs_prev = meta["hs_prev"]
-        pv_ot   = meta["pv"]
-        tot_hh  = meta["tot_hh"]
-
-        # Ingresos del período = valor ganado incremental
-        if hs_prev > 0 and pv_ot > 0:
-            periodos_ing[periodo] += pv_ot * (hh_p / hs_prev)
-
-        # Egresos del período = costos auto + proporción de costos manuales
-        auto_cost  = hh_p * (cfg_ot["precio_hora_mo"] + cfg_ot["precio_hora_cons"])
-        frac_hh    = (hh_p / tot_hh) if tot_hh > 0 else 0.0
-        manual_p   = meta["manual_real"] * frac_hh
-        directo_p  = auto_cost + manual_p
-        gg_p       = directo_p * cfg_ot["pct_gastos_gen"] / 100.0
-        imp_p      = directo_p * cfg_ot["pct_impuestos"]  / 100.0
-        periodos_egr[periodo] += directo_p + gg_p + imp_p
-
-    # Ordenar períodos y construir series acumuladas
-    all_periods = sorted(set(periodos_ing.keys()) | set(periodos_egr.keys()))
-    cum_ing = []; cum_egr = []; running_i = 0.0; running_e = 0.0
-    for p in all_periods:
-        running_i += periodos_ing.get(p, 0.0)
-        running_e += periodos_egr.get(p, 0.0)
-        cum_ing.append(round(running_i, 0))
-        cum_egr.append(round(running_e, 0))
-
-    chart2_labels_js = _json.dumps(all_periods)
-    chart2_ing_js    = _json.dumps(cum_ing)
-    chart2_egr_js    = _json.dumps(cum_egr)
+        mant_panel_html = ""
 
     # KPI cards top
     def _kpi(titulo, valor, color="#6366f1", sub=""):
@@ -1073,9 +1744,10 @@ def economico_dashboard_ejecutivo():
              "#991b1b" if n_riesgo>0 else "#166534", f"de {n_obras} obras") +
         _kpi("Margen prom. proyectado",  f"{'🟢' if mg_prom>=10 else '🟠' if mg_prom>=5 else '🔴'} {mg_prom:.1f}%",
              _cm(mg_prom), "a la finalización") +
-        _kpi("Costo directo ejecutado",  _m(costo_cd), "#1e293b", "acumulado") +
+        _kpi("Costo directo ejecutado",  _m(costo_cd),      "#1e293b", "acumulado") +
+        _kpi("Costo directo previsto",   _m(costo_cd_prev), "#3b82f6", "presupuestado") +
         _kpi("Av. económico promedio",   f"{ae_prom:.1f}%", "#3b82f6", "sobre presupuesto") +
-        _kpi("Riesgo global",            f"{riesgo_em} {riesgo_lbl}", riesgo_c, f"{n_criticos} crítico{'s' if n_criticos!=1 else ''}")
+        _kpi("Riesgo global",            f"{riesgo_em} {riesgo_lbl}", riesgo_c, f"mg prom. {mg_prom:.1f}% · {n_criticos} obra{'s' if n_criticos!=1 else ''} crítica{'s' if n_criticos!=1 else ''}")
     )
 
     return f"""<!DOCTYPE html>
@@ -1117,8 +1789,7 @@ def economico_dashboard_ejecutivo():
       <div style="font-size:.74rem;opacity:.7;margin-top:2px;">Visión consolidada · {n_obras} obras activas</div>
     </div>
     <div style="display:flex;gap:7px;flex-wrap:wrap;">
-      <a href="/modulo/economico/certificados" style="background:#10b981;color:#fff;font-weight:700;">📜 Certificados</a>
-      <a href="/modulo/economico/obras">📊 Obras / Costos</a>
+      <a href="/modulo/economico">← Módulo Económico</a>
       <a href="/">Inicio</a>
     </div>
   </div>
@@ -1136,9 +1807,10 @@ def economico_dashboard_ejecutivo():
           <table>
             <thead><tr>
               <th>Obra</th><th>Cliente</th>
-              <th style="min-width:110px;">Av. Físico</th>
-              <th style="min-width:110px;">Av. Económico</th>
+              <th style="min-width:110px;">Av. Físico <span title="Estado de Avance ingresado manualmente en la OT (0–100%)" style="cursor:help;opacity:.7;font-weight:400;">ⓘ</span></th>
+              <th style="min-width:110px;">Av. Económico <span title="Costo Total Real / Costo Total Presupuestado × 100. Superar 100% indica sobrecosto." style="cursor:help;opacity:.7;font-weight:400;">ⓘ</span></th>
               <th style="text-align:right;">Margen Proy.</th>
+              <th style="text-align:right;">Precio de Venta</th>
               <th style="text-align:right;">Costo Real</th>
               <th style="text-align:center;">Estado</th>
             </tr></thead>
@@ -1162,24 +1834,37 @@ def economico_dashboard_ejecutivo():
       </div>
     </div>
 
-    <!-- Gráfico Ingresos vs Egresos -->
+    <!-- Gráfico Precio de Venta vs Costo Real por Obra -->
     <div class="card">
-      <div class="ct" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-        <span>💵 Ingresos vs Egresos acumulados — Valor ganado</span>
-        <div style="display:flex;gap:6px;">
-          <a href="?periodo=semana" style="font-size:.75rem;padding:3px 10px;border-radius:5px;text-decoration:none;font-weight:600;
-             {'background:#6366f1;color:#fff;' if periodo_sel=='semana' else 'background:#e0e7ff;color:#4338ca;'}">Semanal</a>
-          <a href="?periodo=mes" style="font-size:.75rem;padding:3px 10px;border-radius:5px;text-decoration:none;font-weight:600;
-             {'background:#6366f1;color:#fff;' if periodo_sel=='mes' else 'background:#e0e7ff;color:#4338ca;'}">Mensual</a>
-          <a href="?periodo=trimestre" style="font-size:.75rem;padding:3px 10px;border-radius:5px;text-decoration:none;font-weight:600;
-             {'background:#6366f1;color:#fff;' if periodo_sel=='trimestre' else 'background:#e0e7ff;color:#4338ca;'}">Trimestral</a>
-        </div>
-      </div>
-      <div style="padding:8px 16px;font-size:.75rem;color:#6b7280;">
-        Ingresos = Valor ganado (precio venta × HH ejecutadas / HH previstas). Egresos = costos reales acumulados por período.
+      <div class="ct">💵 Precio de Venta vs Costo Real — por obra</div>
+      <div style="padding:6px 16px 0;font-size:.75rem;color:#6b7280;">
+        Verde = obra rentable (PV &gt; Costo Real). Rojo = costo supera el precio de venta presupuestado.
       </div>
       <div class="cb" style="position:relative;height:260px;">
         <canvas id="chartIngEgr"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ct">🏭 Gastos Generales — Previsto vs Real</div>
+      <div class="cb">
+        <div style="display:flex;flex-wrap:wrap;gap:12px;">
+          <div style="flex:1;min-width:160px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 16px;">
+            <div style="font-size:.72rem;color:#166534;font-weight:700;text-transform:uppercase;">GG previstos</div>
+            <div style="font-size:1.35rem;font-weight:900;color:#166534;">{_m(total_gg_prev)}</div>
+            <div style="font-size:.72rem;color:#6b7280;">presupuestados en obras</div>
+          </div>
+          <div style="flex:1;min-width:160px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 16px;">
+            <div style="font-size:.72rem;color:#92400e;font-weight:700;text-transform:uppercase;">GG reales</div>
+            <div style="font-size:1.35rem;font-weight:900;color:#92400e;">{_m(total_estructura_real)}</div>
+            <div style="font-size:.72rem;color:#6b7280;">mantenimiento + gastos fijos</div>
+          </div>
+          <div style="flex:1;min-width:160px;background:{'#f0fdf4' if saldo_prev >= 0 else '#fef2f2'};border:1px solid {'#bbf7d0' if saldo_prev >= 0 else '#fecaca'};border-radius:10px;padding:14px 16px;">
+            <div style="font-size:.72rem;color:{'#166534' if saldo_prev >= 0 else '#991b1b'};font-weight:700;text-transform:uppercase;">Saldo / cobertura</div>
+            <div style="font-size:1.35rem;font-weight:900;color:{saldo_real_c};">{saldo_real_ic} {_m(abs(saldo_prev))}</div>
+            <div style="font-size:.72rem;color:#6b7280;">{pct_cob_prev:.0f}% de cobertura</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1205,6 +1890,49 @@ def economico_dashboard_ejecutivo():
           <div style="font-size:.8rem;font-weight:700;color:#374151;margin-bottom:10px;">Resumen de situación actual</div>
           <ul class="resumen">{resumen_html}</ul>
         </div>
+      </div>
+    </div>
+
+    {mant_panel_html}
+
+    <!-- Distribución de Gastos de Estructura por Obra -->
+    <div class="card" style="border-top:3px solid #f59e0b;">
+      <div class="ct" style="background:#fefce8;color:#92400e;">
+        ⚖️ Distribución de Gastos de Estructura por Obra
+        <span style="font-size:.72rem;font-weight:400;color:#a16207;margin-left:8px;">
+          overhead real ({_m(total_estructura_real)}) prorrateado por costo directo real de cada proyecto
+        </span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr>
+            <th>Obra</th>
+            <th style="text-align:right;">CD Real</th>
+            <th style="text-align:right;">% del total</th>
+            <th style="text-align:right;background:#fef3c7;color:#92400e;">GG asignado</th>
+            <th style="text-align:right;">Costo ajustado</th>
+            <th style="text-align:right;">Precio de Venta</th>
+            <th style="text-align:right;">Margen ajustado</th>
+            <th style="text-align:right;">Δ vs proy.</th>
+          </tr></thead>
+          <tbody>
+            {dist_rows_html}
+            <tr style="background:#f1f5f9;font-weight:700;border-top:2px solid #cbd5e1;">
+              <td>TOTAL</td>
+              <td style="text-align:right;">{_m(_sum_r_cd)}</td>
+              <td style="text-align:right;">100%</td>
+              <td style="text-align:right;color:#f59e0b;">{_m(total_estructura_real)}</td>
+              <td></td>
+              <td style="text-align:right;">{_m(_pv_total)}</td>
+              <td></td><td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:10px 16px;font-size:.74rem;color:#6b7280;border-top:1px solid #e5e7eb;">
+        <b>Costo ajustado</b> = CD Real + GG asignado + Impuestos propios.
+        <b>Δ vs proy.</b> = diferencia en puntos porcentuales respecto al margen proyectado por presupuesto.
+        Overhead total incluye obras de mantenimiento + gastos fijos de estructura.
       </div>
     </div>
 
@@ -1250,30 +1978,25 @@ def economico_dashboard_ejecutivo():
       }}
     }});
 
-    // Chart 2: Ingresos vs Egresos acumulados
+    // Chart 2: Precio de Venta vs Costo Real por obra
     const ctx2 = document.getElementById('chartIngEgr').getContext('2d');
-    const ing_data = {chart2_ing_js};
-    const egr_data = {chart2_egr_js};
     new Chart(ctx2, {{
-      type: 'line',
+      type: 'bar',
       data: {{
         labels: {chart2_labels_js},
         datasets: [
           {{
-            label: 'Ingresos (Valor Ganado)',
-            data: ing_data,
-            borderColor: 'rgba(16,185,129,1)',
-            backgroundColor: 'rgba(16,185,129,0.08)',
-            borderWidth: 2.5, pointRadius: 4,
-            fill: true, tension: 0.3,
+            label: 'Precio de Venta (Presupuestado)',
+            data: {chart2_pv_js},
+            backgroundColor: 'rgba(99,102,241,0.7)',
+            borderColor: 'rgba(99,102,241,1)',
+            borderWidth: 1, borderRadius: 4,
           }},
           {{
-            label: 'Egresos (Costos Reales)',
-            data: egr_data,
-            borderColor: 'rgba(239,68,68,1)',
-            backgroundColor: 'rgba(239,68,68,0.06)',
-            borderWidth: 2.5, pointRadius: 4,
-            fill: true, tension: 0.3,
+            label: 'Costo Real',
+            data: {chart2_costo_js},
+            backgroundColor: {chart2_colors_js},
+            borderWidth: 1, borderRadius: 4,
           }}
         ]
       }},
@@ -1297,500 +2020,49 @@ def economico_dashboard_ejecutivo():
         }}
       }}
     }});
+
+    // Chart 3: Mantenimiento — evolución mensual (apilado: HH + gastos fijos)
+    const ctxMant = document.getElementById('chartMant');
+    if (ctxMant) {{
+      new Chart(ctxMant.getContext('2d'), {{
+        type: 'bar',
+        data: {{
+          labels: {mant_mes_js},
+          datasets: [
+            {{
+              label: 'Obras mant. (HH)',
+              data: {mant_costs_js},
+              backgroundColor: 'rgba(245,158,11,0.75)',
+              borderColor: 'rgba(245,158,11,1)',
+              borderWidth: 1, borderRadius: 2,
+              stack: 'estructura',
+            }},
+            {{
+              label: 'Gastos fijos',
+              data: {gf_costs_js},
+              backgroundColor: 'rgba(239,68,68,0.7)',
+              borderColor: 'rgba(239,68,68,1)',
+              borderWidth: 1, borderRadius: 2,
+              stack: 'estructura',
+            }}
+          ]
+        }},
+        options: {{
+          responsive: true, maintainAspectRatio: false,
+          plugins: {{
+            legend: {{ position: 'top', labels: {{ font: {{ size: 9 }}, boxWidth: 10 }} }},
+            tooltip: {{ callbacks: {{ label: c => ` ${{c.dataset.label}}: ${{(c.parsed.y/1000).toFixed(0)}}k` }} }}
+          }},
+          scales: {{
+            y: {{ beginAtZero: true, stacked: true,
+                  ticks: {{ callback: v => '$' + (v/1000).toFixed(0) + 'k', font: {{ size: 9 }} }},
+                  grid: {{ color: '#f1f5f9' }} }},
+            x: {{ stacked: true, ticks: {{ font: {{ size: 9 }}, maxRotation: 45 }} }}
+          }}
+        }}
+      }});
+    }}
   }})();
   </script>
 </body>
 </html>"""
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# MÓDULO CERTIFICADOS DE AVANCE
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _ensure_schema_cert(db):
-    db.execute("""
-    CREATE TABLE IF NOT EXISTS certificados (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        obra        VARCHAR(255) NOT NULL,
-        quincena    VARCHAR(80)  NOT NULL,
-        fecha       DATE,
-        created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-    )""")
-    db.execute("""
-    CREATE TABLE IF NOT EXISTS certificados_items (
-        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-        certificado_id       INTEGER NOT NULL,
-        ot_id                INTEGER NOT NULL,
-        descripcion          TEXT,
-        pct_avance_acumulado REAL DEFAULT 0,
-        updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP
-    )""")
-    db.commit()
-
-
-def _pv_ot(db, ot_id):
-    """Precio de venta del presupuesto de la OT."""
-    r = db.execute(
-        """SELECT COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)+
-                  COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0)+
-                  COALESCE(gastos_gen_previsto,0)+COALESCE(impuestos_previsto,0)+COALESCE(beneficio_previsto,0)
-           FROM economico_presupuesto WHERE ot_id=?""", (ot_id,)).fetchone()
-    return float(r[0] or 0) if r else 0.0
-
-
-def _costo_pres_ot(db, ot_id):
-    """Costo total previsto (sin beneficio) de la OT."""
-    r = db.execute(
-        """SELECT COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)+
-                  COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0)+
-                  COALESCE(gastos_gen_previsto,0)+COALESCE(impuestos_previsto,0)
-           FROM economico_presupuesto WHERE ot_id=?""", (ot_id,)).fetchone()
-    return float(r[0] or 0) if r else 0.0
-
-
-def _pct_ant_ot(db, obra, ot_id, exclude_id=None):
-    """% acumulado del certificado inmediatamente anterior para esta OT/obra."""
-    if exclude_id:
-        r = db.execute(
-            """SELECT ci.pct_avance_acumulado
-               FROM certificados_items ci
-               JOIN certificados c ON c.id = ci.certificado_id
-               WHERE c.obra=? AND ci.ot_id=? AND c.id != ?
-               ORDER BY c.id DESC LIMIT 1""",
-            (obra, ot_id, exclude_id)).fetchone()
-    else:
-        r = db.execute(
-            """SELECT ci.pct_avance_acumulado
-               FROM certificados_items ci
-               JOIN certificados c ON c.id = ci.certificado_id
-               WHERE c.obra=? AND ci.ot_id=?
-               ORDER BY c.id DESC LIMIT 1""",
-            (obra, ot_id)).fetchone()
-    return float(r[0] or 0) if r else 0.0
-
-
-def _cert_kpis(db, cert_id):
-    """Calcula PV y Costo para un certificado dado."""
-    items = db.execute(
-        "SELECT ot_id, pct_avance_acumulado FROM certificados_items WHERE certificado_id=?",
-        (cert_id,)).fetchall()
-    cert = db.execute("SELECT obra FROM certificados WHERE id=?", (cert_id,)).fetchone()
-    obra = cert[0] if cert else ""
-    pv_total = costo_total = 0.0
-    for ot_id, pct in items:
-        pct = float(pct or 0)
-        pv_total    += _pv_ot(db, ot_id)    * pct / 100.0
-        costo_total += _costo_pres_ot(db, ot_id) * pct / 100.0
-    return pv_total, costo_total
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RUTA: LISTA DE CERTIFICADOS
-# ─────────────────────────────────────────────────────────────────────────────
-
-@economico_bp.route("/modulo/economico/certificados")
-def economico_certificados():
-    db = get_db()
-    try:
-        _ensure_schema(db); _ensure_schema_cert(db)
-    except Exception as exc_s:
-        return f"<p>Error schema: {exc_s}</p>", 500
-
-    certs = db.execute(
-        "SELECT id, obra, quincena, fecha FROM certificados ORDER BY obra, id DESC"
-    ).fetchall()
-
-    # KPIs globales: último certificado por obra vs el anterior
-    total_pv_act = total_costo_act = 0.0
-    total_pv_ant = total_costo_ant = 0.0
-    obras_con_cert = set()
-
-    for cert_id, obra, quincena, fecha in certs:
-        obras_con_cert.add(obra)
-
-    for obra in obras_con_cert:
-        certs_obra = db.execute(
-            "SELECT id FROM certificados WHERE obra=? ORDER BY id DESC LIMIT 2", (obra,)
-        ).fetchall()
-        if certs_obra:
-            pv0, c0 = _cert_kpis(db, certs_obra[0][0])
-            total_pv_act    += pv0
-            total_costo_act += c0
-        if len(certs_obra) > 1:
-            pv1, c1 = _cert_kpis(db, certs_obra[1][0])
-            total_pv_ant    += pv1
-            total_costo_ant += c1
-
-    def _dsf(act, ant):
-        if ant == 0: return 0.0
-        return (act - ant) / ant * 100.0
-
-    dsf_pv    = _dsf(total_pv_act, total_pv_ant)
-    dsf_costo = _dsf(total_costo_act, total_costo_ant)
-
-    # Tabla de certificados
-    filas = ""
-    for cert_id, obra, quincena, fecha in certs:
-        pv, costo = _cert_kpis(db, cert_id)
-        filas += f"""<tr>
-          <td style="font-weight:700;">{_E(obra)}</td>
-          <td>{_E(quincena)}</td>
-          <td style="color:#6b7280;font-size:.82rem;">{_E(fecha or '-')}</td>
-          <td style="text-align:right;color:#6366f1;font-weight:600;">{_m(pv)}</td>
-          <td style="text-align:right;">{_m(costo)}</td>
-          <td style="text-align:right;font-weight:600;color:{_cm((pv-costo)/pv*100 if pv>0 else 0)};">{_pct((pv-costo)/pv*100 if pv>0 else 0)}</td>
-          <td>
-            <a href="/modulo/economico/certificados/{cert_id}"
-               style="font-size:.78rem;padding:4px 10px;background:#6366f1;color:#fff;border-radius:5px;text-decoration:none;">Ver / Editar</a>
-          </td>
-        </tr>"""
-
-    if not filas:
-        filas = '<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:28px;">Sin certificados cargados aún.</td></tr>'
-
-    def _kpi_cert(titulo, valor, ant_lbl, ant_val, dsf, color):
-        dsf_c  = '#166534' if dsf >= 0 else '#991b1b'
-        dsf_bg = '#dcfce7' if dsf >= 0 else '#fee2e2'
-        dsf_ic = '▲' if dsf > 0 else ('▼' if dsf < 0 else '–')
-        return f"""
-        <div style="background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.07);
-                    padding:18px 22px;flex:1;min-width:220px;border-left:4px solid {color};">
-          <div style="font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;">{titulo}</div>
-          <div style="font-size:1.6rem;font-weight:900;color:{color};margin:8px 0 4px;">{valor}</div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <span style="font-size:.78rem;color:#9ca3af;">{ant_lbl}: {ant_val}</span>
-            <span style="font-size:.75rem;padding:2px 8px;border-radius:999px;background:{dsf_bg};color:{dsf_c};font-weight:700;">
-              {dsf_ic} {abs(dsf):.1f}% desfasaje
-            </span>
-          </div>
-        </div>"""
-
-    kpi_html = (
-        _kpi_cert("💵 Precio de Venta certificado",
-                  _m(total_pv_act), "Q anterior", _m(total_pv_ant), dsf_pv, "#6366f1") +
-        _kpi_cert("🏭 Costo previsto certificado",
-                  _m(total_costo_act), "Q anterior", _m(total_costo_ant), dsf_costo, "#f97316")
-    )
-
-    return f"""<!DOCTYPE html>
-<html lang="es"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Certificados de Avance</title>
-<style>
-*{{box-sizing:border-box;}}body{{font-family:system-ui,sans-serif;background:#f1f5f9;margin:0;padding:0;}}
-.hdr{{background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}}
-.hdr h1{{margin:0;font-size:1.1rem;}}
-.hdr a{{color:#fff;text-decoration:none;font-size:.82rem;background:rgba(255,255,255,.2);padding:6px 12px;border-radius:6px;}}
-.hdr a:hover{{background:rgba(255,255,255,.35);}}
-.body{{padding:20px;display:flex;flex-direction:column;gap:16px;}}
-.kpi-row{{display:flex;flex-wrap:wrap;gap:14px;}}
-.card{{background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);overflow:hidden;}}
-.ct{{background:#f8fafc;border-bottom:1px solid #e5e7eb;padding:11px 16px;font-weight:700;font-size:.9rem;color:#1e293b;display:flex;align-items:center;justify-content:space-between;}}
-table{{width:100%;border-collapse:collapse;font-size:.85rem;}}
-th{{background:#10b981;color:#fff;padding:9px 12px;text-align:left;font-size:.8rem;}}
-td{{padding:8px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle;}}
-tr:hover td{{background:#f0fdf4;}}
-</style></head><body>
-<div class="hdr">
-  <div>
-    <h1>📜 Certificados de Avance de Obra</h1>
-    <div style="font-size:.76rem;opacity:.8;margin-top:2px;">Certificaciones por quincena · PV y Costo por avance</div>
-  </div>
-  <div style="display:flex;gap:7px;flex-wrap:wrap;">
-    <a href="/modulo/economico/certificados/nueva" style="background:rgba(255,255,255,.35);font-weight:700;">+ Nueva Quincena</a>
-    <a href="/modulo/economico/dashboard-ejecutivo">← Dashboard</a>
-    <a href="/">Inicio</a>
-  </div>
-</div>
-<div class="body">
-  <div class="kpi-row">{kpi_html}</div>
-  <div class="card">
-    <div class="ct">
-      <span>📋 Historial de certificados</span>
-    </div>
-    <div style="overflow-x:auto;">
-      <table>
-        <thead><tr>
-          <th>Obra</th><th>Quincena</th><th>Fecha</th>
-          <th style="text-align:right;">PV Certificado</th>
-          <th style="text-align:right;">Costo Prev.</th>
-          <th style="text-align:right;">Margen</th>
-          <th></th>
-        </tr></thead>
-        <tbody>{filas}</tbody>
-      </table>
-    </div>
-  </div>
-</div></body></html>"""
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RUTA: NUEVA QUINCENA / EDITAR CERTIFICADO
-# ─────────────────────────────────────────────────────────────────────────────
-
-@economico_bp.route("/modulo/economico/certificados/nueva", methods=["GET", "POST"])
-def economico_certificados_nueva():
-    db = get_db()
-    try:
-        _ensure_schema(db)
-        _ensure_schema_cert(db)
-    except Exception as exc_schema:
-        import traceback
-        return f"<p>Error al inicializar tablas: {exc_schema}</p><pre>{traceback.format_exc()}</pre>", 500
-    mensaje = error = ""
-
-    if request.method == "POST" and (request.form.get("accion") or "") == "crear_cert":
-        obra     = (request.form.get("obra") or "").strip()
-        quincena = (request.form.get("quincena") or "").strip()
-        fecha    = (request.form.get("fecha") or "").strip() or None
-        if not obra or not quincena:
-            error = "Debe indicar la obra y la quincena."
-        else:
-            try:
-                cur = db.execute(
-                    "INSERT INTO certificados (obra, quincena, fecha) VALUES (?,?,?)",
-                    (obra, quincena, fecha))
-                db.commit()
-                cert_id = cur.lastrowid
-                if not cert_id:
-                    # Fallback para MySQL: obtener el ID recién insertado
-                    row = db.execute("SELECT MAX(id) FROM certificados WHERE obra=? AND quincena=?",
-                                     (obra, quincena)).fetchone()
-                    cert_id = int(row[0]) if row and row[0] else 1
-                return redirect(f"/modulo/economico/certificados/{cert_id}")
-            except Exception as exc:
-                error = str(exc)
-
-    # Obras disponibles
-    obras = db.execute(
-        "SELECT DISTINCT obra FROM ordenes_trabajo WHERE obra IS NOT NULL AND obra != '' ORDER BY obra"
-    ).fetchall()
-    obras_opts = "".join(f'<option value="{_E(r[0])}">{_E(r[0])}</option>' for r in obras)
-
-    # Sugerencia de nombre de quincena
-    from datetime import date
-    hoy = date.today()
-    q_sug = f"{hoy.strftime('%b %Y')} - {'1ra' if hoy.day <= 15 else '2da'}"
-
-    msg_html = (f'<div style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;border-radius:6px;padding:8px 12px;margin-bottom:12px;">{_E(error)}</div>'
-                if error else "")
-
-    return f"""<!DOCTYPE html>
-<html lang="es"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Nueva Quincena</title>
-<style>
-*{{box-sizing:border-box;}}body{{font-family:system-ui,sans-serif;background:#f1f5f9;margin:0;padding:24px;}}
-.card{{background:#fff;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.08);padding:28px;max-width:520px;margin:auto;}}
-h2{{margin:0 0 20px;color:#1e293b;}}
-.fg{{margin-bottom:16px;}}label{{display:block;font-size:.82rem;font-weight:600;color:#374151;margin-bottom:3px;}}
-select,input{{width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem;}}
-.btn{{background:#10b981;color:#fff;border:none;padding:10px 22px;border-radius:7px;font-size:.9rem;cursor:pointer;font-weight:700;}}
-.back{{display:inline-block;margin-bottom:16px;color:#10b981;text-decoration:none;font-size:.88rem;font-weight:600;}}
-</style></head><body>
-<a href="/modulo/economico/certificados" class="back">← Volver a certificados</a>
-<div class="card">
-  <h2>📜 Nueva Quincena</h2>
-  {msg_html}
-  <form method="post">
-    <input type="hidden" name="accion" value="crear_cert">
-    <div class="fg"><label>Obra</label><select name="obra"><option value="">-- Seleccionar obra --</option>{obras_opts}</select></div>
-    <div class="fg"><label>Quincena (etiqueta)</label><input name="quincena" value="{_E(q_sug)}" required></div>
-    <div class="fg"><label>Fecha</label><input type="date" name="fecha" value="{date.today().isoformat()}"></div>
-    <button type="submit" class="btn">Crear y cargar avance →</button>
-  </form>
-</div></body></html>"""
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RUTA: DETALLE / EDICIÓN DE CERTIFICADO
-# ─────────────────────────────────────────────────────────────────────────────
-
-@economico_bp.route("/modulo/economico/certificados/<int:cert_id>", methods=["GET", "POST"])
-def economico_certificado_detalle(cert_id):
-    db = get_db()
-    try:
-        _ensure_schema(db); _ensure_schema_cert(db)
-    except Exception as exc_s:
-        return f"<p>Error schema: {exc_s}</p>", 500
-
-    cert = db.execute(
-        "SELECT id, obra, quincena, fecha FROM certificados WHERE id=?", (cert_id,)
-    ).fetchone()
-    if not cert:
-        return "Certificado no encontrado", 404
-    _, obra, quincena, fecha = cert
-
-    mensaje = error = ""
-
-    if request.method == "POST" and (request.form.get("accion") or "") == "guardar":
-        try:
-            ot_ids = request.form.getlist("ot_id")
-            for ot_id_s in ot_ids:
-                if not ot_id_s.isdigit():
-                    continue
-                ot_id = int(ot_id_s)
-                desc  = (request.form.get(f"desc_{ot_id}") or "").strip()
-                pct_s = (request.form.get(f"pct_{ot_id}") or "0").strip()
-                pct   = min(max(float(pct_s), 0.0), 100.0)
-                ex = db.execute(
-                    "SELECT id FROM certificados_items WHERE certificado_id=? AND ot_id=?",
-                    (cert_id, ot_id)).fetchone()
-                if ex:
-                    db.execute(
-                        "UPDATE certificados_items SET descripcion=?, pct_avance_acumulado=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                        (desc, pct, ex[0]))
-                else:
-                    db.execute(
-                        "INSERT INTO certificados_items (certificado_id, ot_id, descripcion, pct_avance_acumulado) VALUES (?,?,?,?)",
-                        (cert_id, ot_id, desc, pct))
-            db.commit()
-            mensaje = "Certificado guardado."
-        except Exception as exc:
-            error = str(exc)
-
-    # OTs de la obra
-    ots = db.execute(
-        """SELECT id, titulo, tipo_estructura FROM ordenes_trabajo
-           WHERE obra=? ORDER BY id""", (obra,)
-    ).fetchall()
-
-    # Items existentes
-    items_map = {}
-    for row in db.execute(
-        "SELECT ot_id, descripcion, pct_avance_acumulado FROM certificados_items WHERE certificado_id=?",
-        (cert_id,)
-    ).fetchall():
-        items_map[int(row[0])] = {"desc": row[1] or "", "pct": float(row[2] or 0)}
-
-    # Tabla de OTs
-    rows_html = ""
-    pv_q_total = costo_q_total = pv_ant_total = costo_ant_total = 0.0
-    for ot_id, titulo, tipo in ots:
-        pct_acc  = items_map.get(ot_id, {}).get("pct", 0.0)
-        pct_ant  = _pct_ant_ot(db, obra, ot_id, exclude_id=cert_id)
-        pct_act  = max(pct_acc - pct_ant, 0.0)
-        desc_val = items_map.get(ot_id, {}).get("desc", titulo or "")
-        pv       = _pv_ot(db, ot_id)
-        costo    = _costo_pres_ot(db, ot_id)
-
-        pv_q_total    += pv    * pct_acc / 100.0
-        costo_q_total += costo * pct_acc / 100.0
-        pv_ant_total  += pv    * pct_ant / 100.0
-        costo_ant_total += costo * pct_ant / 100.0
-
-        rows_html += f"""<tr>
-          <td style="font-weight:700;color:#6366f1;">OT {ot_id}</td>
-          <td><input name="desc_{ot_id}" value="{_E(desc_val)}"
-                style="width:100%;padding:5px 8px;border:1px solid #e5e7eb;border-radius:4px;font-size:.82rem;"></td>
-          <td style="text-align:center;color:#6b7280;font-size:.85rem;">{pct_ant:.1f}%</td>
-          <td id="q_act_{ot_id}" style="text-align:center;font-weight:600;color:#0891b2;font-size:.85rem;">{pct_act:.1f}%</td>
-          <td style="text-align:center;">
-            <input type="number" name="pct_{ot_id}" value="{pct_acc:.1f}" min="0" max="100" step="0.1"
-                   oninput="updQAct({ot_id}, {pct_ant:.2f}, this.value)"
-                   style="width:80px;padding:5px 8px;border:1.5px solid #6366f1;border-radius:5px;font-size:.88rem;text-align:center;font-weight:700;">
-          </td>
-          <td style="text-align:right;font-size:.8rem;color:#6366f1;">{_m(pv)}</td>
-          <input type="hidden" name="ot_id" value="{ot_id}">
-        </tr>"""
-
-    # KPIs del certificado
-    def _kc2(titulo, valor, sub_lbl, sub_val, dsf_val, color):
-        dsf_c  = '#166534' if dsf_val >= 0 else '#991b1b'
-        dsf_bg = '#dcfce7' if dsf_val >= 0 else '#fee2e2'
-        dsf_ic = '▲' if dsf_val > 0 else ('▼' if dsf_val < 0 else '–')
-        return f"""<div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);
-                              padding:16px 20px;flex:1;min-width:200px;border-left:4px solid {color};">
-          <div style="font-size:.7rem;color:#6b7280;font-weight:700;text-transform:uppercase;">{titulo}</div>
-          <div style="font-size:1.4rem;font-weight:900;color:{color};margin:6px 0 4px;">{valor}</div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <span style="font-size:.76rem;color:#9ca3af;">{sub_lbl}: {sub_val}</span>
-            <span style="font-size:.72rem;padding:2px 7px;border-radius:999px;background:{dsf_bg};color:{dsf_c};font-weight:700;">
-              {dsf_ic} {abs(dsf_val):.1f}% desfasaje
-            </span>
-          </div>
-        </div>"""
-
-    def _dsf2(act, ant):
-        return (act - ant) / ant * 100.0 if ant > 0 else 0.0
-
-    kpi_html = (
-        _kc2("💵 Precio de Venta certificado",
-             _m(pv_q_total), "Q anterior", _m(pv_ant_total),
-             _dsf2(pv_q_total, pv_ant_total), "#6366f1") +
-        _kc2("🏭 Costo previsto certificado",
-             _m(costo_q_total), "Q anterior", _m(costo_ant_total),
-             _dsf2(costo_q_total, costo_ant_total), "#f97316")
-    )
-
-    msg_html = ""
-    if mensaje:
-        msg_html = f'<div style="background:#dcfce7;color:#166534;border:1px solid #86efac;border-radius:6px;padding:8px 12px;margin-bottom:12px;">{_E(mensaje)}</div>'
-    if error:
-        msg_html += f'<div style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;border-radius:6px;padding:8px 12px;margin-bottom:12px;">{_E(error)}</div>'
-
-    return f"""<!DOCTYPE html>
-<html lang="es"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Certificado — {_E(obra)} · {_E(quincena)}</title>
-<style>
-*{{box-sizing:border-box;}}body{{font-family:system-ui,sans-serif;background:#f1f5f9;margin:0;padding:0;}}
-.hdr{{background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}}
-.hdr h1{{margin:0;font-size:1rem;}}
-.hdr a{{color:#fff;text-decoration:none;font-size:.8rem;background:rgba(255,255,255,.2);padding:5px 10px;border-radius:6px;}}
-.body{{padding:18px;display:flex;flex-direction:column;gap:14px;}}
-.kpi-row{{display:flex;flex-wrap:wrap;gap:12px;}}
-.card{{background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);overflow:hidden;}}
-.ct{{background:#f8fafc;border-bottom:1px solid #e5e7eb;padding:11px 16px;font-weight:700;font-size:.9rem;color:#1e293b;}}
-table{{width:100%;border-collapse:collapse;font-size:.84rem;}}
-th{{background:#10b981;color:#fff;padding:9px 12px;text-align:left;font-size:.79rem;white-space:nowrap;}}
-td{{padding:8px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle;}}
-tr:hover td{{background:#f0fdf4;}}
-.btn{{background:#10b981;color:#fff;border:none;padding:10px 22px;border-radius:7px;font-size:.9rem;cursor:pointer;font-weight:700;}}
-.btn:hover{{background:#059669;}}
-</style></head><body>
-<div class="hdr">
-  <div>
-    <h1>📜 {_E(obra)} · {_E(quincena)}</h1>
-    <div style="font-size:.74rem;opacity:.75;margin-top:2px;">{_E(fecha or '')}</div>
-  </div>
-  <div style="display:flex;gap:6px;flex-wrap:wrap;">
-    <a href="/modulo/economico/certificados">← Certificados</a>
-    <a href="/modulo/economico/dashboard-ejecutivo">Dashboard</a>
-  </div>
-</div>
-<div class="body">
-  {msg_html}
-  <div class="kpi-row">{kpi_html}</div>
-  <div class="card">
-    <div class="ct">📋 Avance por OT — <span style="color:#10b981;">{_E(obra)}</span> · {_E(quincena)}</div>
-    <form method="post">
-      <input type="hidden" name="accion" value="guardar">
-      <div style="overflow-x:auto;">
-        <table>
-          <thead><tr>
-            <th>OT</th>
-            <th>Descripción</th>
-            <th style="text-align:center;min-width:110px;">% Av. Q Anterior</th>
-            <th style="text-align:center;min-width:110px;">% Av. Q Actual</th>
-            <th style="text-align:center;min-width:120px;">% Av. Acumulado ✏️</th>
-            <th style="text-align:right;">PV OT</th>
-          </tr></thead>
-          <tbody>{rows_html}</tbody>
-        </table>
-      </div>
-      <div style="padding:14px 16px;display:flex;justify-content:flex-end;">
-        <button type="submit" class="btn">💾 Guardar certificado</button>
-      </div>
-    </form>
-  </div>
-</div>
-<script>
-function updQAct(ot_id, pct_ant, val) {{
-  var act = Math.max(parseFloat(val)||0, 0) - pct_ant;
-  act = Math.max(act, 0).toFixed(1);
-  var el = document.getElementById('q_act_' + ot_id);
-  if (el) el.textContent = act + '%';
-}}
-</script>
-</body></html>"""
