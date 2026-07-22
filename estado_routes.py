@@ -1111,6 +1111,13 @@ body {
       <div class="kpi-label">KG producidos (período)</div>
     </div>
         <div class="kpi-card">
+            <div class="kpi-valor" id="kpi-kg-hs">—</div>
+            <div class="kpi-label">KG/HS</div>
+        </div>
+  </div>
+      <div class="kpi-label">KG producidos (período)</div>
+    </div>
+        <div class="kpi-card">
             <div class="kpi-valor" id="kpi-kg-desp">—</div>
             <div class="kpi-label">KG P/DESPACHO</div>
         </div>
@@ -1590,13 +1597,8 @@ function renderDashboard(data) {
     const efic      = totalPrev > 0 ? ((totalCarg / totalPrev) * 100).toFixed(1) : '—';
     const kgHs      = totalCarg > 0 ? (totalKg / totalCarg).toFixed(1) : '—';
 
-    document.getElementById('kpi-hs-prev').textContent  = totalPrev.toFixed(1) + ' hs';
-    document.getElementById('kpi-hs-carg').textContent  = totalCarg.toFixed(1) + ' hs';
-    document.getElementById('kpi-hs-segun-av').textContent = totalSegunAv.toFixed(1) + ' hs';
-    document.getElementById('kpi-eficiencia').textContent = efic !== '—' ? efic + '%' : '—';
-    document.getElementById('kpi-kg-total').textContent = totalKg.toFixed(1) + ' kg';
-    document.getElementById('kpi-kg-desp').textContent = kgDespachados.toFixed(1) + ' kg';
-    document.getElementById('kpi-kg-hs').textContent = kgHs !== '—' ? kgHs + ' kg/hs' : '—';
+    // KPIs ahora son server-side; el resto de cargarDatos actualiza solo los gráficos
+    // document.getElementById('kpi-hs-prev')
 
     // === Chart Tendencia plan-real-proyeccion ===
     const tend = data.tendencia || {};
@@ -2030,15 +2032,63 @@ actualizarDescripcionTipo(tipoObraActivo);
     """
     html = html.replace('<div class="tipos-board">', _comp_panel_html + '<div class="tipos-board">', 1)
 
-    # Mover kpi-row arriba del period-bar
+    # KPIs server-computed (mes actual + delta vs mes anterior) — debajo del period-bar
+    _hs_prev_row = _db_est.execute(
+        "SELECT COALESCE(SUM(hs_previstas),0) FROM ordenes_trabajo WHERE estado != 'Finalizada' AND fecha_cierre IS NULL"
+    ).fetchone()
+    _hs_prev = float(_hs_prev_row[0] or 0)
+    _kghs_ma = (_kg_ma / _hh_ma) if _hh_ma > 0 else 0.0
+    _kghs_mp = (_kg_mp / _hh_mp) if _hh_mp > 0 else 0.0
+    _efic_ma  = (_hh_ma / _hs_prev * 100) if _hs_prev > 0 else 0.0
+    _efic_mp  = (_hh_mp / _hs_prev * 100) if _hs_prev > 0 else 0.0
+
+    def _kd(act, ant):
+        """Delta badge vs período anterior."""
+        if ant == 0: return ""
+        d = (act - ant) / ant * 100
+        c = '#166534' if d >= 0 else '#991b1b'
+        bg = '#dcfce7' if d >= 0 else '#fee2e2'
+        a = '▲' if d > 0 else '▼'
+        return (f'<span style="font-size:10px;padding:1px 6px;border-radius:999px;'
+                f'background:{bg};color:{c};font-weight:700;margin-left:4px;vertical-align:middle;">{a} {abs(d):.1f}%</span>')
+
+    _kpi_row_html = f"""
+  <div class="kpi-row" style="margin:14px 0;">
+    <div class="kpi-card">
+      <div class="kpi-valor">{_hs_prev:,.0f} <span style="font-size:14px;">hs</span></div>
+      <div class="kpi-label">HS Previstas (OTs activas)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-valor">{_hh_ma:,.1f} <span style="font-size:14px;">hs</span>{_kd(_hh_ma, _hh_mp)}</div>
+      <div class="kpi-label">HS Consumidas &middot; {_lbl_ma}</div>
+      <div style="font-size:10px;color:#9ca3af;margin-top:2px;">ant: {_hh_mp:,.1f} hs ({_lbl_mp})</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-valor">{_efic_ma:.1f}<span style="font-size:14px;">%</span>{_kd(_efic_ma, _efic_mp)}</div>
+      <div class="kpi-label">Eficiencia HS &middot; {_lbl_ma}</div>
+      <div style="font-size:10px;color:#9ca3af;margin-top:2px;">ant: {_efic_mp:.1f}% ({_lbl_mp})</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-valor">{_kg_ma:,.0f} <span style="font-size:14px;">kg</span>{_kd(_kg_ma, _kg_mp)}</div>
+      <div class="kpi-label">KG producidos &middot; {_lbl_ma}</div>
+      <div style="font-size:10px;color:#9ca3af;margin-top:2px;">ant: {_kg_mp:,.0f} kg ({_lbl_mp})</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-valor">{_kghs_ma:.2f} <span style="font-size:14px;">kg/hs</span>{_kd(_kghs_ma, _kghs_mp)}</div>
+      <div class="kpi-label">KG/HS &middot; {_lbl_ma}</div>
+      <div style="font-size:10px;color:#9ca3af;margin-top:2px;">ant: {_kghs_mp:.2f} kg/hs ({_lbl_mp})</div>
+    </div>
+  </div>
+"""
+    # Eliminar el kpi-row estático (con valores "—" de JS) del lugar original
     try:
         _kpi_s = html.index('<div class="kpi-row">')
         _kpi_e = html.index('</div>\n\n    <div class="chart-full">', _kpi_s) + len('</div>')
-        _kpi_block = html[_kpi_s:_kpi_e]
         html = html[:_kpi_s] + html[_kpi_e:]
-        html = html.replace('  <div class="period-bar">', _kpi_block + '\n\n  <div class="period-bar">', 1)
     except Exception:
         pass
+    # Insertar el nuevo kpi-row debajo del period-bar (antes de comparacion-seccion)
+    html = html.replace('  <div id="comparacion-seccion"', _kpi_row_html + '  <div id="comparacion-seccion"', 1)
 
     return html
 
