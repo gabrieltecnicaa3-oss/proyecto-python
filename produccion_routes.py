@@ -838,6 +838,9 @@ def produccion():
         },
     })
 
+    obras_disponibles = sorted({f["obra"] for f in filas_ot if f["obra"]})
+    ots_disponibles = sorted(filas_ot, key=lambda x: x["ot_id"], reverse=True)
+
     filas_filtradas = []
     for fila in filas_ot:
         if filtro_obra and fila["obra"] != filtro_obra:
