@@ -641,6 +641,8 @@ body {
 .comp-chart-wrap { position: relative; height: 175px; }
 .comp-chart-lbl { font-size: 11px; font-weight: 700; color: #9a3412; margin-bottom: 4px; }
 @media (max-width: 700px) { .comp-bloques, .comp-charts { grid-template-columns: 1fr; } }
+.comp-toggle { padding:5px 14px; border:1.5px solid #f97316; border-radius:20px; background:white; color:#f97316; font-weight:700; font-size:12px; cursor:pointer; }
+.comp-toggle.active { background:#f97316; color:white; }
 .kpi-row {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
     gap: 16px; margin-bottom: 20px;
@@ -987,16 +989,6 @@ body {
         <div class="tipo-desc" id="tipo-desc-text">Seleccione un tipo para ver la descripción.</div>
   </div>
   
-    <div class="filter-card filter-fecha">
-    <span style="font-weight:bold; color:#9a3412; margin-right:8px;">📅 Filtro por fechas:</span>
-    <label style="color:#9a3412; font-weight:bold;">Desde:</label>
-    <input type="date" id="filtro-fecha-inicio">
-    <label style="color:#9a3412; font-weight:bold; margin-left:8px;">Hasta:</label>
-        <input type="date" id="filtro-fecha-fin">
-        <button onclick="aplicarFiltroFechas()" style="margin-left:8px; background:#f97316; color:white;">Aplicar</button>
-        <button onclick="limpiarFiltroFechas()" style="background:#999; color:white;">Limpiar</button>
-  </div>
-  
     <div class="filter-card">
     <label style="color:#9a3412; font-weight:bold; margin-right:16px;">📊 Comparar Períodos:</label>
     <select id="comparar-periodo-selector" onchange="mostrarComparacion()" style="padding:8px 12px; border:1px solid #fdba74; border-radius:6px; color:#7c2d12; font-weight:bold;">
@@ -1005,15 +997,6 @@ body {
       <option value="semana-anterior">Esta semana vs Semana anterior</option>
       <option value="mes-ano">Este mes vs Mismo mes año anterior</option>
     </select>
-  </div>
-
-  <div class="filter-card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-    <label style="color:#9a3412; font-weight:bold; margin-right:4px;">📆 Ver semana específica:</label>
-    <select id="semana-selector" onchange="cambiarSemanaSelector()" style="padding:8px 12px; border:1px solid #fdba74; border-radius:6px; color:#7c2d12; font-weight:bold; min-width:220px;">
-      <option value="">— Todas las semanas —</option>
-    </select>
-    <button onclick="limpiarFiltroSemana()" style="padding:8px 14px; background:#94a3b8; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:bold;">✕ Limpiar semana</button>
-    <span id="semana-label-txt" style="font-size:0.85em; color:#9a3412; font-style:italic;"></span>
   </div>
   
   <div id="comparacion-seccion" style="display:none; background:rgba(255,255,255,0.88); border-radius:12px; padding:20px; border:2px solid #f97316; margin-bottom:20px; box-shadow:0 6px 18px rgba(154,52,18,0.1);">
@@ -1931,7 +1914,13 @@ actualizarDescripcionTipo(tipoObraActivo);
     # ── Panel comparativa HH/KG insertado server-side ────────────────────────
     _comp_panel_html = f"""
     <div class="comp-periodo-panel">
-      <div class="comp-periodo-title">📅 Comparativa de producción por período — HH y KG</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+        <div class="comp-periodo-title" style="margin-bottom:0;">&#128197; Comparativa de producción — HH y KG</div>
+        <div style="display:flex;gap:6px;">
+          <button id="compBtnSem" class="comp-toggle active" onclick="compFiltrar('semana')">Semana</button>
+          <button id="compBtnMes" class="comp-toggle" onclick="compFiltrar('mes')">Mes</button>
+        </div>
+      </div>
       <div class="comp-bloques">
         <div class="comp-bloque">
           <div class="comp-bloque-title">📆 Esta semana vs semana anterior</div>
@@ -1978,33 +1967,66 @@ actualizarDescripcionTipo(tipoObraActivo);
       </div>
     </div>
     <script>
-    (function() {{
-      var cd = {_comp_chart};
-      function mk(id, ds) {{
-        var ctx = document.getElementById(id);
-        if (!ctx) return;
-        new Chart(ctx, {{
-          type: 'bar',
-          data: {{ labels: ds.labels,
-                   datasets: [{{ data: ds.values, backgroundColor: ds.colors,
-                                 borderRadius: 5, borderSkipped: false }}] }},
-          options: {{
-            responsive: true, maintainAspectRatio: false,
-            plugins: {{ legend: {{ display: false }},
-                        tooltip: {{ callbacks: {{ label: function(c) {{ return ' ' + c.parsed.y.toLocaleString('es-AR'); }} }} }} }},
-            scales: {{
-              x: {{ ticks: {{ font: {{ size: 10 }}, maxRotation: 30 }} }},
-              y: {{ beginAtZero: true, ticks: {{ font: {{ size: 10 }} }}, grid: {{ color: '#fff7ed' }} }}
-            }}
+    var _compAllData = {_comp_chart};
+    var _compCHH = null, _compCKG = null;
+    function _compMk(id, ds) {{
+      var ctx = document.getElementById(id);
+      if (!ctx) return null;
+      return new Chart(ctx, {{
+        type: 'bar',
+        data: {{ labels: ds.labels,
+                 datasets: [{{ data: ds.values, backgroundColor: ds.colors,
+                               borderRadius: 5, borderSkipped: false }}] }},
+        options: {{
+          responsive: true, maintainAspectRatio: false,
+          plugins: {{ legend: {{ display: false }},
+                      tooltip: {{ callbacks: {{ label: function(c) {{ return ' ' + c.parsed.y.toLocaleString('es-AR'); }} }} }} }},
+          scales: {{
+            x: {{ ticks: {{ font: {{ size: 10 }}, maxRotation: 30 }} }},
+            y: {{ beginAtZero: true, ticks: {{ font: {{ size: 10 }} }}, grid: {{ color: '#fff7ed' }} }}
           }}
-        }});
+        }}
+      }});
+    }}
+    function compFiltrar(p) {{
+      var idxs = p === 'semana' ? [0, 1] : [2, 3];
+      function sl(ds) {{
+        return {{ labels: [ds.labels[idxs[0]], ds.labels[idxs[1]]],
+                  values: [ds.values[idxs[0]], ds.values[idxs[1]]],
+                  colors: [ds.colors[idxs[0]], ds.colors[idxs[1]]] }};
       }}
-      mk('compChartHH', cd.hh);
-      mk('compChartKG', cd.kg);
-    }})();
+      [['compBtnSem','semana'],['compBtnMes','mes']].forEach(function(pair) {{
+        var el = document.getElementById(pair[0]);
+        if (el) el.className = 'comp-toggle' + (pair[1] === p ? ' active' : '');
+      }});
+      function upd(ch, ds) {{
+        if (!ch) return;
+        ch.data.labels = ds.labels;
+        ch.data.datasets[0].data = ds.values;
+        ch.data.datasets[0].backgroundColor = ds.colors;
+        ch.update();
+      }}
+      upd(_compCHH, sl(_compAllData.hh));
+      upd(_compCKG, sl(_compAllData.kg));
+    }}
+    document.addEventListener('DOMContentLoaded', function() {{
+      _compCHH = _compMk('compChartHH', _compAllData.hh);
+      _compCKG = _compMk('compChartKG', _compAllData.kg);
+      compFiltrar('semana');
+    }});
     </script>
     """
     html = html.replace('<div class="tipos-board">', _comp_panel_html + '<div class="tipos-board">', 1)
+
+    # Mover kpi-row arriba del period-bar
+    try:
+        _kpi_s = html.index('<div class="kpi-row">')
+        _kpi_e = html.index('</div>\n\n    <div class="chart-full">', _kpi_s) + len('</div>')
+        _kpi_block = html[_kpi_s:_kpi_e]
+        html = html[:_kpi_s] + html[_kpi_e:]
+        html = html.replace('  <div class="period-bar">', _kpi_block + '\n\n  <div class="period-bar">', 1)
+    except Exception:
+        pass
 
     return html
 
