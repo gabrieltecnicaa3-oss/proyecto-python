@@ -491,10 +491,14 @@ def estado_produccion():
     _w_end    = _today
     _pw_start = _w_start - timedelta(days=7)
     _pw_end   = _w_start - timedelta(days=1)
+    _pw2_start = _w_start - timedelta(days=14)
+    _pw2_end   = _w_start - timedelta(days=8)
     _m_start  = _today.replace(day=1)
     _m_end    = _today
     _pm_end   = _m_start - timedelta(days=1)
     _pm_start = _pm_end.replace(day=1)
+    _pm2_end  = _pm_start - timedelta(days=1)
+    _pm2_start = _pm2_end.replace(day=1)
 
     def _hh_p(d1, d2):
         r = _db_est.execute(
@@ -515,14 +519,18 @@ def estado_produccion():
             (d1.isoformat(), d2.isoformat())).fetchone()
         return float(r[0] or 0)
 
-    _hh_sa = _hh_p(_w_start,  _w_end)
-    _hh_sp = _hh_p(_pw_start, _pw_end)
-    _hh_ma = _hh_p(_m_start,  _m_end)
-    _hh_mp = _hh_p(_pm_start, _pm_end)
-    _kg_sa = _kg_p(_w_start,  _w_end)
-    _kg_sp = _kg_p(_pw_start, _pw_end)
-    _kg_ma = _kg_p(_m_start,  _m_end)
-    _kg_mp = _kg_p(_pm_start, _pm_end)
+    _hh_sa  = _hh_p(_w_start,   _w_end)
+    _hh_sp  = _hh_p(_pw_start,  _pw_end)
+    _hh_sp2 = _hh_p(_pw2_start, _pw2_end)
+    _hh_ma  = _hh_p(_m_start,   _m_end)
+    _hh_mp  = _hh_p(_pm_start,  _pm_end)
+    _hh_mp2 = _hh_p(_pm2_start, _pm2_end)
+    _kg_sa  = _kg_p(_w_start,   _w_end)
+    _kg_sp  = _kg_p(_pw_start,  _pw_end)
+    _kg_sp2 = _kg_p(_pw2_start, _pw2_end)
+    _kg_ma  = _kg_p(_m_start,   _m_end)
+    _kg_mp  = _kg_p(_pm_start,  _pm_end)
+    _kg_mp2 = _kg_p(_pm2_start, _pm2_end)
 
     def _d(act, ant):
         d = act - ant
@@ -540,18 +548,22 @@ def estado_produccion():
         bg = '#dcfce7' if color == '#166534' else '#fee2e2'
         return f'<span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;background:{bg};color:{color};white-space:nowrap;">{arrow} {abs(pct):.1f}%</span>'
 
-    _lbl_sa = f"Sem. act ({_w_start.strftime('%d/%m')}–{_w_end.strftime('%d/%m')})"
-    _lbl_sp = f"Sem. ant ({_pw_start.strftime('%d/%m')}–{_pw_end.strftime('%d/%m')})"
-    _lbl_ma = _m_start.strftime('%b %Y')
-    _lbl_mp = _pm_start.strftime('%b %Y')
+    _lbl_sa  = f"Esta sem. ({_w_start.strftime('%d/%m')}–{_w_end.strftime('%d/%m')})"
+    _lbl_sp  = f"Sem. -1 ({_pw_start.strftime('%d/%m')}–{_pw_end.strftime('%d/%m')})"
+    _lbl_sp2 = f"Sem. -2 ({_pw2_start.strftime('%d/%m')}–{_pw2_end.strftime('%d/%m')})"
+    _lbl_ma  = _m_start.strftime('%b %Y')
+    _lbl_mp  = _pm_start.strftime('%b %Y')
+    _lbl_mp2 = _pm2_start.strftime('%b %Y')
 
     _comp_chart = _json_est.dumps({
-        "hh": {"labels": [_lbl_sp, _lbl_sa, _lbl_mp, _lbl_ma],
-               "values": [round(_hh_sp,1), round(_hh_sa,1), round(_hh_mp,1), round(_hh_ma,1)],
-               "colors": ['#fdba74','#f97316','#fcd34d','#f59e0b']},
-        "kg": {"labels": [_lbl_sp, _lbl_sa, _lbl_mp, _lbl_ma],
-               "values": [round(_kg_sp,0), round(_kg_sa,0), round(_kg_mp,0), round(_kg_ma,0)],
-               "colors": ['#93c5fd','#3b82f6','#a5b4fc','#6366f1']},
+        "hh": {"labels": [_lbl_sp2, _lbl_sp, _lbl_sa, _lbl_mp2, _lbl_mp, _lbl_ma],
+               "values": [round(_hh_sp2,1), round(_hh_sp,1), round(_hh_sa,1),
+                           round(_hh_mp2,1), round(_hh_mp,1), round(_hh_ma,1)],
+               "colors": ['#fed7aa','#fb923c','#f97316','#bfdbfe','#60a5fa','#3b82f6']},
+        "kg": {"labels": [_lbl_sp2, _lbl_sp, _lbl_sa, _lbl_mp2, _lbl_mp, _lbl_ma],
+               "values": [round(_kg_sp2,0), round(_kg_sp,0), round(_kg_sa,0),
+                           round(_kg_mp2,0), round(_kg_mp,0), round(_kg_ma,0)],
+               "colors": ['#fed7aa','#fb923c','#f97316','#bfdbfe','#60a5fa','#3b82f6']},
     })
 
     html = """<!DOCTYPE html>
@@ -1989,11 +2001,11 @@ actualizarDescripcionTipo(tipoObraActivo);
       }});
     }}
     function compFiltrar(p) {{
-      var idxs = p === 'semana' ? [0, 1] : [2, 3];
+      var idxs = p === 'semana' ? [0, 1, 2] : [3, 4, 5];
       function sl(ds) {{
-        return {{ labels: [ds.labels[idxs[0]], ds.labels[idxs[1]]],
-                  values: [ds.values[idxs[0]], ds.values[idxs[1]]],
-                  colors: [ds.colors[idxs[0]], ds.colors[idxs[1]]] }};
+        return {{ labels: [ds.labels[idxs[0]], ds.labels[idxs[1]], ds.labels[idxs[2]]],
+                  values: [ds.values[idxs[0]], ds.values[idxs[1]], ds.values[idxs[2]]],
+                  colors: [ds.colors[idxs[0]], ds.colors[idxs[1]], ds.colors[idxs[2]]] }};
       }}
       [['compBtnSem','semana'],['compBtnMes','mes']].forEach(function(pair) {{
         var el = document.getElementById(pair[0]);
