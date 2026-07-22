@@ -289,8 +289,8 @@ def economico_config():
 
 @economico_bp.route("/modulo/economico", methods=["GET", "POST"])
 def economico_dashboard():
-    """Pantalla principal — redirige al dashboard ejecutivo."""
-    return redirect("/modulo/economico/dashboard-ejecutivo")
+    """Pantalla principal: dashboard agrupado por obra con config de tasas."""
+    return economico_obras()
 
 
 @economico_bp.route("/modulo/economico/obras", methods=["GET", "POST"])
@@ -407,6 +407,7 @@ def economico_obras():
     <div style="font-size:.76rem;opacity:.8;margin-top:2px;">Agrupado por obra · KPIs · Costos previstos vs reales</div></div>
   <div style="display:flex;gap:7px;flex-wrap:wrap;">
     <a href="/modulo/economico/dashboard-ejecutivo" style="background:#fff;color:#6366f1;font-weight:700;">📊 Dashboard Ejecutivo</a>
+    <a href="/modulo/economico/certificados" style="background:#fff;color:#10b981;font-weight:700;">📜 Certificados</a>
     <a href="/modulo/economico/config">⚙️ Config global</a>
     <a href="/">← Inicio</a>
   </div>
@@ -1389,7 +1390,11 @@ def _cert_kpis(db, cert_id):
 
 @economico_bp.route("/modulo/economico/certificados")
 def economico_certificados():
-    db = get_db(); _ensure_schema(db); _ensure_schema_cert(db)
+    db = get_db()
+    try:
+        _ensure_schema(db); _ensure_schema_cert(db)
+    except Exception as exc_s:
+        return f"<p>Error schema: {exc_s}</p>", 500
 
     certs = db.execute(
         "SELECT id, obra, quincena, fecha FROM certificados ORDER BY obra, id DESC"
@@ -1525,7 +1530,13 @@ tr:hover td{{background:#f0fdf4;}}
 
 @economico_bp.route("/modulo/economico/certificados/nueva", methods=["GET", "POST"])
 def economico_certificados_nueva():
-    db = get_db(); _ensure_schema(db); _ensure_schema_cert(db)
+    db = get_db()
+    try:
+        _ensure_schema(db)
+        _ensure_schema_cert(db)
+    except Exception as exc_schema:
+        import traceback
+        return f"<p>Error al inicializar tablas: {exc_schema}</p><pre>{traceback.format_exc()}</pre>", 500
     mensaje = error = ""
 
     if request.method == "POST" and (request.form.get("accion") or "") == "crear_cert":
@@ -1541,6 +1552,11 @@ def economico_certificados_nueva():
                     (obra, quincena, fecha))
                 db.commit()
                 cert_id = cur.lastrowid
+                if not cert_id:
+                    # Fallback para MySQL: obtener el ID recién insertado
+                    row = db.execute("SELECT MAX(id) FROM certificados WHERE obra=? AND quincena=?",
+                                     (obra, quincena)).fetchone()
+                    cert_id = int(row[0]) if row and row[0] else 1
                 return redirect(f"/modulo/economico/certificados/{cert_id}")
             except Exception as exc:
                 error = str(exc)
@@ -1592,7 +1608,11 @@ select,input{{width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius
 
 @economico_bp.route("/modulo/economico/certificados/<int:cert_id>", methods=["GET", "POST"])
 def economico_certificado_detalle(cert_id):
-    db = get_db(); _ensure_schema(db); _ensure_schema_cert(db)
+    db = get_db()
+    try:
+        _ensure_schema(db); _ensure_schema_cert(db)
+    except Exception as exc_s:
+        return f"<p>Error schema: {exc_s}</p>", 500
 
     cert = db.execute(
         "SELECT id, obra, quincena, fecha FROM certificados WHERE id=?", (cert_id,)
