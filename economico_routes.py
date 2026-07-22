@@ -4,7 +4,7 @@ Módulo Económico — Costos previstos vs reales agrupados por Obra
 KPIs: $/kg · Margen · Desvíos por rubro · Avance físico vs económico
 """
 import html as html_lib
-from flask import Blueprint, request
+from flask import Blueprint, request, redirect
 
 from db_utils import get_db
 
@@ -1536,11 +1536,11 @@ def economico_certificados_nueva():
             error = "Debe indicar la obra y la quincena."
         else:
             try:
-                db.execute(
+                cur = db.execute(
                     "INSERT INTO certificados (obra, quincena, fecha) VALUES (?,?,?)",
                     (obra, quincena, fecha))
                 db.commit()
-                cert_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+                cert_id = cur.lastrowid
                 return redirect(f"/modulo/economico/certificados/{cert_id}")
             except Exception as exc:
                 error = str(exc)
