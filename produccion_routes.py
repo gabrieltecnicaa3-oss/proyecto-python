@@ -1,5 +1,7 @@
 import os
 import time
+from datetime import date, timedelta
+import json as _json
 
 from flask import Blueprint, request
 from db_utils import get_db
@@ -755,8 +757,86 @@ def produccion():
     if hubo_cambios:
         db.commit()
 
-    obras_disponibles = sorted({f["obra"] for f in filas_ot if f["obra"]})
-    ots_disponibles = sorted(filas_ot, key=lambda x: x["ot_id"], reverse=True)
+    # ── Comparativa por períodos (HH y KG) ───────────────────────────────────
+    today = date.today()
+    # Semana actual: lunes → hoy
+    w_start  = today - timedelta(days=today.weekday())
+    w_end    = today
+    # Semana anterior: lunes → domingo previo
+    pw_start = w_start - timedelta(days=7)
+    pw_end   = w_start - timedelta(days=1)
+    # Mes actual: 1° del mes → hoy
+    m_start  = today.replace(day=1)
+    m_end    = today
+    # Mes anterior: 1° → último día del mes anterior
+    pm_end   = m_start - timedelta(days=1)
+    pm_start = pm_end.replace(day=1)
+
+    def _hh_periodo(d1, d2):
+        row = db.execute(
+            "SELECT COALESCE(SUM(horas),0) FROM partes_trabajo WHERE fecha >= ? AND fecha <= ?",
+            (d1.isoformat(), d2.isoformat())
+        ).fetchone()
+        return float(row[0] or 0)
+
+    def _kg_periodo(d1, d2):
+        """KG de piezas con proceso ARMADO OK en el rango (sin duplicar posicion/obra)."""
+        row = db.execute(
+            """SELECT COALESCE(SUM(CAST(p.peso AS REAL)), 0)
+               FROM (
+                   SELECT MAX(CAST(peso AS REAL)) AS peso
+                   FROM procesos
+                   WHERE fecha >= ? AND fecha <= ?
+                     AND UPPER(TRIM(proceso)) = 'ARMADO'
+                     AND UPPER(TRIM(estado)) = 'OK'
+                     AND peso IS NOT NULL AND CAST(peso AS REAL) > 0
+                   GROUP BY posicion, obra
+               ) p""",
+            (d1.isoformat(), d2.isoformat())
+        ).fetchone()
+        return float(row[0] or 0)
+
+    hh_sem_act  = _hh_periodo(w_start,  w_end)
+    hh_sem_ant  = _hh_periodo(pw_start, pw_end)
+    hh_mes_act  = _hh_periodo(m_start,  m_end)
+    hh_mes_ant  = _hh_periodo(pm_start, pm_end)
+    kg_sem_act  = _kg_periodo(w_start,  w_end)
+    kg_sem_ant  = _kg_periodo(pw_start, pw_end)
+    kg_mes_act  = _kg_periodo(m_start,  m_end)
+    kg_mes_ant  = _kg_periodo(pm_start, pm_end)
+
+    def _delta(act, ant):
+        d = act - ant
+        pct = (d / ant * 100) if ant > 0 else (100.0 if act > 0 else 0.0)
+        color = '#166534' if d >= 0 else '#991b1b'
+        arrow = '▲' if d > 0 else ('▼' if d < 0 else '–')
+        return d, pct, color, arrow
+
+    dHH_s = _delta(hh_sem_act, hh_sem_ant)
+    dKG_s = _delta(kg_sem_act, kg_sem_ant)
+    dHH_m = _delta(hh_mes_act, hh_mes_ant)
+    dKG_m = _delta(kg_mes_act, kg_mes_ant)
+
+    # Etiquetas de período para el chart
+    lbl_sem_ant = f"Sem. ant ({pw_start.strftime('%d/%m')}–{pw_end.strftime('%d/%m')})"
+    lbl_sem_act = f"Esta sem. ({w_start.strftime('%d/%m')}–{w_end.strftime('%d/%m')})"
+    lbl_mes_ant = pm_start.strftime('%b %Y')
+    lbl_mes_act = m_start.strftime('%b %Y')
+
+    chart_data = _json.dumps({
+        "hh": {
+            "labels": [lbl_sem_ant, lbl_sem_act, lbl_mes_ant, lbl_mes_act],
+            "values": [round(hh_sem_ant, 1), round(hh_sem_act, 1),
+                       round(hh_mes_ant, 1), round(hh_mes_act, 1)],
+            "colors": ['#fdba74','#f97316','#fcd34d','#f59e0b'],
+        },
+        "kg": {
+            "labels": [lbl_sem_ant, lbl_sem_act, lbl_mes_ant, lbl_mes_act],
+            "values": [round(kg_sem_ant, 0), round(kg_sem_act, 0),
+                       round(kg_mes_ant, 0), round(kg_mes_act, 0)],
+            "colors": ['#93c5fd','#3b82f6','#a5b4fc','#6366f1'],
+        },
+    })
 
     filas_filtradas = []
     for fila in filas_ot:
@@ -849,6 +929,17 @@ def produccion():
     .chip { font-size: 11px; border-radius: 999px; padding: 3px 8px; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; }
     .sin-datos { text-align: center; padding: 30px; color: #9a3412; }
     .nota { margin: 0 0 12px 0; color: #7c2d12; font-size: 13px; }
+    /* Comparativa períodos */
+    .comp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px; }
+    .comp-bloque { background: #fffaf5; border: 1px solid #fed7aa; border-radius: 8px; padding: 10px 14px; }
+    .comp-titulo { font-size: 11px; font-weight: 700; color: #9a3412; text-transform: uppercase; margin-bottom: 8px; letter-spacing:.04em; }
+    .comp-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; gap: 8px; }
+    .comp-lbl { font-size: 12px; color: #7c2d12; font-weight: 700; width: 28px; flex-shrink:0; }
+    .comp-val { font-size: 18px; font-weight: 800; color: #7c2d12; }
+    .comp-prev { font-size: 12px; color: #9ca3af; }
+    .comp-delta { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+    .chart-wrap { position: relative; height: 190px; margin-top: 8px; }
+    @media (max-width: 640px) { .comp-grid { grid-template-columns: 1fr; } }
     @media (max-width: 1200px) {
         table { min-width: 940px; }
         .th-proc, .td-proc { font-size: 14px; }
@@ -876,6 +967,7 @@ def produccion():
         .td-proc .chip { font-size: 11px; padding: 2px 6px; }
     }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     </head>
     <body>
     <div class="header">
@@ -883,6 +975,108 @@ def produccion():
         <a href="/" class="btn">⬅️ Volver</a>
     </div>
     <p class="nota">% Avance automático por OT: KG de ARMADO y ponderación 70/10/15/5 por proceso aprobado.</p>
+    """
+
+    def _comp_delta_badge(d, pct, color, arrow):
+        bg = '#dcfce7' if color == '#166534' else '#fee2e2'
+        return f'<span class="comp-delta" style="background:{bg};color:{color};">{arrow} {abs(pct):.1f}%</span>'
+
+    html += f"""
+    <div class="panel">
+      <h3 style="margin:0 0 10px 0;color:#9a3412;font-size:14px;font-weight:700;">📅 Comparativa de producción por período</h3>
+      <div class="comp-grid">
+
+        <!-- Semana -->
+        <div class="comp-bloque">
+          <div class="comp-titulo">📆 Esta semana vs semana anterior</div>
+          <div class="comp-row">
+            <span class="comp-lbl">HH</span>
+            <div style="display:flex;align-items:baseline;gap:6px;flex:1;">
+              <span class="comp-val">{hh_sem_act:,.1f}</span>
+              <span class="comp-prev">ant: {hh_sem_ant:,.1f}</span>
+            </div>
+            {_comp_delta_badge(*dHH_s)}
+          </div>
+          <div class="comp-row">
+            <span class="comp-lbl">KG</span>
+            <div style="display:flex;align-items:baseline;gap:6px;flex:1;">
+              <span class="comp-val">{kg_sem_act:,.0f}</span>
+              <span class="comp-prev">ant: {kg_sem_ant:,.0f}</span>
+            </div>
+            {_comp_delta_badge(*dKG_s)}
+          </div>
+          <div style="font-size:10px;color:#9ca3af;margin-top:4px;">
+            Act: {lbl_sem_act} &nbsp;|&nbsp; Ant: {lbl_sem_ant}
+          </div>
+        </div>
+
+        <!-- Mes -->
+        <div class="comp-bloque">
+          <div class="comp-titulo">📆 Este mes vs mes anterior</div>
+          <div class="comp-row">
+            <span class="comp-lbl">HH</span>
+            <div style="display:flex;align-items:baseline;gap:6px;flex:1;">
+              <span class="comp-val">{hh_mes_act:,.1f}</span>
+              <span class="comp-prev">ant: {hh_mes_ant:,.1f}</span>
+            </div>
+            {_comp_delta_badge(*dHH_m)}
+          </div>
+          <div class="comp-row">
+            <span class="comp-lbl">KG</span>
+            <div style="display:flex;align-items:baseline;gap:6px;flex:1;">
+              <span class="comp-val">{kg_mes_act:,.0f}</span>
+              <span class="comp-prev">ant: {kg_mes_ant:,.0f}</span>
+            </div>
+            {_comp_delta_badge(*dKG_m)}
+          </div>
+          <div style="font-size:10px;color:#9ca3af;margin-top:4px;">
+            Act: {lbl_mes_act} &nbsp;|&nbsp; Ant: {lbl_mes_ant}
+          </div>
+        </div>
+      </div>
+
+      <!-- Gráfico comparativo -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <div style="font-size:11px;font-weight:700;color:#9a3412;margin-bottom:4px;">⏱ HH por período</div>
+          <div class="chart-wrap"><canvas id="chartHH"></canvas></div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;color:#9a3412;margin-bottom:4px;">⚖️ KG armados por período</div>
+          <div class="chart-wrap"><canvas id="chartKG"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+    (function() {{
+      const cd = {chart_data};
+      function makeChart(id, lbl, ds) {{
+        const ctx = document.getElementById(id);
+        if (!ctx) return;
+        new Chart(ctx, {{
+          type: 'bar',
+          data: {{
+            labels: lbl,
+            datasets: [{{ data: ds.values, backgroundColor: ds.colors,
+                          borderRadius: 5, borderSkipped: false }}]
+          }},
+          options: {{
+            responsive: true, maintainAspectRatio: false,
+            plugins: {{ legend: {{ display: false }},
+                        tooltip: {{ callbacks: {{ label: c => ' ' + c.parsed.y.toLocaleString('es-AR') }} }} }},
+            scales: {{
+              x: {{ ticks: {{ font: {{ size: 10 }}, maxRotation: 30 }} }},
+              y: {{ beginAtZero: true, ticks: {{ font: {{ size: 10 }} }},
+                    grid: {{ color: '#fff7ed' }} }}
+            }}
+          }}
+        }});
+      }}
+      makeChart('chartHH', cd.hh.labels, cd.hh);
+      makeChart('chartKG', cd.kg.labels, cd.kg);
+    }})();
+    </script>
     """
 
     html += f"""
