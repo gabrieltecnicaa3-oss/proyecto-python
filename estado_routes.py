@@ -487,12 +487,14 @@ def estado_produccion():
     import json as _json_est
     _db_est = get_db()
     _today = date.today()
-    _w_start  = _today - timedelta(days=_today.weekday())
-    _w_end    = _today
-    _pw_start = _w_start - timedelta(days=7)
-    _pw_end   = _w_start - timedelta(days=1)
-    _pw2_start = _w_start - timedelta(days=14)
-    _pw2_end   = _w_start - timedelta(days=8)
+    _this_monday = _today - timedelta(days=_today.weekday())
+    # Siempre comparar semanas VENCIDAS (completas), no la semana en curso
+    _w_start  = _this_monday - timedelta(days=7)   # Lunes semana vencida
+    _w_end    = _this_monday - timedelta(days=1)   # Domingo semana vencida
+    _pw_start = _this_monday - timedelta(days=14)  # Lunes semana anterior
+    _pw_end   = _this_monday - timedelta(days=8)   # Domingo semana anterior
+    _pw2_start = _this_monday - timedelta(days=21) # Lunes 2 semanas atrás
+    _pw2_end   = _this_monday - timedelta(days=15) # Domingo 2 semanas atrás
     _m_start  = _today.replace(day=1)
     _m_end    = _today
     _pm_end   = _m_start - timedelta(days=1)
@@ -548,7 +550,7 @@ def estado_produccion():
         bg = '#dcfce7' if color == '#166534' else '#fee2e2'
         return f'<span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;background:{bg};color:{color};white-space:nowrap;">{arrow} {abs(pct):.1f}%</span>'
 
-    _lbl_sa  = f"Esta sem. ({_w_start.strftime('%d/%m')}–{_w_end.strftime('%d/%m')})"
+    _lbl_sa  = f"Sem. vencida ({_w_start.strftime('%d/%m')}–{_w_end.strftime('%d/%m')})"
     _lbl_sp  = f"Sem. -1 ({_pw_start.strftime('%d/%m')}–{_pw_end.strftime('%d/%m')})"
     _lbl_sp2 = f"Sem. -2 ({_pw2_start.strftime('%d/%m')}–{_pw2_end.strftime('%d/%m')})"
     _lbl_ma  = _m_start.strftime('%b %Y')
@@ -1006,7 +1008,7 @@ body {
     <select id="comparar-periodo-selector" onchange="mostrarComparacion()" style="padding:8px 12px; border:1px solid #fdba74; border-radius:6px; color:#7c2d12; font-weight:bold;">
       <option value="none">Sin comparación</option>
       <option value="mes-anterior">Este mes vs Mes anterior</option>
-      <option value="semana-anterior">Esta semana vs Semana anterior</option>
+      <option value="semana-anterior">Sem. vencida vs Sem. anterior</option>
       <option value="mes-ano">Este mes vs Mismo mes año anterior</option>
     </select>
   </div>
@@ -1937,7 +1939,7 @@ actualizarDescripcionTipo(tipoObraActivo);
       </div>
       <div class="comp-bloques">
         <div class="comp-bloque">
-          <div class="comp-bloque-title">📆 Esta semana vs semana anterior</div>
+          <div class="comp-bloque-title">📆 Sem. vencida vs semana anterior</div>
           <div class="comp-row">
             <span class="comp-lbl">HH</span>
             <span class="comp-val">{_hh_sa:,.1f}</span>
