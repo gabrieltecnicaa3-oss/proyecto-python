@@ -1,0 +1,348 @@
+"""
+Utilidades para subir archivos a Google Drive usando la API.
+
+Configuracion soportada (variables de entorno en Railway):
+
+1) Cuenta de servicio (recomendado si se usa Unidad Compartida)
+    GOOGLE_CREDENTIALS_JSON  - contenido completo del JSON de la cuenta de servicio
+    GOOGLE_DRIVE_FOLDER_ID   - ID de la carpeta raiz en Drive
+
+2) OAuth de usuario (alternativa si NO hay Unidad Compartida)
+    GOOGLE_OAUTH_CLIENT_ID
+    GOOGLE_OAUTH_CLIENT_SECRET
+    GOOGLE_OAUTH_REFRESH_TOKEN
+    GOOGLE_DRIVE_FOLDER_ID
+
+Nota: las cuentas de servicio no tienen cuota en Mi unidad. Si no podes usar
+Unidad Compartida, usa OAuth de usuario para subir con tu propia cuota.
+"""
+
+import os
+import json
+import io
+import re
+import base64
+
+
+def _format_drive_exception(exc):
+    parts = [f"{type(exc).__name__}"]
+    msg = str(exc).strip()
+    if msg:
+        parts.append(msg)
+    elif getattr(exc, "args", None):
+        parts.append(repr(exc.args))
+    else:
+        parts.append(repr(exc))
+
+    status_code = getattr(getattr(exc, "resp", None), "status", None)
+    if status_code is not None:
+        parts.append(f"status={status_code}")
+
+    content = getattr(exc, "content", None)
+    if isinstance(content, bytes):
+        try:
+            content = content.decode("utf-8", errors="replace")
+        except Exception:
+            content = repr(content)
+    if content:
+        parts.append(f"content={content}")
+
+    return " | ".join(part for part in parts if part)
+
+_drive_service = None
+_drive_init_attempted = False
+_drive_last_error = None
+_drive_last_upload_error = None
+_drive_last_upload_ok = None
+_drive_last_upload_trace = None
+_drive_last_auth_mode = None
+_drive_last_credentials_source = None
+
+
+def _normalizar_credentials_json(raw_value):
+    """Normaliza JSON de credenciales desde env para casos comunes de despliegue.
+
+    Acepta:
+    - JSON directo
+    - JSON con '\\n' escapado en private_key
+    - Base64 (cuando se almacena codificado por CI/CD)
+    """
+    txt = str(raw_value or "").strip()
+    if not txt:
+        return ""
+
+    # 1) Intentar parseo directo
+    try:
+        obj = json.loads(txt)
+        if isinstance(obj, dict):
+            if isinstance(obj.get("private_key"), str):
+                obj["private_key"] = obj["private_key"].replace("\\n", "\n")
+            return json.dumps(obj)
+    except Exception:
+        pass
+
+    # 2) Intentar como base64
+    try:
+        decoded = base64.b64decode(txt).decode("utf-8")
+        obj = json.loads(decoded)
+        if isinstance(obj, dict):
+            if isinstance(obj.get("private_key"), str):
+                obj["private_key"] = obj["private_key"].replace("\\n", "\n")
+            return json.dumps(obj)
+    except Exception:
+        pass
+
+    # 3) Devolver tal cual para que el caller reporte error concreto
+    return txt
+
+
+def _extraer_drive_folder_id(value):
+    """Acepta ID puro o URL de carpeta y devuelve el folder_id."""
+    txt = str(value or "").strip()
+    if not txt:
+        return ""
+    if "/folders/" in txt:
+        m = re.search(r"/folders/([a-zA-Z0-9_-]+)", txt)
+        if m:
+            return m.group(1)
+    m = re.search(r"[?&]id=([a-zA-Z0-9_-]+)", txt)
+    if m:
+        return m.group(1)
+    return txt
+
+
+def _get_drive_service():
+    global _drive_service, _drive_init_attempted, _drive_last_error
+    global _drive_last_auth_mode, _drive_last_credentials_source
+    if _drive_init_attempted:
+        return _drive_service
+    _drive_init_attempted = True
+    _drive_last_error = None
+    _drive_last_auth_mode = None
+    _drive_last_credentials_source = None
+
+    credentials_source = ""
+    credentials_raw = ""
+    for env_key in (
+        "GOOGLE_CREDENTIALS_JSON",
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+        "GOOGLE_CREDENTIALS_BASE64",
+    ):
+        env_value = os.environ.get(env_key, "")
+        if str(env_value or "").strip():
+            credentials_source = env_key
+            credentials_raw = env_value
+            break
+
+    credentials_json = _normalizar_credentials_json(credentials_raw)
+    oauth_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    oauth_client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+    oauth_refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN", "").strip()
+
+    try:
+        from google.oauth2 import service_account
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        scopes = ["https://www.googleapis.com/auth/drive"]
+
+        # Si hay OAuth de usuario, priorizarlo para permitir subir a Mi unidad.
+        if oauth_client_id and oauth_client_secret and oauth_refresh_token:
+            creds = Credentials(
+                token=None,
+                refresh_token=oauth_refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=oauth_client_id,
+                client_secret=oauth_client_secret,
+                scopes=scopes,
+            )
+            _drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
+            _drive_last_auth_mode = "oauth"
+            _drive_last_credentials_source = "GOOGLE_OAUTH_*"
+            return _drive_service
+
+        if not credentials_json:
+            _drive_last_error = (
+                "Sin credenciales: falta OAuth completo "
+                "(GOOGLE_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN) y también falta "
+                "GOOGLE_CREDENTIALS_JSON (o GOOGLE_SERVICE_ACCOUNT_JSON/GOOGLE_CREDENTIALS_BASE64)."
+            )
+            return None
+
+        info = json.loads(credentials_json)
+        creds = service_account.Credentials.from_service_account_info(info, scopes=scopes)
+        _drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
+        _drive_last_auth_mode = "service_account"
+        _drive_last_credentials_source = credentials_source or "unknown"
+    except Exception as e:
+        _drive_last_error = str(e)
+        print(f"[Drive] No se pudo inicializar el servicio: {e}")
+        _drive_service = None
+
+    return _drive_service
+
+
+def drive_disponible():
+    """Retorna True si Drive API está configurada y disponible."""
+    return _get_drive_service() is not None
+
+
+def _buscar_o_crear_carpeta(service, nombre, parent_id):
+    """Busca una carpeta por nombre dentro del parent. Si no existe, la crea."""
+    nombre_safe = str(nombre or "").strip().replace("'", "\\'")
+    query = (
+        f"name='{nombre_safe}' "
+        f"and '{parent_id}' in parents "
+        f"and mimeType='application/vnd.google-apps.folder' "
+        f"and trashed=false"
+    )
+    try:
+        results = service.files().list(
+            q=query,
+            fields="files(id, name)",
+            spaces="drive",
+            pageSize=1,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        ).execute()
+        files = results.get("files", [])
+        if files:
+            return files[0]["id"]
+    except Exception as e:
+        print(f"[Drive] Error buscando carpeta '{nombre}': {e}")
+
+    # Crear la carpeta
+    try:
+        metadata = {
+            "name": nombre,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [parent_id],
+        }
+        folder = service.files().create(body=metadata, fields="id", supportsAllDrives=True).execute()
+        return folder["id"]
+    except Exception as e:
+        print(f"[Drive] Error creando carpeta '{nombre}': {e}")
+        return None
+
+
+def _resolver_ruta_carpeta(service, root_folder_id, nombres):
+    """Resuelve una ruta de carpetas bajo root_folder_id y devuelve el ID final."""
+    current_parent_id = root_folder_id
+    trace = []
+    for nombre in nombres:
+        folder_name = str(nombre or "").strip()
+        if not folder_name:
+            continue
+        current_parent_id = _buscar_o_crear_carpeta(service, folder_name, current_parent_id)
+        trace.append({"name": folder_name, "id": current_parent_id})
+        if not current_parent_id:
+            break
+    return current_parent_id, trace
+
+
+def subir_pdf_a_drive(pdf_bytes, filename, obra, seccion_nombre, ot_subfolder=None):
+    """
+    Sube un PDF a Google Drive manteniendo la estructura de carpetas:
+      {GOOGLE_DRIVE_FOLDER_ID}/{obra}/{seccion_nombre}/{ot_subfolder?}/{filename}
+
+    Parámetros:
+      pdf_bytes      - bytes del PDF
+      filename       - nombre del archivo (ej: "control_armado_OT5.pdf")
+      obra           - nombre de la obra (ej: "LDC-056")
+      seccion_nombre - nombre de la sección (ej: "1.3-Armado y soldadura")
+      ot_subfolder   - subcarpeta de OT opcional (ej: "OT-005")
+
+    Retorna el link de Drive del archivo subido, o None si falla.
+    """
+    global _drive_last_upload_error, _drive_last_upload_ok, _drive_last_upload_trace
+    _drive_last_upload_error = None
+    _drive_last_upload_ok = None
+    _drive_last_upload_trace = None
+
+    service = _get_drive_service()
+    if service is None:
+        _drive_last_upload_error = "Servicio de Drive no disponible"
+        return None
+
+    root_folder_id = _extraer_drive_folder_id(os.environ.get("GOOGLE_DRIVE_FOLDER_ID", ""))
+    if not root_folder_id:
+        print("[Drive] GOOGLE_DRIVE_FOLDER_ID no configurado o inválido")
+        _drive_last_upload_error = "GOOGLE_DRIVE_FOLDER_ID no configurado o inválido"
+        return None
+
+    if isinstance(pdf_bytes, bytearray):
+        pdf_bytes = bytes(pdf_bytes)
+    if not isinstance(pdf_bytes, (bytes, bytearray)):
+        _drive_last_upload_error = f"Tipo de PDF invalido: {type(pdf_bytes).__name__}"
+        print(f"[Drive] {_drive_last_upload_error}")
+        return None
+    if not pdf_bytes:
+        _drive_last_upload_error = "PDF vacio (0 bytes)"
+        print(f"[Drive] {_drive_last_upload_error}")
+        return None
+
+    try:
+        # Resolver la ruta completa usando el ID real devuelto en cada nivel.
+        folder_names = [obra, seccion_nombre]
+        if ot_subfolder:
+            folder_names.append(ot_subfolder)
+        destino_folder_id, trace = _resolver_ruta_carpeta(service, root_folder_id, folder_names)
+        _drive_last_upload_trace = {
+            "root_folder_id": root_folder_id,
+            "folders": trace,
+            "filename": str(filename or ""),
+        }
+        if not destino_folder_id:
+            _drive_last_upload_error = f"No se pudo resolver la carpeta destino para '{filename}'"
+            return None
+
+        # Subir el archivo
+        file_metadata = {
+            "name": filename,
+            "parents": [destino_folder_id],
+        }
+        media = _MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf")
+        uploaded = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id",
+            supportsAllDrives=True,
+        ).execute()
+
+        file_id = uploaded.get("id", "")
+        link = ""
+        if file_id:
+            try:
+                file_meta = service.files().get(
+                    fileId=file_id,
+                    fields="id, webViewLink",
+                    supportsAllDrives=True,
+                ).execute()
+                link = file_meta.get("webViewLink", "")
+            except Exception as link_exc:
+                print(f"[Drive] Archivo creado pero no se pudo leer webViewLink: {_format_drive_exception(link_exc)}")
+        print(f"[Drive] Subido: {filename} → {link}")
+        _drive_last_upload_ok = {
+            "filename": str(filename or ""),
+            "bytes": len(pdf_bytes),
+            "folder_id": destino_folder_id,
+            "file_id": file_id,
+            "webViewLink": link,
+            "trace": _drive_last_upload_trace,
+        }
+        return link or file_id
+
+    except Exception as e:
+        err_txt = _format_drive_exception(e)
+        print(f"[Drive] Error subiendo '{filename}': {err_txt}")
+        trace_txt = ""
+        if _drive_last_upload_trace:
+            trace_txt = f" | trace={_drive_last_upload_trace}"
+        _drive_last_upload_error = f"{err_txt}{trace_txt}"
+        return None
+
+
+# Importación lazy de MediaIoBaseUpload para evitar error si la librería no está instalada
+def _MediaIoBaseUpload(fh, mimetype):
+    from googleapiclient.http import MediaIoBaseUpload
+    return MediaIoBaseUpload(fh, mimetype=mimetype, resumable=False)

@@ -16,25 +16,12 @@ __pycache__/
 *.pyo
 
 # Archivos generados en runtime
-DataBooks/
 remitos/
 qrs/
 auditorias_fotos/
 _tmp_ot_uploads/
 Reportes Produccion/
 Firmas empleados/
-
-# Archivos temporales y de debug
-_tmp_*.py
-_check_*.py
-_fix_*.py
-_add_*.py
-_dedup_*.py
-_import_*.py
-_list_*.py
-_sample_*.py
-debug_*.py
-ARMADOS*
 
 # Sistema operativo
 .DS_Store

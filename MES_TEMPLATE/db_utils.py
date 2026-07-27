@@ -1,0 +1,806 @@
+import os
+import re
+import sqlite3
+import unicodedata
+from urllib.parse import quote, unquote
+
+try:
+    from drive_utils import subir_pdf_a_drive as _drive_subir_pdf
+except Exception:
+    _drive_subir_pdf = None  # type: ignore
+
+try:
+    import pymysql
+except Exception:  # pragma: no cover - fallback when MySQL dependency is missing
+    pymysql = None
+
+
+_DB_ENGINE_RAW = os.getenv("DB_ENGINE", "auto").strip().lower()
+if _DB_ENGINE_RAW in ("", "auto"):
+    # In cloud deployments we prefer MySQL automatically when credentials are available.
+    if (
+        str(os.getenv("MYSQL_HOST") or "").strip()
+        and str(os.getenv("MYSQL_DB") or "").strip()
+        and str(os.getenv("MYSQL_USER") or "").strip()
+        and str(os.getenv("MYSQL_PASSWORD") or "").strip()
+    ):
+        DB_ENGINE = "mysql"
+    else:
+        DB_ENGINE = "sqlite"
+else:
+    DB_ENGINE = _DB_ENGINE_RAW
+
+
+def _env_flag_true(name, default=False):
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in ("1", "true", "yes", "on", "si")
+
+
+# Data-consistency-first mode: avoid silent split between MySQL and SQLite.
+MYSQL_FAIL_OPEN = _env_flag_true("MYSQL_FAIL_OPEN", default=False)
+
+_DB_DIR = os.path.dirname(os.path.abspath(__file__))
+_SQLITE_DB_PATH = os.getenv("DB_PATH", os.path.join(_DB_DIR, "database.db"))
+
+
+def _env_str(name, default=""):
+    return str(os.getenv(name, default) or "").strip()
+
+
+class _StaticCursor:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+def _convert_qmarks_to_format(sql):
+    out = []
+    in_single = False
+    in_double = False
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            out.append(ch)
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+            out.append(ch)
+        elif ch == "?" and not in_single and not in_double:
+            out.append("%s")
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _normalize_sql_for_mysql(sql):
+    sql_out = str(sql)
+    # SQLite-style autoincrement keyword is not accepted by MySQL parser.
+    sql_out = re.sub(r"\bAUTOINCREMENT\b", "AUTO_INCREMENT", sql_out, flags=re.IGNORECASE)
+    # SQLite-specific collation token; MySQL uses different collation names.
+    sql_out = re.sub(r"\s+COLLATE\s+NOCASE\b", "", sql_out, flags=re.IGNORECASE)
+    # MySQL does not allow DEFAULT on TEXT columns.
+    if re.match(r"^\s*CREATE\s+TABLE", sql_out, flags=re.IGNORECASE):
+        # SQLite PK style must be mapped to MySQL auto-increment semantics.
+        sql_out = re.sub(
+            r"\b([A-Za-z_][A-Za-z0-9_]*)\s+INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b",
+            r"\1 BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY",
+            sql_out,
+            flags=re.IGNORECASE,
+        )
+        sql_out = re.sub(
+            r"\b([A-Za-z_][A-Za-z0-9_]*)\s+INTEGER\s+PRIMARY\s+KEY\b",
+            r"\1 BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY",
+            sql_out,
+            flags=re.IGNORECASE,
+        )
+        sql_out = re.sub(r"\bTEXT\s+DEFAULT\b", "VARCHAR(255) DEFAULT", sql_out, flags=re.IGNORECASE)
+        # MySQL does not allow UNIQUE indexes on TEXT/BLOB without key length.
+        sql_out = re.sub(r"\bTEXT\s+UNIQUE\b", "VARCHAR(255) UNIQUE", sql_out, flags=re.IGNORECASE)
+    return sql_out
+
+
+def _escape_percent_for_pymysql_format(sql):
+    """Escapa '%' literales para evitar que PyMySQL los tome como placeholders.
+
+    Conserva `%s` (placeholders reales) y `%%` (porcentaje ya escapado).
+    """
+    out = []
+    in_single = False
+    in_double = False
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == "%":
+            nxt = sql[i + 1] if i + 1 < len(sql) else ""
+            if not in_single and not in_double and nxt in ("s", "%"):
+                out.append("%")
+            elif in_single and nxt == "%":
+                # Mantener porcentajes ya escapados dentro de literales.
+                out.append("%")
+            else:
+                out.append("%%")
+            i += 1
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
+
+def _parse_pragma_table_info(sql):
+    m = re.match(r"^\s*PRAGMA\s+table_info\(([^)]+)\)\s*;?\s*$", sql, flags=re.IGNORECASE)
+    if not m:
+        return None
+    raw = m.group(1).strip().strip("`\"'")
+    return raw
+
+
+def _parse_insert_table_and_columns(sql):
+    m = re.match(
+        r"^\s*INSERT\s+INTO\s+`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\(([^)]*)\)\s*VALUES\s*\(",
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not m:
+        return None, None
+    table = (m.group(1) or "").strip()
+    cols_raw = m.group(2) or ""
+    cols = [c.strip().strip("`").strip() for c in cols_raw.split(",") if c.strip()]
+    return table, cols
+
+
+def _is_mysql_missing_id_default_error(exc):
+    txt = str(exc or "")
+    return "(1364" in txt and "Field 'id' doesn't have a default value" in txt
+
+
+def _inject_id_in_insert(sql_mysql):
+    # Inserta `id` en la lista de columnas y `%s` como primer valor.
+    sql2 = re.sub(
+        r"(INSERT\s+INTO\s+`?[A-Za-z_][A-Za-z0-9_]*`?\s*\()",
+        r"\1id, ",
+        sql_mysql,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    sql2 = re.sub(
+        r"(VALUES\s*\()",
+        r"\1%s, ",
+        sql2,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    return sql2
+
+
+class MySQLCompatConnection:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=()):
+        table_name = _parse_pragma_table_info(sql)
+        if table_name:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, EXTRA, ORDINAL_POSITION
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s
+                    ORDER BY ORDINAL_POSITION
+                    """,
+                    (table_name,),
+                )
+                rows = cur.fetchall()
+
+            pragma_rows = []
+            for col_name, col_type, is_nullable, col_default, col_key, extra, ord_pos in rows:
+                pk = 1 if str(col_key or "").upper() == "PRI" else 0
+                notnull = 0 if str(is_nullable or "").upper() == "YES" else 1
+                dflt = None if col_default is None else str(col_default)
+                pragma_rows.append((int(ord_pos) - 1, col_name, col_type, notnull, dflt, pk))
+
+            return _StaticCursor(pragma_rows)
+
+        sql_mysql = _normalize_sql_for_mysql(_convert_qmarks_to_format(sql))
+        sql_mysql = _escape_percent_for_pymysql_format(sql_mysql)
+        cur = self._conn.cursor()
+        exec_params = params or ()
+        try:
+            cur.execute(sql_mysql, exec_params)
+        except Exception as exc:
+            # Compatibilidad de emergencia para esquemas legacy sin AUTO_INCREMENT en id.
+            if not _is_mysql_missing_id_default_error(exc):
+                raise
+
+            table, cols = _parse_insert_table_and_columns(sql_mysql)
+            if not table or not cols or "id" in {c.lower() for c in cols}:
+                raise
+
+            id_cur = self._conn.cursor()
+            id_cur.execute(f"SELECT COALESCE(MAX(id), 0) + 1 FROM `{table}`")
+            id_row = id_cur.fetchone()
+            next_id = int((id_row[0] if id_row else 1) or 1)
+
+            retry_sql = _inject_id_in_insert(sql_mysql)
+            retry_params = (next_id,) + tuple(exec_params)
+            cur.execute(retry_sql, retry_params)
+        return cur
+
+    def executemany(self, sql, seq_of_params):
+        sql_mysql = _normalize_sql_for_mysql(_convert_qmarks_to_format(sql))
+        sql_mysql = _escape_percent_for_pymysql_format(sql_mysql)
+        cur = self._conn.cursor()
+        cur.executemany(sql_mysql, seq_of_params)
+        return cur
+
+    def commit(self):
+        return self._conn.commit()
+
+    def rollback(self):
+        return self._conn.rollback()
+
+    def close(self):
+        return self._conn.close()
+
+
+class DBIntegrityError(Exception):
+    pass
+
+
+def is_integrity_error(exc):
+    mysql_cls = ()
+    if pymysql is not None:
+        mysql_cls = (pymysql.IntegrityError,)
+    return isinstance(exc, (sqlite3.IntegrityError,) + mysql_cls)
+
+
+def _connect_sqlite():
+    db_path = _SQLITE_DB_PATH
+    db_dir = os.path.dirname(os.path.abspath(db_path))
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+
+    conn = sqlite3.connect(db_path, timeout=30)
+    try:
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        pass
+    return conn
+
+
+def get_db():
+    if DB_ENGINE == "mysql":
+        if pymysql is None:
+            if MYSQL_FAIL_OPEN:
+                print("[db_utils] PyMySQL no disponible; fallback a SQLite")
+                return _connect_sqlite()
+            raise RuntimeError("PyMySQL no disponible y MYSQL_FAIL_OPEN=0")
+        try:
+            mysql_host = _env_str("MYSQL_HOST", "127.0.0.1")
+            mysql_user = _env_str("MYSQL_USER", "appuser")
+            mysql_password = _env_str("MYSQL_PASSWORD", "App1234!")
+            mysql_db = _env_str("MYSQL_DB", "gestion_produccion")
+            mysql_port_raw = _env_str("MYSQL_PORT", "3306")
+            try:
+                mysql_port = int(mysql_port_raw)
+            except Exception:
+                mysql_port = 3306
+
+            mysql_conn = pymysql.connect(
+                host=mysql_host,
+                port=mysql_port,
+                user=mysql_user,
+                password=mysql_password,
+                database=mysql_db,
+                charset="utf8mb4",
+                autocommit=False,
+            )
+            return MySQLCompatConnection(mysql_conn)
+        except Exception as exc:
+            if MYSQL_FAIL_OPEN:
+                print(f"[db_utils] Error MySQL ({exc}); fallback a SQLite")
+                return _connect_sqlite()
+            raise
+    return _connect_sqlite()
+
+
+def _resolver_ot_id_para_obra(db, obra):
+    obra_txt = str(obra or "").strip()
+    if not obra_txt:
+        return None
+    rows = db.execute(
+        "SELECT id FROM ordenes_trabajo WHERE TRIM(COALESCE(obra,'')) = ? AND (es_mantenimiento IS NULL OR es_mantenimiento = 0) ORDER BY id",
+        (obra_txt,),
+    ).fetchall()
+    return rows[0][0] if len(rows) == 1 else None
+
+
+def _obtener_ots_para_obra(db, obra):
+    obra_txt = str(obra or "").strip()
+    if not obra_txt:
+        return []
+    return db.execute(
+        "SELECT id, titulo FROM ordenes_trabajo WHERE TRIM(COALESCE(obra,'')) = ? AND (es_mantenimiento IS NULL OR es_mantenimiento = 0) ORDER BY id",
+        (obra_txt,),
+    ).fetchall()
+
+
+def _obtener_ot_id_pieza(db, pos, obra):
+    obra_txt = str(obra or "").strip()
+    if not obra_txt:
+        return None
+    rows = db.execute(
+        "SELECT DISTINCT ot_id FROM procesos WHERE posicion = ? AND TRIM(COALESCE(obra,'')) = ? AND ot_id IS NOT NULL",
+        (pos, obra_txt),
+    ).fetchall()
+    return rows[0][0] if len(rows) == 1 else None
+
+
+def _normalizar_nombre_carpeta(nombre):
+    txt = str(nombre or "").strip() or "SIN_OBRA"
+    txt = re.sub(r'[<>:"/\\|?*]+', "-", txt)
+    txt = re.sub(r"\s+", " ", txt).strip().rstrip(".")
+    return txt or "SIN_OBRA"
+
+
+def _normalizar_nombre_archivo(nombre):
+    txt = str(nombre or "").strip() or "documento.pdf"
+    txt = txt.replace("/", "-").replace("\\", "-")
+    txt = re.sub(r'[<>:"|?*]+', "-", txt)
+    txt = re.sub(r"\s+", "_", txt).strip("._")
+    return txt or "documento.pdf"
+
+
+# Secciones que subdividen por OT dentro de la carpeta de sección
+_SECCIONES_CON_SUBCARPETA_OT = {"calidad_armado_soldadura", "calidad_pintura", "remitos"}
+
+
+def _resolver_carpeta_ot(ot_id, obra):
+    """Devuelve el nombre de subcarpeta 'OT xx-titulo' para las secciones que la requieren."""
+    if ot_id is None:
+        return "OT SIN DEFINIR"
+    ot_id_txt = str(ot_id).strip()
+    if not ot_id_txt.isdigit():
+        return "OT SIN DEFINIR"
+    titulo = ""
+    try:
+        db = get_db()
+        row = db.execute(
+            """
+            SELECT TRIM(COALESCE(titulo, ''))
+            FROM ordenes_trabajo
+            WHERE id = ?
+              AND TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, ''))
+            LIMIT 1
+            """,
+            (int(ot_id_txt), str(obra or "").strip()),
+        ).fetchone()
+        if row and row[0]:
+            titulo = str(row[0]).strip()
+    except Exception:
+        titulo = ""
+    carpeta_ot = f"OT {int(ot_id_txt)}"
+    if titulo:
+        carpeta_ot = f"{carpeta_ot}-{titulo}"
+    return _normalizar_nombre_carpeta(carpeta_ot)
+
+
+def _asegurar_estructura_databook(obra, databooks_dir, databook_secciones, ot_id=None):
+    obra_dir = os.path.join(databooks_dir, _normalizar_nombre_carpeta(obra))
+
+    # Recopilar todas las OTs activas para la obra (más la del ot_id dado)
+    ot_ids_obra = set()
+    if ot_id is not None:
+        ot_ids_obra.add(ot_id)
+    try:
+        db = get_db()
+        rows = db.execute(
+            """
+            SELECT id FROM ordenes_trabajo
+            WHERE TRIM(COALESCE(obra, '')) = TRIM(COALESCE(?, ''))
+              AND fecha_cierre IS NULL
+              AND (es_mantenimiento IS NULL OR es_mantenimiento = 0)
+            """,
+            (str(obra or "").strip(),)
+        ).fetchall()
+        for r in rows:
+            ot_ids_obra.add(r[0])
+    except Exception:
+        pass
+
+    for seccion_key, seccion_rel in databook_secciones.items():
+        if seccion_key in _SECCIONES_CON_SUBCARPETA_OT and ot_ids_obra:
+            for ot in ot_ids_obra:
+                ot_subcarpeta = _resolver_carpeta_ot(ot, obra)
+                os.makedirs(os.path.join(obra_dir, seccion_rel, ot_subcarpeta), exist_ok=True)
+        else:
+            os.makedirs(os.path.join(obra_dir, seccion_rel), exist_ok=True)
+
+    return obra_dir
+
+
+def _asegurar_estructura_databook_si_valida(obra, databooks_dir, databook_secciones, ot_id=None):
+    obra_txt = str(obra or "").strip()
+    if not obra_txt or obra_txt == "---":
+        return ""
+    return _asegurar_estructura_databook(obra_txt, databooks_dir, databook_secciones, ot_id=ot_id)
+
+
+def _guardar_pdf_databook(obra, seccion_key, filename, pdf_bytes, databooks_dir, databook_secciones, ot_id=None):
+    if not pdf_bytes:
+        return ""
+
+    obra_dir = os.path.join(databooks_dir, _normalizar_nombre_carpeta(obra))
+    seccion_rel = databook_secciones.get(seccion_key, "")
+    if seccion_key in _SECCIONES_CON_SUBCARPETA_OT and ot_id is not None:
+        ot_subcarpeta = _resolver_carpeta_ot(ot_id, obra)
+        destino_dir = os.path.join(obra_dir, seccion_rel, ot_subcarpeta) if seccion_rel else os.path.join(obra_dir, ot_subcarpeta)
+    else:
+        destino_dir = os.path.join(obra_dir, seccion_rel) if seccion_rel else obra_dir
+    os.makedirs(destino_dir, exist_ok=True)
+
+    safe_filename = _normalizar_nombre_archivo(filename)
+    if not safe_filename.lower().endswith(".pdf"):
+        safe_filename += ".pdf"
+
+    destino_path = os.path.join(destino_dir, safe_filename)
+    base, ext = os.path.splitext(destino_path)
+    correlativo = 2
+    while os.path.exists(destino_path):
+        destino_path = f"{base}_{correlativo}{ext}"
+        correlativo += 1
+
+    with open(destino_path, "wb") as f:
+        f.write(pdf_bytes)
+
+    # Subir también a Google Drive si está configurado
+    try:
+        if _drive_subir_pdf is not None:
+            # Nombre legible de la sección para la carpeta en Drive
+            seccion_nombre = seccion_rel.replace(os.sep, "/").split("/")[-1] if seccion_rel else seccion_key
+            ot_subfolder_drive = None
+            if seccion_key in _SECCIONES_CON_SUBCARPETA_OT and ot_id is not None:
+                ot_subfolder_drive = _resolver_carpeta_ot(ot_id, obra)
+            link_drive = _drive_subir_pdf(
+                pdf_bytes,
+                safe_filename,
+                _normalizar_nombre_carpeta(obra),
+                seccion_nombre,
+                ot_subfolder=ot_subfolder_drive,
+            )
+            if not link_drive:
+                print(f"[Drive] No se obtuvo link de subida para {safe_filename}")
+    except Exception as _e:
+        print(f"[Drive] Error al subir {safe_filename}: {_e}")
+
+    return destino_path
+
+
+def _completar_metadatos_por_obra_pos(db, obra=None, posicion=None):
+    filtros = []
+    params = []
+    obra_txt = str(obra or "").strip()
+    pos_txt = str(posicion or "").strip()
+
+    if obra_txt:
+        filtros.append("COALESCE(obra, '') = COALESCE(?, '')")
+        params.append(obra_txt)
+    if pos_txt:
+        filtros.append("TRIM(COALESCE(posicion, '')) = ?")
+        params.append(pos_txt)
+
+    where_clause = f"WHERE {' AND '.join(filtros)}" if filtros else ""
+
+    rows = db.execute(
+        f"""
+        SELECT id,
+               TRIM(COALESCE(posicion, '')) AS posicion,
+               TRIM(COALESCE(obra, '')) AS obra,
+               cantidad,
+               perfil,
+               peso
+        FROM procesos
+        {where_clause}
+        ORDER BY id DESC
+        """,
+        tuple(params),
+    ).fetchall()
+
+    if not rows:
+        return 0
+
+    meta = {}
+    for row_id, pos, obr, cantidad, perfil, peso in rows:
+        if not pos:
+            continue
+        key = (obr, pos)
+        if key not in meta:
+            meta[key] = {"cantidad": None, "perfil": "", "peso": None}
+
+        if meta[key]["cantidad"] is None and cantidad is not None:
+            meta[key]["cantidad"] = cantidad
+        perfil_txt = str(perfil or "").strip()
+        if not meta[key]["perfil"] and perfil_txt:
+            meta[key]["perfil"] = perfil_txt
+        if meta[key]["peso"] is None and peso is not None:
+            meta[key]["peso"] = peso
+
+    updates = 0
+    for row_id, pos, obr, cantidad, perfil, peso in rows:
+        if not pos:
+            continue
+        key = (obr, pos)
+        m = meta.get(key)
+        if not m:
+            continue
+
+        perfil_txt = str(perfil or "").strip()
+        new_cantidad = cantidad if cantidad is not None else m["cantidad"]
+        new_perfil = perfil_txt if perfil_txt else (m["perfil"] or None)
+        new_peso = peso if peso is not None else m["peso"]
+
+        if (
+            new_cantidad != cantidad
+            or new_perfil != (perfil_txt if perfil_txt else None)
+            or new_peso != peso
+        ):
+            db.execute(
+                """
+                UPDATE procesos
+                SET cantidad = ?, perfil = ?, peso = ?
+                WHERE id = ?
+                """,
+                (new_cantidad, new_perfil, new_peso, row_id),
+            )
+            updates += 1
+
+    if updates:
+        db.commit()
+    return updates
+
+
+def _normalizar_texto_busqueda(texto):
+    txt = unicodedata.normalize("NFKD", str(texto or ""))
+    txt = "".join(ch for ch in txt if not unicodedata.combining(ch))
+    txt = re.sub(r"[^a-zA-Z0-9]+", " ", txt).strip().lower()
+    return txt
+
+
+def _format_cantidad_1_decimal(valor):
+    txt = str(valor if valor is not None else "").strip()
+    if not txt:
+        return "-"
+    try:
+        num = float(txt.replace(",", "."))
+        return f"{num:.1f}"
+    except Exception:
+        return txt
+
+
+def _resolver_imagen_firma_empleado(nombre, firma_electronica, firmas_empleados_dir):
+    candidatos = []
+    try:
+        for nombre_archivo in os.listdir(firmas_empleados_dir):
+            ruta_archivo = os.path.join(firmas_empleados_dir, nombre_archivo)
+            ext = os.path.splitext(nombre_archivo)[1].lower()
+            if os.path.isfile(ruta_archivo) and ext in {".png", ".jpg", ".jpeg", ".webp"}:
+                candidatos.append(nombre_archivo)
+    except Exception:
+        return ""
+
+    if not candidatos:
+        return ""
+
+    firma_raw = str(firma_electronica or "").strip()
+    firma_norm = _normalizar_texto_busqueda(firma_raw)
+    nombre_norm = _normalizar_texto_busqueda(nombre)
+
+    codigo_m = re.search(r"\d+", firma_raw)
+    codigo = codigo_m.group(0).zfill(3) if codigo_m else ""
+    if codigo:
+        for archivo in sorted(candidatos, key=lambda x: x.lower()):
+            base = os.path.splitext(archivo)[0].lower().strip()
+            if base.startswith(codigo + "-") or base == codigo:
+                return os.path.join("Firmas empleados", archivo)
+
+    tokens_firma = [t for t in firma_norm.split() if len(t) >= 3]
+    tokens_nombre = [t for t in nombre_norm.split() if len(t) >= 3]
+    tokens_objetivo = list(dict.fromkeys(tokens_firma + tokens_nombre))
+
+    mejor_archivo = ""
+    mejor_puntaje = -1
+    for archivo in candidatos:
+        base_norm = _normalizar_texto_busqueda(os.path.splitext(archivo)[0])
+        puntaje = 0
+        for tok in tokens_objetivo:
+            if tok in base_norm:
+                puntaje += 1
+        if firma_norm and firma_norm in base_norm:
+            puntaje += 4
+        if nombre_norm and nombre_norm in base_norm:
+            puntaje += 2
+        if puntaje > mejor_puntaje:
+            mejor_puntaje = puntaje
+            mejor_archivo = archivo
+
+    if mejor_puntaje <= 0:
+        return ""
+
+    return os.path.join("Firmas empleados", mejor_archivo)
+
+
+def _url_firma_desde_path(firma_imagen_path, firmas_empleados_dir):
+    nombre_archivo = os.path.basename(str(firma_imagen_path or "").strip())
+    if not nombre_archivo:
+        return ""
+    ruta_abs = os.path.join(firmas_empleados_dir, nombre_archivo)
+    if not os.path.isfile(ruta_abs):
+        return ""
+    return f"/firma-supervisor/{quote(nombre_archivo)}"
+
+
+def _obtener_responsables_control(db, firmas_empleados_dir, inspector_firmas):
+    responsables = {}
+    rows = db.execute(
+        """
+        SELECT nombre, firma_electronica, firma_imagen_path
+        FROM empleados_parte
+        WHERE (
+            LOWER(TRIM(COALESCE(puesto_tipo, ''))) = 'supervisor'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%supervisor%'
+        )
+          AND TRIM(COALESCE(nombre, '')) <> ''
+          AND TRIM(COALESCE(firma_electronica, '')) <> ''
+        ORDER BY nombre
+        """
+    ).fetchall()
+
+    for nombre, firma, firma_imagen_path in rows:
+        nombre_txt = str(nombre or "").strip()
+        firma_txt = str(firma or "").strip()
+        if not nombre_txt or not firma_txt:
+            continue
+
+        firma_path = str(firma_imagen_path or "").strip() or _resolver_imagen_firma_empleado(
+            nombre_txt,
+            firma_txt,
+            firmas_empleados_dir,
+        )
+        responsables[nombre_txt] = {
+            "firma": firma_txt,
+            "firma_url": _url_firma_desde_path(firma_path, firmas_empleados_dir),
+        }
+
+    if responsables:
+        return responsables
+
+    for nombre_txt, firma_txt in inspector_firmas.items():
+        firma_path = _resolver_imagen_firma_empleado(nombre_txt, firma_txt, firmas_empleados_dir)
+        responsables[nombre_txt] = {
+            "firma": firma_txt,
+            "firma_url": _url_firma_desde_path(firma_path, firmas_empleados_dir),
+        }
+    return responsables
+
+
+def _ruta_firma_responsable(responsables_control, responsable, firmas_empleados_dir):
+    responsable_txt = str(responsable or "").strip()
+    info = responsables_control.get(responsable_txt) or {}
+    if not info and responsable_txt:
+        objetivo = _normalizar_texto_busqueda(responsable_txt)
+        for nombre_k, info_k in (responsables_control or {}).items():
+            if _normalizar_texto_busqueda(nombre_k) == objetivo:
+                info = info_k or {}
+                break
+
+    firma_url = str(info.get("firma_url") or "").strip()
+    archivo = ""
+    if "/firma-supervisor/" in firma_url:
+        archivo = unquote(firma_url.rsplit("/", 1)[-1])
+    if not archivo:
+        firma_rel = _resolver_imagen_firma_empleado(
+            responsable_txt,
+            info.get("firma", ""),
+            firmas_empleados_dir,
+        )
+        archivo = os.path.basename(str(firma_rel or "").strip())
+    if not archivo:
+        return ""
+    ruta = os.path.join(firmas_empleados_dir, archivo)
+    return ruta if os.path.isfile(ruta) else ""
+
+
+def _obtener_operarios_disponibles(db):
+    rows = db.execute(
+        """
+    SELECT DISTINCT TRIM(COALESCE(nombre, '')) AS nombre
+        FROM empleados_parte
+                WHERE (
+                                LOWER(TRIM(COALESCE(puesto_tipo, ''))) = 'operario'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%operario%'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%soldador%'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%armador%'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%medio%'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%ayudante%'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%pintor%'
+                                OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%subcontrato%'
+                            )
+          AND TRIM(COALESCE(nombre, '')) <> ''
+                ORDER BY nombre ASC
+        """
+    ).fetchall()
+
+    operarios = [str(r[0]).strip() for r in rows if r and str(r[0]).strip()]
+    if operarios:
+        return operarios
+
+    rows = db.execute(
+        """
+        SELECT DISTINCT TRIM(operario) AS operario
+        FROM procesos
+        WHERE TRIM(COALESCE(operario, '')) <> ''
+        ORDER BY operario
+        """
+    ).fetchall()
+    return [str(r[0]).strip() for r in rows if r and str(r[0]).strip()]
+
+
+def _obtener_operarios_con_puesto(db):
+    """Returns list of (nombre, puesto) sorted by nombre, for use in filtered dropdowns."""
+    rows = db.execute(
+        """
+        SELECT DISTINCT TRIM(COALESCE(nombre, '')) AS nombre,
+               LOWER(TRIM(COALESCE(puesto, ''))) AS puesto
+        FROM empleados_parte
+        WHERE (
+            LOWER(TRIM(COALESCE(puesto_tipo, ''))) = 'operario'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%operario%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%soldador%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%armador%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%medio%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%ayudante%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%pintor%'
+            OR LOWER(TRIM(COALESCE(puesto, ''))) LIKE '%subcontrato%'
+        )
+        AND TRIM(COALESCE(nombre, '')) <> ''
+        ORDER BY nombre ASC
+        """
+    ).fetchall()
+
+    result = [(str(r[0]).strip(), str(r[1]).strip()) for r in rows if r and str(r[0]).strip()]
+    if result:
+        return result
+
+    rows = db.execute(
+        """
+        SELECT DISTINCT TRIM(operario) AS operario
+        FROM procesos
+        WHERE TRIM(COALESCE(operario, '')) <> ''
+        ORDER BY operario
+        """
+    ).fetchall()
+    return [(str(r[0]).strip(), '') for r in rows if r and str(r[0]).strip()]
