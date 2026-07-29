@@ -152,6 +152,36 @@ def _save_config_obra(db, obra, pmo, pcons, pimp):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# COSTO DIRECTO EJECUTADO (OTs con control de despacho)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _calc_cd_ejecutado(db, ot_ids):
+    """Costo directo PREVISTO de las OTs que tienen al menos un control de despacho.
+    Representa el valor presupuestado del trabajo realmente terminado/despachado."""
+    if not ot_ids:
+        return 0.0
+    placeholders = ",".join("?" * len(ot_ids))
+    despacho_ots = {
+        r[0] for r in db.execute(
+            f"SELECT DISTINCT ot_id FROM control_despacho WHERE ot_id IN ({placeholders})",
+            list(ot_ids),
+        ).fetchall()
+    }
+    if not despacho_ots:
+        return 0.0
+    total = 0.0
+    for oid in despacho_ots:
+        row = db.execute(
+            "SELECT COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)+"
+            "COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0) "
+            "FROM economico_presupuesto WHERE ot_id=?", (oid,)
+        ).fetchone()
+        if row:
+            total += float(row[0] or 0)
+    return total
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CALC ECONÓMICO POR OT
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -393,6 +423,7 @@ def economico_dashboard():
             if d["p"]["pv"]>0: ts["ms"] += (d["p"]["pv"]-d["r"]["tot"])/d["p"]["pv"]*100
 
         agg = _aggregate_obra(ots_data)
+        cd_ejecutado = _calc_cd_ejecutado(db, [d["ot_id"] for d in ots_data])
         mg  = ((agg["p_pv"]-agg["r_tot"])/agg["p_pv"]*100.0) if agg["p_pv"]>0 else 0.0
         mc  = _cm(mg)
         af  = agg["avf"]; ae = agg["ave"]
@@ -417,6 +448,7 @@ def economico_dashboard():
   <div style="padding:12px 18px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;border-bottom:1px solid #f1f5f9;">
     <div><div style="font-size:.68rem;color:#9ca3af;font-weight:700;">KG</div><div style="font-weight:700;">{agg['kg']:,.0f}</div></div>
     <div><div style="font-size:.68rem;color:#9ca3af;font-weight:700;">PV PREVISTO</div><div style="font-weight:700;color:#6366f1;">{_m(agg['p_pv'])}</div></div>
+    <div><div style="font-size:.68rem;color:#9ca3af;font-weight:700;">CD EJECUTADO</div><div style="font-weight:700;color:#0891b2;" title="Costo directo previsto de OTs con despacho conforme">{_m(cd_ejecutado)}</div><div style="font-size:.65rem;color:#9ca3af;">{_pct(cd_ejecutado/agg['p_cd']*100 if agg.get('p_cd',0)>0 else 0)} del prev.</div></div>
     <div><div style="font-size:.68rem;color:#9ca3af;font-weight:700;">COSTO REAL</div><div style="font-weight:700;">{_m(agg['r_tot'])}</div></div>
     <div><div style="font-size:.68rem;color:#9ca3af;font-weight:700;">MARGEN REAL</div><div style="font-weight:800;color:{mc};font-size:.98rem;">{_pct(mg)}</div></div>
     <div><div style="font-size:.68rem;color:#9ca3af;font-weight:700;">$/KG REAL</div><div style="font-weight:700;">{_m(agg['r_tot']/agg['kg'] if agg['kg']>0 else 0)}</div></div>
@@ -554,6 +586,7 @@ def economico_obra(obra_nombre):
     total_estructura_real = float(total_mant_real or 0.0) + float(total_gf_real or 0.0)
     gg_asig_obra = (total_estructura_real * (agg["r_cd"] / total_prod_cd)) if total_prod_cd > 0 else 0.0
     r_tot_adj = agg["r_tot"] + gg_asig_obra
+    cd_ejecutado = _calc_cd_ejecutado(db, [d["ot_id"] for d in ots_data])
     mg  = ((agg["p_pv"]-r_tot_adj)/agg["p_pv"]*100.0) if agg["p_pv"]>0 else 0.0
     mc  = _cm(mg)
     af  = agg["avf"]; ae = agg["ave"]
@@ -640,6 +673,10 @@ def economico_obra(obra_nombre):
     <div style="flex:1;min-width:120px;border-top:3px solid #6366f1;padding-top:8px;">
       <div style="font-size:.66rem;color:#9ca3af;font-weight:700;">PRECIO VENTA PREV.</div>
       <div style="font-size:1.1rem;font-weight:800;color:#6366f1;">{_m(agg['p_pv'])}</div></div>
+    <div style="flex:1;min-width:130px;border-top:3px solid #0891b2;padding-top:8px;">
+      <div style="font-size:.66rem;color:#9ca3af;font-weight:700;">CD EJECUTADO</div>
+      <div style="font-size:1.1rem;font-weight:800;color:#0891b2;" title="Costo directo previsto de OTs con control de despacho conforme">{_m(cd_ejecutado)}</div>
+      <div style="font-size:.7rem;color:#9ca3af;">{_pct(cd_ejecutado/agg['p_cd']*100 if agg.get('p_cd',0)>0 else 0)} del CD prev.</div></div>
     <div style="flex:1;min-width:120px;border-top:3px solid #1e293b;padding-top:8px;">
       <div style="font-size:.66rem;color:#9ca3af;font-weight:700;">COSTO REAL TOTAL</div>
       <div style="font-size:1.1rem;font-weight:800;color:#1e293b;">{_m(r_tot_adj)}</div></div>
