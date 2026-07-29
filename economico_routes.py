@@ -3,7 +3,7 @@ Módulo Económico — Costos previstos vs reales agrupados por Obra
 KPIs: $/kg · Margen · Desvíos por rubro · Avance físico vs económico
 """
 import html as html_lib
-from flask import Blueprint, request
+from flask import Blueprint, redirect, request
 
 from db_utils import get_db
 
@@ -100,6 +100,12 @@ def _ensure_schema(db):
         updated_at DATETIME   DEFAULT CURRENT_TIMESTAMP
     )""")
     db.commit()
+    # Cierre económico independiente del cierre de producción
+    try:
+        db.execute("ALTER TABLE ordenes_trabajo ADD COLUMN fecha_cierre_economico DATETIME DEFAULT NULL")
+        db.commit()
+    except Exception:
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -349,14 +355,25 @@ def economico_dashboard():
                 mensaje = f"Tasas de '{obra_cfg}' guardadas."
             except Exception as exc: error = str(exc)
 
-    ots = db.execute("SELECT id,cliente,obra,titulo,tipo_estructura FROM ordenes_trabajo ORDER BY obra,id").fetchall()
+    vista = (request.args.get("vista") or "activas").strip()
+    if vista == "cerradas":
+        _fce_where = "WHERE fecha_cierre_economico IS NOT NULL"
+    elif vista == "todas":
+        _fce_where = ""
+    else:
+        vista = "activas"
+        _fce_where = "WHERE fecha_cierre_economico IS NULL"
+    ots = db.execute(
+        f"SELECT id,cliente,obra,titulo,tipo_estructura,fecha_cierre_economico "
+        f"FROM ordenes_trabajo {_fce_where} ORDER BY obra,id"
+    ).fetchall()
 
     obras_dict = {}
-    for ot_id, cliente, obra, titulo, tipo in ots:
+    for ot_id, cliente, obra, titulo, tipo, fce in ots:
         k = str(obra or "Sin obra").strip()
         if k not in obras_dict:
             obras_dict[k] = {"cliente": cliente or "", "ots": []}
-        obras_dict[k]["ots"].append({"id": ot_id, "titulo": titulo, "tipo": tipo})
+        obras_dict[k]["ots"].append({"id": ot_id, "titulo": titulo, "tipo": tipo, "fce": fce})
 
     tipo_stats = {}
     obras_html = ""
@@ -367,7 +384,7 @@ def economico_dashboard():
         ots_data = []
         for oi in info["ots"]:
             d = _calc_economico(db, oi["id"], cfg)
-            d["ot_id"] = oi["id"]; d["tipo"] = oi["tipo"]
+            d["ot_id"] = oi["id"]; d["tipo"] = oi["tipo"]; d["fce"] = oi.get("fce")
             ots_data.append(d)
             tl = str(oi["tipo"] or "Sin tipo")
             if tl not in tipo_stats:
@@ -382,7 +399,9 @@ def economico_dashboard():
         ac  = "#991b1b" if ae>af+5 else ("#166534" if ae<=af else "#92400e")
 
         badges = " ".join(
-            f'<a href="/modulo/economico/ot/{d["ot_id"]}" style="font-size:.73rem;background:#e0e7ff;color:#4338ca;padding:2px 7px;border-radius:999px;text-decoration:none;font-weight:600;">OT {d["ot_id"]}</a>'
+            (f'<a href="/modulo/economico/ot/{d["ot_id"]}" style="font-size:.73rem;background:#fee2e2;color:#991b1b;padding:2px 7px;border-radius:999px;text-decoration:none;font-weight:600;">🔒 OT {d["ot_id"]}</a>'
+             if d.get("fce") else
+             f'<a href="/modulo/economico/ot/{d["ot_id"]}" style="font-size:.73rem;background:#e0e7ff;color:#4338ca;padding:2px 7px;border-radius:999px;text-decoration:none;font-weight:600;">OT {d["ot_id"]}</a>')
             for d in ots_data)
 
         obras_html += f"""
@@ -423,6 +442,16 @@ def economico_dashboard():
   </form>
 </div>"""
 
+    _ta = ("background:#6366f1;color:#fff;" if vista == "activas" else "background:#e0e7ff;color:#4338ca;")
+    _tc = ("background:#991b1b;color:#fff;" if vista == "cerradas" else "background:#fee2e2;color:#991b1b;")
+    _tt = ("background:#374151;color:#fff;" if vista == "todas" else "background:#f1f5f9;color:#374151;")
+    _tabs_html = (
+        f'<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">'
+        f'<a href="/modulo/economico?vista=activas" style="font-size:.82rem;padding:5px 14px;border-radius:20px;text-decoration:none;font-weight:700;{_ta}">🟢 Activas</a>'
+        f'<a href="/modulo/economico?vista=cerradas" style="font-size:.82rem;padding:5px 14px;border-radius:20px;text-decoration:none;font-weight:700;{_tc}">🔒 Cerradas económicamente</a>'
+        f'<a href="/modulo/economico?vista=todas" style="font-size:.82rem;padding:5px 14px;border-radius:20px;text-decoration:none;font-weight:700;{_tt}">📋 Todas</a>'
+        f'</div>'
+    )
     tipo_cards = "".join(
         f'<div style="background:#fff;border-radius:9px;box-shadow:0 1px 6px rgba(0,0,0,.06);padding:14px 16px;flex:1;min-width:160px;">'
         f'<div style="font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;">{_E(tl)}</div>'
@@ -451,6 +480,7 @@ def economico_dashboard():
 </div>
 <div class="body">
   {msg}{err}
+  {_tabs_html}
   {"<div style='display:flex;flex-wrap:wrap;gap:10px;margin-bottom:6px;'>" + tipo_cards + "</div>" if tipo_cards else ""}
   {obras_html if obras_html else "<p style='color:#9ca3af;'>Sin órdenes de trabajo.</p>"}
 </div></body></html>"""
@@ -475,15 +505,15 @@ def economico_obra(obra_nombre):
         except Exception as exc: error = str(exc)
 
     cfg = _get_config_obra(db, obra_nombre)
-    ots_rows = db.execute("SELECT id,cliente,titulo,tipo_estructura,estado FROM ordenes_trabajo WHERE obra=? ORDER BY id", (obra_nombre,)).fetchall()
+    ots_rows = db.execute("SELECT id,cliente,titulo,tipo_estructura,estado,fecha_cierre_economico FROM ordenes_trabajo WHERE obra=? ORDER BY id", (obra_nombre,)).fetchall()
     if not ots_rows:
         return f"<p>Sin OTs para <b>{_E(obra_nombre)}</b>.</p><a href='/modulo/economico'>← Volver</a>", 404
 
     cliente = ots_rows[0][1] or ""
     ots_data = []
-    for ot_id, _, titulo, tipo, estado in ots_rows:
+    for ot_id, _, titulo, tipo, estado, fce in ots_rows:
         d = _calc_economico(db, ot_id, cfg)
-        d.update({"ot_id":ot_id,"titulo":titulo or "","tipo":tipo or "","estado":estado or ""})
+        d.update({"ot_id":ot_id,"titulo":titulo or "","tipo":tipo or "","estado":estado or "","fce":fce})
         ots_data.append(d)
 
     agg = _aggregate_obra(ots_data)
@@ -535,8 +565,17 @@ def economico_obra(obra_nombre):
         pv = d["p"]["pv"]; rt = d["r"]["tot"]
         mg_ot = ((pv-rt)/pv*100.0) if pv>0 else 0.0
         ac_ot = "#991b1b" if d["ave"]>d["avf"]+5 else "#166534"
+        _fce_badge_obra = ('<span style="font-size:.65rem;background:#fee2e2;color:#991b1b;padding:1px 5px;border-radius:999px;margin-left:4px;">🔒</span>'
+                          if d.get("fce") else '')
+        _eco_btn = (
+            f'<form method="post" action="/modulo/economico/ot/{d["ot_id"]}/reabrir-economico" style="margin:0;display:inline;">'
+            f'<button type="submit" style="font-size:.7rem;padding:2px 7px;background:#fef3c7;color:#92400e;border:none;border-radius:4px;cursor:pointer;">🔓 Reabrir</button></form>'
+        ) if d.get("fce") else (
+            f'<form method="post" action="/modulo/economico/ot/{d["ot_id"]}/cerrar-economico" style="margin:0;display:inline;">'
+            f'<button type="submit" style="font-size:.7rem;padding:2px 7px;background:#fee2e2;color:#991b1b;border:none;border-radius:4px;cursor:pointer;">🔒 Cerrar</button></form>'
+        )
         ots_filas += f"""<tr>
-          <td><a href="/modulo/economico/ot/{d['ot_id']}" style="font-weight:700;color:#6366f1;text-decoration:none;">OT {d['ot_id']}</a></td>
+          <td><a href="/modulo/economico/ot/{d['ot_id']}" style="font-weight:700;color:#6366f1;text-decoration:none;">OT {d['ot_id']}</a>{_fce_badge_obra}</td>
           <td style="font-size:.78rem;">{_E(d['titulo'])}</td>
           <td><span style="font-size:.7rem;background:#ede9fe;color:#5b21b6;padding:1px 6px;border-radius:999px;">{_E(d['tipo'])}</span></td>
           <td style="text-align:right;">{d['kg']:,.1f}</td>
@@ -546,7 +585,7 @@ def economico_obra(obra_nombre):
           <td style="text-align:right;font-weight:700;color:{_cm(mg_ot)};">{_pct(mg_ot)}</td>
           <td>{_pb(d['avf'],'#3b82f6',7)}</td>
           <td style="color:{ac_ot};font-size:.8rem;">{_pct(d['ave'])}</td>
-          <td><a href="/modulo/economico/ot/{d['ot_id']}" style="font-size:.75rem;padding:3px 8px;background:#6366f1;color:#fff;border-radius:5px;text-decoration:none;">Editar</a></td>
+          <td style="white-space:nowrap;"><a href="/modulo/economico/ot/{d['ot_id']}" style="font-size:.75rem;padding:3px 8px;background:#6366f1;color:#fff;border-radius:5px;text-decoration:none;">Editar</a> {_eco_btn}</td>
         </tr>"""
     ots_filas += f"""<tr style="background:#f1f5f9;font-weight:700;">
       <td colspan="3">TOTAL OBRA</td>
@@ -654,13 +693,14 @@ def economico_obra(obra_nombre):
 @economico_bp.route("/modulo/economico/ot/<int:ot_id>", methods=["GET", "POST"])
 def economico_ot(ot_id):
     db = get_db(); _ensure_schema(db)
-    ot = db.execute("SELECT id,cliente,obra,titulo,tipo_estructura,estado,COALESCE(es_mantenimiento,0) FROM ordenes_trabajo WHERE id=?", (ot_id,)).fetchone()
+    ot = db.execute("SELECT id,cliente,obra,titulo,tipo_estructura,estado,COALESCE(es_mantenimiento,0),fecha_cierre_economico FROM ordenes_trabajo WHERE id=?", (ot_id,)).fetchone()
     if not ot:
         return "OT no encontrada", 404
-    _, cliente, obra, titulo, tipo, estado, es_mantenimiento = ot
+    _, cliente, obra, titulo, tipo, estado, es_mantenimiento, fce = ot
     obra = obra or ""
     cfg  = _get_config_obra(db, obra)
-    mensaje = error = ""
+    mensaje = (request.args.get("mensaje") or "").strip()
+    error = ""
 
     if request.method == "POST":
         accion = (request.form.get("accion") or "").strip()
@@ -806,12 +846,22 @@ def economico_ot(ot_id):
     else:
         _historial_html = '<div style="color:#9ca3af;font-size:.8rem;">Sin entradas cargadas aún.</div>'
 
+    if fce:
+        _fce_badge_ot = '<span style="font-size:.8rem;background:#fee2e2;color:#991b1b;padding:3px 10px;border-radius:20px;font-weight:700;">🔒 Cerrada económicamente</span>'
+        _fce_btn_ot = (f'<form method="post" action="/modulo/economico/ot/{ot_id}/reabrir-economico" style="margin:0;display:inline;">'
+                       f'<button type="submit" style="font-size:.8rem;padding:5px 13px;background:#fef3c7;color:#92400e;border:none;border-radius:6px;cursor:pointer;font-weight:700;">🔓 Reabrir</button></form>')
+    else:
+        _fce_badge_ot = '<span style="font-size:.8rem;background:#dcfce7;color:#166534;padding:3px 10px;border-radius:20px;font-weight:700;">🟢 Abierta económicamente</span>'
+        _fce_btn_ot = (f'<form method="post" action="/modulo/economico/ot/{ot_id}/cerrar-economico" style="margin:0;display:inline;">'
+                       f'<button type="submit" style="font-size:.8rem;padding:5px 13px;background:#fee2e2;color:#991b1b;border:none;border-radius:6px;cursor:pointer;font-weight:700;">🔒 Cerrar económico</button></form>')
+
     return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Económico OT {ot_id}</title>
 <style>{_CSS_COMMON}</style></head><body>
 <div class="hdr">
   <div><h1>💰 OT {ot_id} — {_E(obra)} / {_E(cliente or '')}</h1>
-    <div style="font-size:.7rem;opacity:.8;margin-top:2px;">{_E(titulo or '')} · {_E(tipo or 'Sin tipo')}</div></div>
+    <div style="font-size:.7rem;opacity:.8;margin-top:2px;">{_E(titulo or '')} · {_E(tipo or 'Sin tipo')}</div>
+    <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">{_fce_badge_ot} {_fce_btn_ot}</div></div>
   <div style="display:flex;gap:6px;flex-wrap:wrap;">
     <a href="/modulo/economico/obra/{_E(obra)}">← {_E(obra)}</a>
     <a href="/modulo/economico">Módulo</a></div>
@@ -908,6 +958,32 @@ def economico_ot(ot_id):
     </table></div>
   </div>
 </div></body></html>"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RUTAS: CIERRE ECONÓMICO DE OT (independiente del cierre de producción)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@economico_bp.route("/modulo/economico/ot/<int:ot_id>/cerrar-economico", methods=["POST"])
+def economico_cerrar_ot(ot_id):
+    db = get_db(); _ensure_schema(db)
+    ot = db.execute("SELECT id FROM ordenes_trabajo WHERE id=?", (ot_id,)).fetchone()
+    if not ot:
+        return redirect("/modulo/economico")
+    db.execute("UPDATE ordenes_trabajo SET fecha_cierre_economico=CURRENT_TIMESTAMP WHERE id=?", (ot_id,))
+    db.commit()
+    return redirect(f"/modulo/economico/ot/{ot_id}?mensaje=OT+cerrada+econ%C3%B3micamente")
+
+
+@economico_bp.route("/modulo/economico/ot/<int:ot_id>/reabrir-economico", methods=["POST"])
+def economico_reabrir_ot(ot_id):
+    db = get_db(); _ensure_schema(db)
+    ot = db.execute("SELECT id FROM ordenes_trabajo WHERE id=?", (ot_id,)).fetchone()
+    if not ot:
+        return redirect("/modulo/economico")
+    db.execute("UPDATE ordenes_trabajo SET fecha_cierre_economico=NULL WHERE id=?", (ot_id,))
+    db.commit()
+    return redirect(f"/modulo/economico/ot/{ot_id}?mensaje=OT+reabierta+econ%C3%B3micamente")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
