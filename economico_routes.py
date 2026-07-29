@@ -1536,6 +1536,8 @@ def economico_dashboard_ejecutivo():
     n_criticos  = sum(1 for o in obras_data if o["sem_lbl"] == "Crítico")
     costo_cd      = sum(o["r_cd"]          for o in obras_data)
     costo_cd_prev = sum(o["agg"]["p_cd"]   for o in obras_data)
+    _all_prod_ot_ids = [oi["id"] for info in obras_dict.values() for oi in info["ots"]]
+    cd_terminado  = _calc_cd_ejecutado(db, _all_prod_ot_ids)
     ae_prom       = sum(o["ae"]             for o in obras_data) / n_obras
     # Margen proyectado del portfolio: ponderado por valor de obra (mismo criterio
     # que la fila TOTAL). Evita que obras sin avance (af=0, costo=0) inflen el promedio
@@ -1858,6 +1860,8 @@ def economico_dashboard_ejecutivo():
         _kpi("Margen prom. proyectado",  f"{'🟢' if mg_prom>=10 else '🟠' if mg_prom>=5 else '🔴'} {mg_prom:.1f}%",
              _cm(mg_prom), "a la finalización") +
         _kpi("Costo directo ejecutado",  _m(costo_cd),      "#1e293b", "acumulado") +
+        _kpi("CD terminado (despacho)",  _m(cd_terminado),  "#0891b2",
+             f"{_pct(cd_terminado/costo_cd_prev*100 if costo_cd_prev>0 else 0)} del CD prev.") +
         _kpi("Costo directo previsto",   _m(costo_cd_prev), "#3b82f6", "presupuestado") +
         _kpi("Av. económico promedio",   f"{ae_prom:.1f}%", "#3b82f6", "sobre presupuesto") +
         _kpi("Riesgo global",            f"{riesgo_em} {riesgo_lbl}", riesgo_c, f"mg prom. {mg_prom:.1f}% · {n_criticos} obra{'s' if n_criticos!=1 else ''} crítica{'s' if n_criticos!=1 else ''}")
