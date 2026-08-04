@@ -1616,7 +1616,7 @@ def admin_permisos_usuario(user_id):
         ("/modulo/tablero-ejecutivo",   "Tablero Ejecutivo Integral"),
         ("/modulo/analisis-estrategico","Análisis Estratégico"),
         ("/modulo/auditoria-obra",      "Auditoría de Obra"),
-        ("/modulo/economico",           "💰 Módulo Económico"),
+        ("/modulo/economico/dashboard-ejecutivo", "💰 Módulo Económico"),
     ]
 
     mensaje = ""
@@ -2193,7 +2193,7 @@ def dashboard():
             "desc": "Carga de auditorías de obra por secciones y generación de informe editable en Word",
         },
         {
-            "href": "/modulo/economico",
+            "href": "/modulo/economico/dashboard-ejecutivo",
             "css": "economico",
             "icon": "💰",
             "titulo": "Módulo Económico",

@@ -106,6 +106,17 @@ def _ensure_schema(db):
         db.commit()
     except Exception:
         pass
+    # Nuevos campos de costo directo previsto: subcontratos y fletes
+    try:
+        db.execute("ALTER TABLE economico_presupuesto ADD COLUMN subcontratos_previsto REAL DEFAULT 0")
+        db.commit()
+    except Exception:
+        pass
+    try:
+        db.execute("ALTER TABLE economico_presupuesto ADD COLUMN fletes_previsto REAL DEFAULT 0")
+        db.commit()
+    except Exception:
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -188,17 +199,20 @@ def _calc_cd_ejecutado(db, ot_ids):
 def _calc_economico(db, ot_id, cfg):
     pres = db.execute(
         """SELECT mat_previsto,pintura_previsto,mo_previsto,consumibles_previsto,
-                  ingenieria_previsto,gastos_gen_previsto,impuestos_previsto,beneficio_previsto
+                  ingenieria_previsto,COALESCE(subcontratos_previsto,0),COALESCE(fletes_previsto,0),
+                  gastos_gen_previsto,impuestos_previsto,beneficio_previsto
            FROM economico_presupuesto WHERE ot_id=?""", (ot_id,)).fetchone()
-    p_mat  = float(pres[0] or 0) if pres else 0.0
-    p_pint = float(pres[1] or 0) if pres else 0.0
-    p_mo   = float(pres[2] or 0) if pres else 0.0
-    p_cons = float(pres[3] or 0) if pres else 0.0
-    p_ing  = float(pres[4] or 0) if pres else 0.0
-    p_gg   = float(pres[5] or 0) if pres else 0.0
-    p_imp  = float(pres[6] or 0) if pres else 0.0
-    p_ben  = float(pres[7] or 0) if pres else 0.0
-    p_cd = p_mat + p_pint + p_mo + p_cons + p_ing
+    p_mat      = float(pres[0] or 0) if pres else 0.0
+    p_pint     = float(pres[1] or 0) if pres else 0.0
+    p_mo       = float(pres[2] or 0) if pres else 0.0
+    p_cons     = float(pres[3] or 0) if pres else 0.0
+    p_ing      = float(pres[4] or 0) if pres else 0.0
+    p_sub_prev = float(pres[5] or 0) if pres else 0.0
+    p_flet_prev= float(pres[6] or 0) if pres else 0.0
+    p_gg       = float(pres[7] or 0) if pres else 0.0
+    p_imp      = float(pres[8] or 0) if pres else 0.0
+    p_ben      = float(pres[9] or 0) if pres else 0.0
+    p_cd = p_mat + p_pint + p_mo + p_cons + p_ing + p_sub_prev + p_flet_prev
     p_tc = p_cd + p_gg + p_imp
     p_pv = p_tc + p_ben
 
@@ -209,6 +223,7 @@ def _calc_economico(db, ot_id, cfg):
     r_mat      = _rm.get("Materiales",   0.0)
     r_pint     = _rm.get("Pintura",      0.0)
     r_sub      = _rm.get("Subcontratos", 0.0)
+    r_flete    = _rm.get("Fletes",       0.0)
     r_ing_real = _rm.get("Ingeniería",   0.0)
 
     hh = db.execute("SELECT COALESCE(SUM(horas),0) FROM partes_trabajo WHERE ot_id=?", (ot_id,)).fetchone()
@@ -216,7 +231,7 @@ def _calc_economico(db, ot_id, cfg):
 
     r_mo   = hh_total * cfg["precio_hora_mo"]
     r_cons = hh_total * cfg["precio_hora_cons"]
-    r_cd   = r_mat + r_pint + r_sub + r_mo + r_cons + r_ing_real
+    r_cd   = r_mat + r_pint + r_sub + r_flete + r_mo + r_cons + r_ing_real
     r_imp  = r_cd * cfg["pct_impuestos"] / 100.0
     r_tot  = r_cd + r_imp
 
@@ -232,8 +247,9 @@ def _calc_economico(db, ot_id, cfg):
 
     return {
         "p":  {"mat":p_mat,"pintura":p_pint,"mo":p_mo,"cons":p_cons,
-               "ing":p_ing,"gg":p_gg,"imp":p_imp,"ben":p_ben,"cd":p_cd,"tc":p_tc,"pv":p_pv},
-        "rm": {"mat":r_mat,"pintura":r_pint,"sub":r_sub,"ing":r_ing_real},
+               "ing":p_ing,"sub":p_sub_prev,"flete":p_flet_prev,
+               "gg":p_gg,"imp":p_imp,"ben":p_ben,"cd":p_cd,"tc":p_tc,"pv":p_pv},
+        "rm": {"mat":r_mat,"pintura":r_pint,"sub":r_sub,"flete":r_flete,"ing":r_ing_real},
         "ra": {"mo":r_mo,"cons":r_cons,"imp":r_imp},
         "r":  {"cd":r_cd,"tot":r_tot},
         "hh": hh_total, "kg": kg, "avf": avf,
@@ -242,16 +258,20 @@ def _calc_economico(db, ot_id, cfg):
 
 
 def _aggregate_obra(ots_data):
-    agg = {k:0.0 for k in ["p_mat","p_pint","p_mo","p_cons","p_ing","p_gg","p_imp","p_ben",
-                            "p_cd","p_tc","p_pv","r_mat","r_pint","r_sub","r_ing","r_mo","r_cons",
+    agg = {k:0.0 for k in ["p_mat","p_pint","p_mo","p_cons","p_ing","p_sub","p_flete",
+                            "p_gg","p_imp","p_ben",
+                            "p_cd","p_tc","p_pv","r_mat","r_pint","r_sub","r_flete","r_ing","r_mo","r_cons",
                             "r_imp","r_cd","r_tot","hh","kg"]}
     avf_list = []
     for d in ots_data:
         for k,v in [("p_mat",d["p"]["mat"]),("p_pint",d["p"]["pintura"]),("p_mo",d["p"]["mo"]),
-                    ("p_cons",d["p"]["cons"]),("p_ing",d["p"]["ing"]),("p_gg",d["p"]["gg"]),
+                    ("p_cons",d["p"]["cons"]),("p_ing",d["p"]["ing"]),
+                    ("p_sub",d["p"]["sub"]),("p_flete",d["p"]["flete"]),
+                    ("p_gg",d["p"]["gg"]),
                     ("p_imp",d["p"]["imp"]),("p_ben",d["p"]["ben"]),("p_cd",d["p"]["cd"]),
                     ("p_tc",d["p"]["tc"]),("p_pv",d["p"]["pv"]),
-                    ("r_mat",d["rm"]["mat"]),("r_pint",d["rm"]["pintura"]),("r_sub",d["rm"]["sub"]),("r_ing",d["rm"]["ing"]),
+                    ("r_mat",d["rm"]["mat"]),("r_pint",d["rm"]["pintura"]),("r_sub",d["rm"]["sub"]),
+                    ("r_flete",d["rm"]["flete"]),("r_ing",d["rm"]["ing"]),
                     ("r_mo",d["ra"]["mo"]),("r_cons",d["ra"]["cons"]),
                     ("r_imp",d["ra"]["imp"]),("r_cd",d["r"]["cd"]),("r_tot",d["r"]["tot"]),
                     ("hh",d["hh"]),("kg",d["kg"])]:
@@ -633,7 +653,8 @@ def economico_obra(obra_nombre):
     for nombre, prev, real in [
         ("Materiales",agg["p_mat"],agg["r_mat"]),("Pintura",agg["p_pint"],agg["r_pint"]),
         ("Mano de Obra",agg["p_mo"],agg["r_mo"]),("Consumibles",agg["p_cons"],agg["r_cons"]),
-        ("Ingeniería",agg["p_ing"],agg["r_ing"]),("Subcontratos",0.0,agg["r_sub"]),
+        ("Ingeniería",agg["p_ing"],agg["r_ing"]),("Subcontratos",agg["p_sub"],agg["r_sub"]),
+        ("Fletes",agg["p_flete"],agg["r_flete"]),
         ("Gastos Generales",agg["p_gg"],gg_asig_obra),("Impuestos",agg["p_imp"],agg["r_imp"])]:
         da = real-prev; dp = (da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c = _cd(da); ic = "▲" if da>0 else ("▼" if da<0 else "–")
@@ -745,18 +766,21 @@ def economico_ot(ot_id):
             if accion == "guardar_presupuesto":
                 vals = [float(request.form.get(c) or 0) for c in
                         ["mat_previsto","pintura_previsto","mo_previsto","consumibles_previsto",
-                         "ingenieria_previsto","gastos_gen_previsto","impuestos_previsto","beneficio_previsto"]]
+                         "ingenieria_previsto","subcontratos_previsto","fletes_previsto",
+                         "gastos_gen_previsto","impuestos_previsto","beneficio_previsto"]]
                 ex = db.execute("SELECT id FROM economico_presupuesto WHERE ot_id=?", (ot_id,)).fetchone()
                 if ex:
                     db.execute("""UPDATE economico_presupuesto SET
                         mat_previsto=?,pintura_previsto=?,mo_previsto=?,consumibles_previsto=?,
-                        ingenieria_previsto=?,gastos_gen_previsto=?,impuestos_previsto=?,beneficio_previsto=?,
+                        ingenieria_previsto=?,subcontratos_previsto=?,fletes_previsto=?,
+                        gastos_gen_previsto=?,impuestos_previsto=?,beneficio_previsto=?,
                         updated_at=CURRENT_TIMESTAMP WHERE ot_id=?""", (*vals, ot_id))
                 else:
                     db.execute("""INSERT INTO economico_presupuesto
                         (ot_id,mat_previsto,pintura_previsto,mo_previsto,consumibles_previsto,
-                         ingenieria_previsto,gastos_gen_previsto,impuestos_previsto,beneficio_previsto)
-                        VALUES(?,?,?,?,?,?,?,?,?)""", (ot_id, *vals))
+                         ingenieria_previsto,subcontratos_previsto,fletes_previsto,
+                         gastos_gen_previsto,impuestos_previsto,beneficio_previsto)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (ot_id, *vals))
                 db.commit(); mensaje = "Presupuesto guardado."
             elif accion == "agregar_costo_mensual":
                 mes_c    = (request.form.get("mes") or "").strip()
@@ -841,7 +865,8 @@ def economico_ot(ot_id):
     for nombre, prev, real in [
         ("Materiales",p["mat"],rm["mat"]),("Pintura",p["pintura"],rm["pintura"]),
         ("Mano de Obra",p["mo"],ra["mo"]),("Consumibles",p["cons"],ra["cons"]),
-        ("Ingeniería",p["ing"],rm["ing"]),("Subcontratos",0.0,rm["sub"]),
+        ("Ingeniería",p["ing"],rm["ing"]),("Subcontratos",p["sub"],rm["sub"]),
+        ("Fletes",p["flete"],rm["flete"]),
       ("Gastos Generales",p["gg"],gg_real_ot),("Impuestos",p["imp"],ra["imp"])]:
         da=real-prev; dp=(da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c=_cd(da); ic="▲" if da>0 else ("▼" if da<0 else "–")
@@ -933,6 +958,8 @@ def economico_ot(ot_id):
         <div class="fg"><label>Mano de Obra ($)</label><input type="number" name="mo_previsto" step="0.01" min="0" value="{_fv(p['mo'])}"></div>
         <div class="fg"><label>Consumibles ($)</label><input type="number" name="consumibles_previsto" step="0.01" min="0" value="{_fv(p['cons'])}"></div>
         <div class="fg"><label>Ingeniería ($)</label><input type="number" name="ingenieria_previsto" step="0.01" min="0" value="{_fv(p['ing'])}"></div>
+        <div class="fg"><label>Subcontratos ($)</label><input type="number" name="subcontratos_previsto" step="0.01" min="0" value="{_fv(p['sub'])}"></div>
+        <div class="fg"><label>Fletes ($)</label><input type="number" name="fletes_previsto" step="0.01" min="0" value="{_fv(p['flete'])}"></div>
         <div class="fg"><label>Gastos Generales ($)</label><input type="number" name="gastos_gen_previsto" step="0.01" min="0" value="{_fv(p['gg'])}"></div>
         <div class="fg"><label>Impuestos ($)</label><input type="number" name="impuestos_previsto" step="0.01" min="0" value="{_fv(p['imp'])}"></div>
         <div class="fg" style="margin-top:8px;"><label>Beneficio ($)</label><input type="number" name="beneficio_previsto" step="0.01" min="0" value="{_fv(p['ben'])}"></div>
@@ -958,6 +985,7 @@ def economico_ot(ot_id):
             <select name="concepto" required style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">
               <option>Materiales</option><option>Pintura</option>
               <option>Ingeniería</option><option>Subcontratos</option>
+              <option>Fletes</option>
             </select></div>
           <div><label style="font-size:.75rem;">Monto ($)</label><br>
             <input type="number" name="monto" step="0.01" min="0.01" required
@@ -1410,7 +1438,7 @@ def economico_dashboard_ejecutivo():
     obras_data = []   # lista de dicts por obra
     rubros_global = {r: {"prev": 0.0, "real": 0.0} for r in
                      ["Materiales","Pintura","Mano de Obra","Consumibles",
-                      "Ingeniería","Subcontratos","Gastos Generales","Impuestos"]}
+                      "Ingeniería","Subcontratos","Fletes","Gastos Generales","Impuestos"]}
 
     for obra_key in sorted(obras_dict.keys()):
         info = obras_dict[obra_key]
@@ -1443,13 +1471,14 @@ def economico_dashboard_ejecutivo():
 
         # Acumular rubros globales
         for nm, prev, real in [
-            ("Materiales",      agg["p_mat"],  agg["r_mat"]),
-            ("Pintura",         agg["p_pint"], agg["r_pint"]),
-            ("Mano de Obra",    agg["p_mo"],   agg["r_mo"]),
-            ("Consumibles",     agg["p_cons"], agg["r_cons"]),
-            ("Ingeniería",      agg["p_ing"],  agg["r_ing"]),
-            ("Subcontratos",    0.0,           agg["r_sub"]),
-            ("Impuestos",       agg["p_imp"],  agg["r_imp"]),
+            ("Materiales",      agg["p_mat"],   agg["r_mat"]),
+            ("Pintura",         agg["p_pint"],  agg["r_pint"]),
+            ("Mano de Obra",    agg["p_mo"],    agg["r_mo"]),
+            ("Consumibles",     agg["p_cons"],  agg["r_cons"]),
+            ("Ingeniería",      agg["p_ing"],   agg["r_ing"]),
+            ("Subcontratos",    agg["p_sub"],   agg["r_sub"]),
+            ("Fletes",          agg["p_flete"], agg["r_flete"]),
+            ("Impuestos",       agg["p_imp"],   agg["r_imp"]),
         ]:
             rubros_global[nm]["prev"] += prev
             rubros_global[nm]["real"] += real
@@ -1846,25 +1875,35 @@ def economico_dashboard_ejecutivo():
         mant_panel_html = ""
 
     # KPI cards top
-    def _kpi(titulo, valor, color="#6366f1", sub=""):
+    def _kpi(titulo, valor, color="#6366f1", sub="", tooltip=""):
+        tt_attr = f' title="{tooltip}"' if tooltip else ""
+        tt_icon = (f' <span style="font-size:.72rem;color:{color};opacity:.55;cursor:help;">&#9432;</span>'
+                   ) if tooltip else ""
         return (f'<div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);'
-                f'padding:16px 20px;flex:1;min-width:150px;border-left:4px solid {color};">'
-                f'<div style="font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">{titulo}</div>'
+                f'padding:16px 20px;flex:1;min-width:150px;border-left:4px solid {color};cursor:default;"{tt_attr}>'
+                f'<div style="font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">{titulo}{tt_icon}</div>'
                 f'<div style="font-size:1.45rem;font-weight:900;color:{color};margin:6px 0 2px;line-height:1;">{valor}</div>'
                 f'<div style="font-size:.72rem;color:#9ca3af;">{sub}</div>'
                 f'</div>')
 
     kpi_html = (
         _kpi("Obras con desvío",         f"{'🔴 ' if n_riesgo>0 else '🟢 '}{n_riesgo}",
-             "#991b1b" if n_riesgo>0 else "#166534", f"de {n_obras} obras") +
+             "#991b1b" if n_riesgo>0 else "#166534", f"de {n_obras} obras",
+             "Obras donde el margen está por debajo del objetivo o el avance económico supera al físico") +
         _kpi("Margen prom. proyectado",  f"{'🟢' if mg_prom>=10 else '🟠' if mg_prom>=5 else '🔴'} {mg_prom:.1f}%",
-             _cm(mg_prom), "a la finalización") +
-        _kpi("Costo directo ejecutado",  _m(costo_cd),      "#1e293b", "acumulado") +
+             _cm(mg_prom), "a la finalización",
+             "Proyección ponderada del margen a la finalización, basada en el costo actual y el avance físico de cada obra") +
+        _kpi("Costo directo ejecutado",  _m(costo_cd),      "#1e293b", "acumulado",
+             "Suma de costos reales de producción: materiales, pintura, MO, consumibles, subcontratos, fletes e ingeniería (sin GG ni impuestos)") +
         _kpi("CD terminado (despacho)",  _m(cd_terminado),  "#0891b2",
-             f"{_pct(cd_terminado/costo_cd_prev*100 if costo_cd_prev>0 else 0)} del CD prev.") +
-        _kpi("Costo directo previsto",   _m(costo_cd_prev), "#3b82f6", "presupuestado") +
-        _kpi("Av. económico promedio",   f"{ae_prom:.1f}%", "#3b82f6", "sobre presupuesto") +
-        _kpi("Riesgo global",            f"{riesgo_em} {riesgo_lbl}", riesgo_c, f"mg prom. {mg_prom:.1f}% · {n_criticos} obra{'s' if n_criticos!=1 else ''} crítica{'s' if n_criticos!=1 else ''}")
+             f"{_pct(cd_terminado/costo_cd_prev*100 if costo_cd_prev>0 else 0)} del CD prev.",
+             "Costo directo PRESUPUESTADO de las OTs con control de despacho conforme. Indica el valor planificado del trabajo realmente terminado y despachado.") +
+        _kpi("Costo directo previsto",   _m(costo_cd_prev), "#3b82f6", "presupuestado",
+             "Suma del costo directo presupuestado de todas las obras: materiales + pintura + MO + consumibles + subcontratos + fletes + ingeniería") +
+        _kpi("Av. económico promedio",   f"{ae_prom:.1f}%", "#3b82f6", "sobre presupuesto",
+             "Promedio de cuánto del costo total presupuestado ya se gastó. Si supera el avance físico → el gasto avanza más rápido que la producción (alerta).") +
+        _kpi("Riesgo global",            f"{riesgo_em} {riesgo_lbl}", riesgo_c, f"mg prom. {mg_prom:.1f}% · {n_criticos} obra{'s' if n_criticos!=1 else ''} crítica{'s' if n_criticos!=1 else ''}",
+             "Semáforo del portfolio: Verde ≥15%, Naranja 5–15%, Rojo <5% de margen proyectado promedio ponderado")
     )
 
     return f"""<!DOCTYPE html>
