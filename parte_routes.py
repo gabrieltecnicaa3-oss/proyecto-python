@@ -2206,7 +2206,6 @@ def parte_reporte_quincena_excel():
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
     from openpyxl.utils import get_column_letter
     from openpyxl.drawing.image import Image as XLImage
-    from collections import Counter
 
     q = (request.args.get("q") or "").strip()
     try:
@@ -2230,7 +2229,13 @@ def parte_reporte_quincena_excel():
 
     db = get_db()
 
-    # ── Empleados ─────────────────────────────────────────────────────────────
+    # ── Empleados (excluye Of Técnica, Jefe Taller, Coordinador, Subcontrato) ──
+    _EXCLUIR = (
+        "of tecnica", "of. tecnica", "oficina tecnica", "ofic tecnica",
+        "jefe taller", "jefe de taller",
+        "coordinador", "coord",
+        "subcontrato", "subcontratado",
+    )
     emps = db.execute("""
         SELECT nombre,
                COALESCE(apellido,'')               AS apellido,
@@ -2241,6 +2246,10 @@ def parte_reporte_quincena_excel():
         ORDER BY LOWER(TRIM(COALESCE(apellido,''))) COLLATE NOCASE ASC,
                  LOWER(TRIM(COALESCE(nombre_base, nombre,''))) COLLATE NOCASE ASC
     """).fetchall()
+    emps = [
+        e for e in emps
+        if not any(x in str(e[3] or "").lower() for x in _EXCLUIR)
+    ]
 
     # ── Partes de las semanas relevantes ─────────────────────────────────────
     ph = ",".join("?" * len(mondays_set))
@@ -2261,22 +2270,8 @@ def parte_reporte_quincena_excel():
             "vie": float(row[7] or 0), "sab": float(row[8] or 0),
         }
 
-    # ── Obra por empleado (más frecuente, default "Taller A3 EEMM") ───────────
-    ot_ids = list({r[2] for r in partes_rows if r[2]})
-    ot_obra_map = {}
-    if ot_ids:
-        ph2 = ",".join("?" * len(ot_ids))
-        for row in db.execute(
-            f"SELECT id, COALESCE(TRIM(obra),'') FROM ordenes_trabajo WHERE id IN ({ph2})", ot_ids
-        ).fetchall():
-            ot_obra_map[str(row[0])] = str(row[1]).strip() or "Taller A3 EEMM"
-
-    emp_obras_tmp: dict = {}
-    for row in partes_rows:
-        ek = str(row[1] or "").strip().lower()
-        obra = ot_obra_map.get(str(row[2] or ""), "Taller A3 EEMM")
-        emp_obras_tmp.setdefault(ek, []).append(obra)
-    emp_obra_final = {k: Counter(v).most_common(1)[0][0] for k, v in emp_obras_tmp.items()}
+    # ── Obra: fija "Taller A3 EEMM" para todos ───────────────────────────────
+    emp_obra_final: dict = {}   # se usa en el loop de filas; .get() devuelve "Taller A3 EEMM"
 
     # ── Jefe de Taller para firma ─────────────────────────────────────────────
     jefe_row = db.execute("""
@@ -2405,7 +2400,7 @@ def parte_reporte_quincena_excel():
             display = emp_nombre
 
         emp_key = emp_nombre.lower()
-        obra    = emp_obra_final.get(emp_key, "Taller A3 EEMM")
+        obra    = "Taller A3 EEMM"
         row_fill = _fill(C_ALT) if ei % 2 == 1 else None
 
         def _dc(col, val, fnt=None, fill=None, al=None):
