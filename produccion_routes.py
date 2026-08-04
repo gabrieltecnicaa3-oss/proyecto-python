@@ -366,15 +366,9 @@ def calcular_avance_ot(db, ot_id):
     # Fuente principal: Excel de ARMADO en DataBooks/<obra>/3-Produccion
     excel_path = _buscar_excel_armado(obra)
 
-    # Si la planilla ya tiene columna TOTAL por fila, usamos exactamente esos valores.
-    total_excel, procesado_excel, tiene_total_excel = _avance_desde_excel_armado(excel_path)
-    if total_excel > 0 and tiene_total_excel:
-        porcentaje_excel = round((procesado_excel / total_excel) * 100)
-        if porcentaje_excel < 0:
-            return 0
-        if porcentaje_excel > 100:
-            return 100
-        return porcentaje_excel
+    # NOTA: La columna TOTAL del Excel mide KG fabricados (no % de avance por proceso).
+    # Se omite para evitar discrepancias con el avance por estados de piezas de la BD.
+    # _avance_desde_excel_armado se reserva para futura lectura de datos de peso.
 
     # Si no hay TOTAL en Excel, estimamos el procesado desde estados de BD.
     total_est, procesado_est = _avance_estimado_excel_sin_total(db, ot_id, excel_path)
@@ -616,12 +610,9 @@ def _avance_y_desglose_ot(db, ot_id):
             conteo["P/DESPACHO"] += 1
     conteo["DESPACHADAS"] = len(despachadas_pos)
 
-    # 5. Avance — path 1: Excel con columna TOTAL exacta
-    total_excel, procesado_excel, tiene_total_excel = _avance_desde_excel_armado(excel_path)
-    if total_excel > 0 and tiene_total_excel:
-        pct = max(0, min(100, round((procesado_excel / total_excel) * 100)))
-        _avance_cache[ot_id] = (max_proc_id, pct, total_piezas, conteo, now, total_excel, procesado_excel)
-        return pct, total_piezas, conteo, total_excel, procesado_excel
+    # 5. Avance — path 1 (Excel TOTAL omitido: mide KG fabricados, no avance por proceso).
+    # Usar siempre path 2 (Excel KG + estados BD) o path 3 (metadatos BD) para consistencia
+    # con el módulo de producción que basa el avance en aprobación de procesos por pieza.
 
     # 6. Avance — path 2: Excel sin TOTAL + estados de BD (todos pre-cargados)
     if excel_path:
