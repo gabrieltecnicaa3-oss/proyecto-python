@@ -356,115 +356,13 @@ def _avance_estimado_excel_sin_total(db, ot_id, excel_path):
 
 
 def calcular_avance_ot(db, ot_id):
-    obra_row = db.execute(
-        "SELECT TRIM(COALESCE(obra, '')) FROM ordenes_trabajo WHERE id = ?",
-        (ot_id,),
-    ).fetchone()
-    obra = (obra_row[0] if obra_row else "") or ""
-    pesos = _pesos_avance_por_ot(db, ot_id, obra)
+    """Devuelve el % de avance de la OT delegando a _avance_y_desglose_ot,
+    que es la misma función que usa el módulo de Producción. Garantiza que
+    Reportes, Programación y Producción muestren siempre el mismo número."""
+    pct, _, _, _, _ = _avance_y_desglose_ot(db, ot_id)
+    return pct
 
-    # Fuente principal: Excel de ARMADO en DataBooks/<obra>/3-Produccion
-    excel_path = _buscar_excel_armado(obra)
 
-    # NOTA: La columna TOTAL del Excel mide KG fabricados (no % de avance por proceso).
-    # Se omite para evitar discrepancias con el avance por estados de piezas de la BD.
-    # _avance_desde_excel_armado se reserva para futura lectura de datos de peso.
-
-    # Si no hay TOTAL en Excel, estimamos el procesado desde estados de BD.
-    total_est, procesado_est = _avance_estimado_excel_sin_total(db, ot_id, excel_path)
-    if total_est > 0:
-        porcentaje_est = round((procesado_est / total_est) * 100)
-        if porcentaje_est < 0:
-            return 0
-        if porcentaje_est > 100:
-            return 100
-        return porcentaje_est
-
-    kg_por_pos = _kg_por_pos_desde_excel_armado(excel_path)
-
-    # Fallback: metadata cargada en procesos
-    if not kg_por_pos:
-        piezas_meta = db.execute(
-            """
-            SELECT TRIM(COALESCE(posicion, '')) AS posicion,
-                   MAX(COALESCE(cantidad, 0)) AS cantidad_pieza,
-                   MAX(COALESCE(peso, 0)) AS peso_pieza
-            FROM procesos
-            WHERE ot_id = ?
-              AND TRIM(COALESCE(posicion, '')) <> ''
-            GROUP BY TRIM(COALESCE(posicion, ''))
-            HAVING MAX(COALESCE(peso, 0)) > 0
-            """,
-            (ot_id,),
-        ).fetchall()
-        kg_por_pos = {}
-        for pos, cantidad, peso in piezas_meta:
-            kg = _to_float(cantidad, 0.0) * _to_float(peso, 0.0)
-            if kg > 0:
-                kg_por_pos[str(pos)] = kg
-
-    if not kg_por_pos:
-        # Sin datos de peso: calcula avance ponderado por conteo de piezas
-        posiciones_row = db.execute(
-            "SELECT DISTINCT TRIM(COALESCE(posicion,'')) FROM procesos"
-            " WHERE ot_id=? AND COALESCE(eliminado,0)=0 AND TRIM(COALESCE(posicion,''))<>''",
-            (ot_id,),
-        ).fetchall()
-        posiciones = [r[0] for r in posiciones_row if r[0]]
-        if not posiciones:
-            return 0
-        desc_por_pos = _descripciones_por_pos_ot(db, ot_id)
-        avance_sum = 0.0
-        for posicion in posiciones:
-            procesos_aprobados = set(obtener_procesos_completados(posicion, ot_id=ot_id))
-            pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(str(posicion), ""), pesos, pos=posicion)
-            avance_pieza = 0.0
-            if "ARMADO" in procesos_aprobados:
-                avance_pieza += pesos_pos["ARMADO"]
-            if "SOLDADURA" in procesos_aprobados:
-                avance_pieza += pesos_pos["SOLDADURA"]
-            if "PINTURA" in procesos_aprobados:
-                avance_pieza += pesos_pos["PINTURA"]
-            if "P/DESPACHO" in procesos_aprobados or "DESPACHO" in procesos_aprobados:
-                avance_pieza += pesos_pos["DESPACHO"]
-            avance_sum += avance_pieza / 100.0
-        porcentaje = round((avance_sum / len(posiciones)) * 100)
-        return max(0, min(100, porcentaje))
-
-    total_kg = 0.0
-    avance_kg = 0.0
-    desc_por_pos = _descripciones_por_pos_ot(db, ot_id)
-
-    for posicion, kg_pieza in kg_por_pos.items():
-        kg_pieza = _to_float(kg_pieza, 0.0)
-        if kg_pieza <= 0:
-            continue
-
-        total_kg += kg_pieza
-
-        procesos_aprobados = set(obtener_procesos_completados(posicion, ot_id=ot_id))
-        pesos_pos = _pesos_avance_por_pieza(desc_por_pos.get(str(posicion), ""), pesos, pos=posicion)
-        avance_pieza = 0.0
-        if "ARMADO" in procesos_aprobados:
-            avance_pieza += pesos_pos["ARMADO"]
-        if "SOLDADURA" in procesos_aprobados:
-            avance_pieza += pesos_pos["SOLDADURA"]
-        if "PINTURA" in procesos_aprobados:
-            avance_pieza += pesos_pos["PINTURA"]
-        if "P/DESPACHO" in procesos_aprobados or "DESPACHO" in procesos_aprobados:
-            avance_pieza += pesos_pos["DESPACHO"]
-
-        avance_kg += kg_pieza * (avance_pieza / 100.0)
-
-    if total_kg <= 0:
-        return 0
-
-    porcentaje = round((avance_kg / total_kg) * 100)
-    if porcentaje < 0:
-        return 0
-    if porcentaje > 100:
-        return 100
-    return porcentaje
 
 
 def _persistir_avance_ot(db, ot_id, progreso_calculado, progreso_actual):
