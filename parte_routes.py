@@ -3,6 +3,7 @@ import json
 import html as html_lib
 from io import BytesIO
 from datetime import datetime, timedelta, date
+from calendar import monthrange as _monthrange
 from urllib.parse import quote, urlencode
 from flask import Blueprint, redirect, request, send_file
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Image, Paragraph, Spacer
@@ -25,6 +26,11 @@ def _resolver_imagen_firma_empleado(nombre, firma_electronica):
 
 
 parte_bp = Blueprint("parte", __name__)
+
+_MESES_ES  = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
+              "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
+_DIAS_ABREV = {0:"L", 1:"M", 2:"M", 3:"J", 4:"V", 5:"S", 6:"D"}
+_COL_DIA    = {0:"lun", 1:"mar", 2:"mie", 3:"jue", 4:"vie", 5:"sab"}
 
 
 PUESTOS_SUPERVISOR = [
@@ -487,6 +493,7 @@ def parte_semanal():
         <div class="header-actions">
             <a href="/modulo/parte/carga-empleados" class="btn btn-carga">👥 Carga de empleados</a>
             <a href="/modulo/parte/reportes" class="btn btn-reportes">📊 Ver reportes</a>
+            <a href="/modulo/parte/reporte-quincena" class="btn btn-reportes" style="background:#2980b9;">📅 Reporte Quincena</a>
             <a href="/" class="btn">⬅️ Volver</a>
         </div>
     </div>
@@ -2140,4 +2147,362 @@ def parte_semanal_reportes_pdf():
         mimetype='application/pdf',
         as_attachment=True,
         download_name=filename,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REPORTE QUINCENA — selector y descarga Excel
+# ─────────────────────────────────────────────────────────────────────────────
+
+@parte_bp.route("/modulo/parte/reporte-quincena")
+def parte_reporte_quincena_form():
+    """Página de selección de quincena."""
+    hoy = date.today()
+    opciones = []
+    for delta in range(8):
+        mes = hoy.month - delta
+        anio = hoy.year
+        while mes <= 0:
+            mes += 12
+            anio -= 1
+        nm = _MESES_ES[mes - 1]
+        opciones.append((f"{anio}-{mes:02d}-2", f"2ª Quincena {nm} {anio}"))
+        opciones.append((f"{anio}-{mes:02d}-1", f"1ª Quincena {nm} {anio}"))
+    # newest first
+    opciones = sorted(opciones, key=lambda x: x[0], reverse=True)
+    opts_html = "".join(f'<option value="{v}">{html_lib.escape(l)}</option>' for v, l in opciones)
+    return f"""<!DOCTYPE html><html lang="es"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reporte Quincena</title>
+<style>
+*{{box-sizing:border-box;}} body{{font-family:system-ui,sans-serif;background:#f1f5f9;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}}
+.card{{background:#fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.10);padding:36px 40px;max-width:440px;width:100%;}}
+h2{{margin:0 0 6px;font-size:1.2rem;color:#1e293b;}}
+p{{color:#64748b;font-size:.88rem;margin:0 0 22px;}}
+label{{font-size:.82rem;font-weight:600;color:#374151;display:block;margin-bottom:6px;}}
+select{{width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:7px;font-size:.92rem;background:#fff;color:#1e293b;}}
+select:focus{{outline:none;border-color:#2980b9;box-shadow:0 0 0 3px rgba(41,128,185,.15);}}
+.btn{{display:block;width:100%;margin-top:18px;padding:11px;border:none;border-radius:7px;background:#2980b9;color:#fff;font-size:.95rem;font-weight:700;cursor:pointer;text-align:center;text-decoration:none;}}
+.btn:hover{{background:#216a9e;}}
+.back{{display:inline-block;margin-top:14px;font-size:.82rem;color:#64748b;text-decoration:none;}}
+.back:hover{{color:#2980b9;}}
+</style></head><body>
+<div class="card">
+  <h2>📅 Reporte Quincena</h2>
+  <p>Seleccioná la quincena y descargá el Excel con el registro de horas.</p>
+  <form action="/modulo/parte/reporte-quincena/excel" method="get">
+    <label>Quincena</label>
+    <select name="q">{opts_html}</select>
+    <button type="submit" class="btn">📥 Descargar Excel</button>
+  </form>
+  <a href="/modulo/parte" class="back">← Volver al parte semanal</a>
+</div></body></html>"""
+
+
+@parte_bp.route("/modulo/parte/reporte-quincena/excel")
+def parte_reporte_quincena_excel():
+    """Genera y descarga el Excel de quincena."""
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+    from openpyxl.drawing.image import Image as XLImage
+    from collections import Counter
+
+    q = (request.args.get("q") or "").strip()
+    try:
+        parts = q.split("-")
+        yr, mo, qn = int(parts[0]), int(parts[1]), int(parts[2])
+        qn = max(1, min(2, qn))
+    except Exception:
+        return "Parámetro de quincena inválido. Ejemplo: 2026-08-1", 400
+
+    if qn == 1:
+        d_start, d_end = 1, 15
+    else:
+        _, last = _monthrange(yr, mo)
+        d_start, d_end = 16, last
+
+    days   = [date(yr, mo, d) for d in range(d_start, d_end + 1)]
+    n_days = len(days)
+    nombre_mes = _MESES_ES[mo - 1]
+
+    mondays_set = {(d - timedelta(days=d.weekday())).strftime("%Y-%m-%d") for d in days}
+
+    db = get_db()
+
+    # ── Empleados ─────────────────────────────────────────────────────────────
+    emps = db.execute("""
+        SELECT nombre,
+               COALESCE(apellido,'')               AS apellido,
+               COALESCE(nombre_base, nombre, '')    AS nombre_base,
+               COALESCE(puesto_detalle, puesto, '') AS categoria,
+               COALESCE(firma_imagen_path, '')       AS firma_path
+        FROM empleados_parte
+        ORDER BY LOWER(TRIM(COALESCE(apellido,''))) COLLATE NOCASE ASC,
+                 LOWER(TRIM(COALESCE(nombre_base, nombre,''))) COLLATE NOCASE ASC
+    """).fetchall()
+
+    # ── Partes de las semanas relevantes ─────────────────────────────────────
+    ph = ",".join("?" * len(mondays_set))
+    partes_rows = db.execute(
+        f"SELECT fecha, operario, ot_id,"
+        f" COALESCE(lun,0), COALESCE(mar,0), COALESCE(mie,0),"
+        f" COALESCE(jue,0), COALESCE(vie,0), COALESCE(sab,0)"
+        f" FROM partes_trabajo WHERE fecha IN ({ph})",
+        list(mondays_set),
+    ).fetchall()
+
+    pm = {}  # (emp_lower, monday_str) → {col: horas}
+    for row in partes_rows:
+        key = (str(row[1] or "").strip().lower(), str(row[0]))
+        pm[key] = {
+            "lun": float(row[3] or 0), "mar": float(row[4] or 0),
+            "mie": float(row[5] or 0), "jue": float(row[6] or 0),
+            "vie": float(row[7] or 0), "sab": float(row[8] or 0),
+        }
+
+    # ── Obra por empleado (más frecuente, default "Taller A3 EEMM") ───────────
+    ot_ids = list({r[2] for r in partes_rows if r[2]})
+    ot_obra_map = {}
+    if ot_ids:
+        ph2 = ",".join("?" * len(ot_ids))
+        for row in db.execute(
+            f"SELECT id, COALESCE(TRIM(obra),'') FROM ordenes_trabajo WHERE id IN ({ph2})", ot_ids
+        ).fetchall():
+            ot_obra_map[str(row[0])] = str(row[1]).strip() or "Taller A3 EEMM"
+
+    emp_obras_tmp: dict = {}
+    for row in partes_rows:
+        ek = str(row[1] or "").strip().lower()
+        obra = ot_obra_map.get(str(row[2] or ""), "Taller A3 EEMM")
+        emp_obras_tmp.setdefault(ek, []).append(obra)
+    emp_obra_final = {k: Counter(v).most_common(1)[0][0] for k, v in emp_obras_tmp.items()}
+
+    # ── Jefe de Taller para firma ─────────────────────────────────────────────
+    jefe_row = db.execute("""
+        SELECT nombre, COALESCE(firma_imagen_path,'')
+        FROM empleados_parte
+        WHERE LOWER(TRIM(COALESCE(puesto_detalle, puesto,''))) LIKE '%jefe%taller%'
+           OR LOWER(TRIM(COALESCE(puesto_detalle, puesto,''))) LIKE '%jefe de taller%'
+        LIMIT 1
+    """).fetchone()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Excel con openpyxl
+    # ══════════════════════════════════════════════════════════════════════════
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = f"{qn}Q {nombre_mes[:3]} {yr}"
+
+    # ── Colores ───────────────────────────────────────────────────────────────
+    C_HDR  = "D35400"   # naranja oscuro (cabecera)
+    C_HDR2 = "E59866"   # naranja claro (SS)
+    C_SAB  = "D5D8DC"   # sábado
+    C_DOM  = "AEB6BF"   # domingo
+    C_ALT  = "FEF5ED"   # fila alternada
+
+    def _fill(hex_):    return PatternFill("solid", fgColor=hex_)
+    def _font(**kw):    return Font(**kw)
+    def _align(h="center", v="center", wrap=False):
+        return Alignment(horizontal=h, vertical=v, wrap_text=wrap)
+    thin = Side(border_style="thin", color="BBBBBB")
+    def _bdr():         return Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # ── Posiciones de columnas ────────────────────────────────────────────────
+    C_NAME = 1; C_CAT = 2; C_OBRA = 3
+    C_DAY0 = 4              # primera columna de días
+    C_SS   = C_DAY0 + n_days
+    C_LAST = C_SS
+
+    # ── Alturas de fila ───────────────────────────────────────────────────────
+    HDR_ROWS = 4  # filas de cabecera empresa
+    R_LETRAS = HDR_ROWS + 1   # abreviaturas día
+    R_NUMS   = HDR_ROWS + 2   # números de día
+    R_DATA   = HDR_ROWS + 3   # primera fila de datos
+
+    ws.row_dimensions[1].height = 40
+    ws.row_dimensions[2].height = 18
+    ws.row_dimensions[3].height = 14
+    ws.row_dimensions[4].height = 10   # spacer
+    ws.row_dimensions[R_LETRAS].height = 16
+    ws.row_dimensions[R_NUMS].height   = 14
+
+    # ── Anchos de columna ─────────────────────────────────────────────────────
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 11
+    ws.column_dimensions["C"].width = 18
+    for i in range(n_days):
+        ws.column_dimensions[get_column_letter(C_DAY0 + i)].width = 4.2
+    ws.column_dimensions[get_column_letter(C_SS)].width = 5.5
+
+    # ── Fila 1: Logo + Título ─────────────────────────────────────────────────
+    ws.merge_cells(f"A1:C{HDR_ROWS}")
+    logo_bg = ws.cell(row=1, column=1, value="A3")
+    logo_bg.font  = Font(bold=True, size=20, color="FFFFFF")
+    logo_bg.fill  = _fill(C_HDR)
+    logo_bg.alignment = _align()
+
+    ws.merge_cells(start_row=1, start_column=4, end_row=1, end_column=C_LAST)
+    t = ws.cell(row=1, column=4,
+                value=f"REGISTRO DE HORAS  ·  {qn}ª QUINCENA {nombre_mes.upper()} {yr}")
+    t.font = Font(bold=True, size=14, color="FFFFFF"); t.fill = _fill(C_HDR); t.alignment = _align("left")
+
+    ws.merge_cells(start_row=2, start_column=4, end_row=2, end_column=C_LAST)
+    t2 = ws.cell(row=2, column=4,
+                 value=f"Días {d_start} al {d_end} de {nombre_mes} {yr}   |   Empresa: A3 Estructuras")
+    t2.font = Font(bold=True, size=10, color="FFFFFF"); t2.fill = _fill(C_HDR); t2.alignment = _align("left")
+
+    ws.merge_cells(start_row=3, start_column=4, end_row=3, end_column=C_LAST)
+    t3 = ws.cell(row=3, column=4, value=f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    t3.font = Font(size=8, italic=True, color="FAD7A0"); t3.fill = _fill(C_HDR); t3.alignment = _align("left")
+
+    ws.merge_cells(start_row=4, start_column=4, end_row=4, end_column=C_LAST)
+    ws.cell(row=4, column=4).fill = _fill(C_HDR)
+
+    # ── Cabecera columnas (filas R_LETRAS y R_NUMS) ───────────────────────────
+    # Nombre / Cat / Obra span ambas filas
+    for col, lbl in [(C_NAME, "Apellido y Nombre"), (C_CAT, "Cat"), (C_OBRA, "Obra")]:
+        ws.merge_cells(start_row=R_LETRAS, start_column=col, end_row=R_NUMS, end_column=col)
+        c = ws.cell(row=R_LETRAS, column=col, value=lbl)
+        c.font = Font(bold=True, size=9, color="FFFFFF"); c.fill = _fill(C_HDR)
+        c.alignment = _align(); c.border = _bdr()
+
+    # SS también span
+    ws.merge_cells(start_row=R_LETRAS, start_column=C_SS, end_row=R_NUMS, end_column=C_SS)
+    c = ws.cell(row=R_LETRAS, column=C_SS, value="SS")
+    c.font = Font(bold=True, size=9, color="FFFFFF"); c.fill = _fill(C_HDR)
+    c.alignment = _align(); c.border = _bdr()
+
+    # Columnas de días
+    for i, day in enumerate(days):
+        col = C_DAY0 + i
+        wd  = day.weekday()
+        abr = _DIAS_ABREV[wd]
+        day_fill = _fill(C_DOM) if wd == 6 else (_fill(C_SAB) if wd == 5 else _fill(C_HDR))
+        day_font_c = "333333" if wd >= 5 else "FFFFFF"
+
+        c5 = ws.cell(row=R_LETRAS, column=col, value=abr)
+        c5.font = Font(bold=True, size=9, color=day_font_c); c5.fill = day_fill
+        c5.alignment = _align(); c5.border = _bdr()
+
+        c6 = ws.cell(row=R_NUMS, column=col, value=day.day)
+        c6.font = Font(bold=True, size=8, color=day_font_c); c6.fill = day_fill
+        c6.alignment = _align(); c6.border = _bdr()
+
+    # ── Filas de datos ────────────────────────────────────────────────────────
+    for ei, emp in enumerate(emps):
+        row = R_DATA + ei
+        ws.row_dimensions[row].height = 14
+
+        emp_nombre = str(emp[0] or "").strip()
+        apellido   = str(emp[1] or "").strip()
+        nombre_base= str(emp[2] or "").strip()
+        categoria  = str(emp[3] or "").strip().upper()
+
+        if apellido and nombre_base:
+            display = f"{apellido.upper()}, {nombre_base.capitalize()}"
+        else:
+            display = emp_nombre
+
+        emp_key = emp_nombre.lower()
+        obra    = emp_obra_final.get(emp_key, "Taller A3 EEMM")
+        row_fill = _fill(C_ALT) if ei % 2 == 1 else None
+
+        def _dc(col, val, fnt=None, fill=None, al=None):
+            c = ws.cell(row=row, column=col, value=val)
+            c.font   = fnt  or Font(size=9)
+            c.fill   = fill or (row_fill or PatternFill())
+            c.alignment = al or _align("left")
+            c.border = _bdr()
+            return c
+
+        _dc(C_NAME, display, al=_align("left", wrap=True))
+        _dc(C_CAT,  categoria, al=_align())
+        _dc(C_OBRA, obra, al=_align())
+
+        total_hs = 0.0
+        for i, day in enumerate(days):
+            col = C_DAY0 + i
+            wd  = day.weekday()
+
+            if wd == 6:  # domingo
+                val       = None
+                cell_fill = _fill(C_DOM)
+            else:
+                col_name  = _COL_DIA[wd]
+                monday_str= (day - timedelta(days=wd)).strftime("%Y-%m-%d")
+                horas     = pm.get((emp_key, monday_str), {}).get(col_name, 0) or 0
+                val       = int(horas) if horas > 0 else None
+                if horas:  total_hs += horas
+                if wd == 5:
+                    cell_fill = _fill(C_SAB)
+                else:
+                    cell_fill = row_fill or PatternFill()
+
+            c = ws.cell(row=row, column=col, value=val)
+            c.font      = Font(size=9)
+            c.fill      = cell_fill
+            c.alignment = _align()
+            c.border    = _bdr()
+
+        # SS total
+        ss = ws.cell(row=row, column=C_SS,
+                     value=int(total_hs) if total_hs > 0 else None)
+        ss.font = Font(bold=True, size=9); ss.fill = _fill(C_HDR2)
+        ss.alignment = _align(); ss.border = _bdr()
+
+    # ── Firma ─────────────────────────────────────────────────────────────────
+    R_SIGN = R_DATA + len(emps) + 2
+    ws.row_dimensions[R_SIGN].height     = 14
+    ws.row_dimensions[R_SIGN + 1].height = 45  # imagen
+    ws.row_dimensions[R_SIGN + 2].height = 14
+    ws.row_dimensions[R_SIGN + 3].height = 12
+
+    ws.merge_cells(f"A{R_SIGN}:C{R_SIGN}")
+    sl = ws.cell(row=R_SIGN, column=1, value="FIRMA JEFE DE TALLER")
+    sl.font = Font(bold=True, size=9, color="374151"); sl.alignment = _align()
+
+    jefe_nombre = (jefe_row[0] if jefe_row else "Jefe de Taller") or "Jefe de Taller"
+    if jefe_row and jefe_row[1]:
+        firma_path = os.path.join(_APP_DIR, str(jefe_row[1]))
+        if os.path.exists(firma_path):
+            try:
+                firma_img = XLImage(firma_path)
+                firma_img.width  = 90
+                firma_img.height = 40
+                firma_img.anchor = f"A{R_SIGN + 1}"
+                ws.add_image(firma_img)
+            except Exception:
+                pass
+
+    ws.merge_cells(f"A{R_SIGN+2}:C{R_SIGN+2}")
+    nc = ws.cell(row=R_SIGN + 2, column=1, value=jefe_nombre.upper())
+    nc.font = Font(bold=True, size=9); nc.alignment = _align()
+
+    ws.merge_cells(f"A{R_SIGN+3}:C{R_SIGN+3}")
+    cc = ws.cell(row=R_SIGN + 3, column=1, value="Jefe de Taller")
+    cc.font = Font(size=8, italic=True, color="6B7280"); cc.alignment = _align()
+
+    # Logo empresa (sobre celdas A1:C4)
+    logo_path = os.path.join(_APP_DIR, "LOGO.png")
+    if os.path.exists(logo_path):
+        try:
+            logo_img = XLImage(logo_path)
+            logo_img.width  = 115
+            logo_img.height = 58
+            logo_img.anchor = "A1"
+            ws.add_image(logo_img)
+        except Exception:
+            pass
+
+    # ── Exportar ──────────────────────────────────────────────────────────────
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"Parte_Quincena_{qn}Q_{nombre_mes}_{yr}.xlsx"
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=fname,
     )
