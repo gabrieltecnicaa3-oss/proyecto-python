@@ -1363,13 +1363,13 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
                 dias_fe = (datetime.strptime(str(fe)[:10], "%Y-%m-%d").date() - today_d).days
             except Exception:
                 dias_fe = 999
-            # Niveles: CRÍTICO = desvío < -20% Y fecha próxima (≤30d); RIESGO = -20% a -10%; NORMAL = > -10%
-            if desvio_pr < -20 and dias_fe <= 30:
+            # Niveles: CRÍTICO = desvío < -25%; RIESGO = entre -15% y -25% y entrega ≤ 15 días; NORMAL = resto
+            if desvio_pr < -25:
                 crit_lbl = "⛔ CRÍTICO"
                 crit_key = "crit"
                 crit_bg  = "#fef2f2"
                 crit_clr = "#dc2626"
-            elif desvio_pr <= -10:
+            elif desvio_pr <= -15 and dias_fe <= 15:
                 crit_lbl = "⚠ RIESGO"
                 crit_key = "riesgo"
                 crit_bg  = "#fff7ed"
@@ -1450,9 +1450,9 @@ def _render_html(d, tipo, periodo_tipo="SEMANAL"):
       </div>
       <div class="desvio-hint">
         <b>Reglas de criticidad</b><br>
-        ⛔ Crítico: desvío &lt; -20% y entrega en ≤ 30 días.<br>
-        ⚠ Riesgo: desvío entre -10% y -20%.<br>
-        ✔ Normal: desvío mayor a -10%.<br>
+        ⛔ Crítico: desvío &lt; -25%.<br>
+        ⚠ Riesgo: desvío entre -15% y -25% y entrega en ≤ 15 días.<br>
+        ✔ Normal: desvío mayor a -15%.<br>
         El detalle completo de cada OT se muestra en la sección de cronograma.
       </div>
     </div>
