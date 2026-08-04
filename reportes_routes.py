@@ -314,6 +314,25 @@ def _collect(db, obra, year, week, week_start, week_end):
         avance_live = 0
       avance_by_ot[ot_id] = max(0, min(100, avance_live))
 
+    # Sincronizar estado_avance con el cálculo vivo para que Programación y Reporte muestren el mismo valor.
+    _avance_diffs = [
+        (v, k) for k, v in avance_by_ot.items()
+        if v != avance_gantt_by_ot.get(k, -1)
+    ]
+    if _avance_diffs:
+        for _av, _oid in _avance_diffs:
+            try:
+                db.execute("UPDATE ordenes_trabajo SET estado_avance=? WHERE id=?", (_av, _oid))
+            except Exception:
+                pass
+        try:
+            db.commit()
+        except Exception:
+            pass
+        # Actualizar también avance_gantt_by_ot para que el Gantt del reporte quede sincronizado
+        for _av, _oid in _avance_diffs:
+            avance_gantt_by_ot[_oid] = _av
+
     # KG totales estimados por OT (base para referencia de la vista por KG)
     kg_total_by_ot = {}
     kg_rows = db.execute(
