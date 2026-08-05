@@ -2261,14 +2261,13 @@ def parte_reporte_quincena_excel():
         list(mondays_set),
     ).fetchall()
 
-    pm = {}  # (emp_lower, monday_str) → {col: horas}
+    pm = {}  # (emp_lower, monday_str) → {col: horas acumuladas}
     for row in partes_rows:
         key = (str(row[1] or "").strip().lower(), str(row[0]))
-        pm[key] = {
-            "lun": float(row[3] or 0), "mar": float(row[4] or 0),
-            "mie": float(row[5] or 0), "jue": float(row[6] or 0),
-            "vie": float(row[7] or 0), "sab": float(row[8] or 0),
-        }
+        if key not in pm:
+            pm[key] = {"lun": 0.0, "mar": 0.0, "mie": 0.0, "jue": 0.0, "vie": 0.0, "sab": 0.0}
+        for ci, col_name in enumerate(("lun", "mar", "mie", "jue", "vie", "sab")):
+            pm[key][col_name] += float(row[3 + ci] or 0)
 
     # ── Obra: fija "Taller A3 EEMM" para todos ───────────────────────────────
     emp_obra_final: dict = {}   # se usa en el loop de filas; .get() devuelve "Taller A3 EEMM"
