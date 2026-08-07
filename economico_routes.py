@@ -1356,6 +1356,21 @@ def _semaforo(mg, ae, af):
 @economico_bp.route("/modulo/economico/dashboard-ejecutivo")
 def economico_dashboard_ejecutivo():
     db = get_db(); _ensure_schema(db)
+    import datetime as _dtde
+    from db_utils import DB_ENGINE as _DB_ENG_DE
+
+    _hoy_de = _dtde.date.today()
+    _mes_fil = (request.args.get("mes") or _hoy_de.strftime("%Y-%m")).strip()[:7]
+    try:
+        _yr_de, _mo_de = int(_mes_fil[:4]), int(_mes_fil[5:7])
+    except Exception:
+        _yr_de, _mo_de = _hoy_de.year, _hoy_de.month
+        _mes_fil = f"{_yr_de}-{_mo_de:02d}"
+    _prev_de = (_dtde.date(_yr_de, _mo_de, 1) - _dtde.timedelta(days=1)).strftime("%Y-%m")
+    _MESES_N_DE = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
+    def _lbl_de(m):
+        try: return f"{_MESES_N_DE[int(m[5:7])-1]} {m[:4]}"
+        except Exception: return m
 
     ots_rows = db.execute(
         "SELECT id, cliente, obra, tipo_estructura, COALESCE(es_mantenimiento,0) FROM ordenes_trabajo ORDER BY obra, id"
@@ -1827,6 +1842,80 @@ def economico_dashboard_ejecutivo():
         _kpi("Riesgo global",            f"{riesgo_em} {riesgo_lbl}", riesgo_c, f"mg prom. {mg_prom:.1f}% · {n_criticos} obra{'s' if n_criticos!=1 else ''} crítica{'s' if n_criticos!=1 else ''}")
     )
 
+    # ── KPIs de período (mes seleccionado vs mes anterior) ────────────────────
+    _mysql_de = (_DB_ENG_DE == "mysql")
+    _fmt_pt_de = "DATE_FORMAT(fecha,'%Y-%m')" if _mysql_de else "strftime('%Y-%m',fecha)"
+    _cv_mes = {str(r[0]): float(r[1] or 0) for r in db.execute(
+        "SELECT mes, COALESCE(SUM(monto),0) FROM economico_costos_reales_mensual GROUP BY mes"
+    ).fetchall()}
+    _hh_rows = db.execute(
+        f"SELECT {_fmt_pt_de} AS mes, ot_id, SUM(horas) FROM partes_trabajo "
+        f"WHERE fecha IS NOT NULL AND fecha!='' GROUP BY mes, ot_id"
+    ).fetchall()
+    _ot_obras_de = {str(r[0]): str(r[1] or "").strip()
+                    for r in db.execute("SELECT id, COALESCE(obra,'') FROM ordenes_trabajo").fetchall()}
+    _cfg_de: dict = {}
+    _mo_mes: dict = {}
+    for _r in _hh_rows:
+        _ob = _ot_obras_de.get(str(_r[1] or ""), "")
+        if _ob not in _cfg_de: _cfg_de[_ob] = _get_config_obra(db, _ob)
+        _c = _cfg_de[_ob]
+        _mo_mes[str(_r[0] or "")] = _mo_mes.get(str(_r[0] or ""), 0.0) + float(_r[2] or 0) * (_c["precio_hora_mo"] + _c["precio_hora_cons"])
+    _gf_mes = {str(r[0]): float(r[1] or 0) for r in db.execute(
+        "SELECT mes, SUM(monto) FROM economico_gastos_fijos GROUP BY mes"
+    ).fetchall()}
+    _mant_ot_ids_de = {str(r[0]) for r in db.execute(
+        "SELECT id FROM ordenes_trabajo WHERE COALESCE(es_mantenimiento,0)=1"
+    ).fetchall()}
+    _mant_mes: dict = {}
+    for _r in _hh_rows:
+        if str(_r[1] or "") not in _mant_ot_ids_de: continue
+        _ob = _ot_obras_de.get(str(_r[1] or ""), "")
+        if _ob not in _cfg_de: _cfg_de[_ob] = _get_config_obra(db, _ob)
+        _c = _cfg_de[_ob]
+        _mant_mes[str(_r[0] or "")] = _mant_mes.get(str(_r[0] or ""), 0.0) + float(_r[2] or 0) * (_c["precio_hora_mo"] + _c["precio_hora_cons"])
+
+    def _egr_de(m): return _cv_mes.get(m,0) + _mo_mes.get(m,0) + _gf_mes.get(m,0) + _mant_mes.get(m,0)
+
+    _egr_s = _egr_de(_mes_fil); _egr_p = _egr_de(_prev_de)
+    _cv_s  = _cv_mes.get(_mes_fil,0);  _cv_p  = _cv_mes.get(_prev_de,0)
+    _mo_s  = _mo_mes.get(_mes_fil,0);  _mo_p  = _mo_mes.get(_prev_de,0)
+    _gf_s  = _gf_mes.get(_mes_fil,0)+_mant_mes.get(_mes_fil,0)
+    _gf_p  = _gf_mes.get(_prev_de,0) +_mant_mes.get(_prev_de,0)
+
+    def _delta_de(val, prev):
+        if prev <= 0: return ""
+        pct = (val - prev) / prev * 100
+        ic = "▲" if pct > 0 else "▼"; c = "#dc2626" if pct > 0 else "#16a34a"
+        return (f'<div style="font-size:.7rem;color:{c};font-weight:700;margin-top:2px;">'
+                f'{ic} {abs(pct):.1f}% vs {_lbl_de(_prev_de)}</div>')
+
+    def _kpi_per(tit, val, sub, clr, dh="", tip=""):
+        tt = f' title="{tip}"' if tip else ""
+        ti = ' <span style="opacity:.5;cursor:help;font-size:.68rem;">&#9432;</span>' if tip else ""
+        return (f'<div style="background:#fff;border-radius:9px;box-shadow:0 1px 6px rgba(0,0,0,.07);'
+                f'padding:14px 16px;flex:1;min-width:130px;border-left:4px solid {clr};"{tt}>'
+                f'<div style="font-size:.68rem;color:#6b7280;font-weight:700;text-transform:uppercase;">{tit}{ti}</div>'
+                f'<div style="font-size:1.15rem;font-weight:900;color:{clr};margin:4px 0 1px;">{val}</div>'
+                f'<div style="font-size:.68rem;color:#9ca3af;">{sub}</div>{dh}</div>')
+
+    _all_meses_de = sorted({*_cv_mes, *_mo_mes, *_gf_mes, *_mant_mes,
+                             _hoy_de.strftime("%Y-%m")}, reverse=True)[:18]
+    _opts_mes_de = "".join(
+        f'<option value="{m}" {"selected" if m == _mes_fil else ""}>{_lbl_de(m)}</option>'
+        for m in _all_meses_de
+    )
+    _kpi_per_html = (
+        _kpi_per("Total egresos", _m(_egr_s), _lbl_de(_mes_fil), "#dc2626",
+                 _delta_de(_egr_s, _egr_p), "Suma de todos los costos del mes: variables + MO + estructura") +
+        _kpi_per("Costos variables", _m(_cv_s), "mat · pintura · subc",       "#6366f1",
+                 _delta_de(_cv_s, _cv_p),  "Costos cargados en la sección Costos Reales Mensuales") +
+        _kpi_per("Mano de Obra", _m(_mo_s), "HH × tarifa por obra",           "#0891b2",
+                 _delta_de(_mo_s, _mo_p),  "Calculado desde partes de trabajo × precio_hora") +
+        _kpi_per("Estructura / GF", _m(_gf_s), "gastos fijos + mantenimiento","#f59e0b",
+                 _delta_de(_gf_s, _gf_p),  "Gastos fijos del mes + costos de obras de mantenimiento")
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1873,8 +1962,28 @@ def economico_dashboard_ejecutivo():
 
   <div class="body">
 
-    <!-- KPI superiores -->
+    <!-- KPI superiores (acumulados) -->
     <div class="kpi-row">{kpi_html}</div>
+
+    <!-- KPIs de período mensual -->
+    <div class="card" style="border-top:3px solid #dc2626;">
+      <div class="ct" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <span>📅 Egresos del período</span>
+        <form method="get" style="margin:0;display:flex;align-items:center;gap:8px;">
+          <label style="font-size:.78rem;color:#6b7280;font-weight:600;">Mes:</label>
+          <select name="mes" onchange="this.form.submit()"
+            style="padding:5px 9px;border:1px solid #d1d5db;border-radius:6px;font-size:.83rem;background:#fff;">
+            {_opts_mes_de}
+          </select>
+          <span style="font-size:.72rem;color:#9ca3af;">vs {_lbl_de(_prev_de)}</span>
+          <a href="/modulo/economico/flujo-caja?mes={_mes_fil}"
+             style="font-size:.75rem;background:#fef2f2;color:#dc2626;padding:4px 9px;border-radius:5px;text-decoration:none;font-weight:600;">
+            📈 Ver flujo completo →
+          </a>
+        </form>
+      </div>
+      <div class="cb"><div style="display:flex;flex-wrap:wrap;gap:12px;">{_kpi_per_html}</div></div>
+    </div>
 
     <!-- Tabla de obras + Semáforos -->
     <div class="two">
