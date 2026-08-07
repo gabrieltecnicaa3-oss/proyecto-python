@@ -106,17 +106,6 @@ def _ensure_schema(db):
         db.commit()
     except Exception:
         pass
-    # Nuevos campos de costo directo previsto: subcontratos y fletes
-    try:
-        db.execute("ALTER TABLE economico_presupuesto ADD COLUMN subcontratos_previsto REAL DEFAULT 0")
-        db.commit()
-    except Exception:
-        pass
-    try:
-        db.execute("ALTER TABLE economico_presupuesto ADD COLUMN fletes_previsto REAL DEFAULT 0")
-        db.commit()
-    except Exception:
-        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -163,56 +152,23 @@ def _save_config_obra(db, obra, pmo, pcons, pimp):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# COSTO DIRECTO EJECUTADO (OTs con control de despacho)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _calc_cd_ejecutado(db, ot_ids):
-    """Costo directo PREVISTO de las OTs que tienen al menos un control de despacho.
-    Representa el valor presupuestado del trabajo realmente terminado/despachado."""
-    if not ot_ids:
-        return 0.0
-    placeholders = ",".join("?" * len(ot_ids))
-    despacho_ots = {
-        r[0] for r in db.execute(
-            f"SELECT DISTINCT ot_id FROM control_despacho WHERE ot_id IN ({placeholders})",
-            list(ot_ids),
-        ).fetchall()
-    }
-    if not despacho_ots:
-        return 0.0
-    total = 0.0
-    for oid in despacho_ots:
-        row = db.execute(
-            "SELECT COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)+"
-            "COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0) "
-            "FROM economico_presupuesto WHERE ot_id=?", (oid,)
-        ).fetchone()
-        if row:
-            total += float(row[0] or 0)
-    return total
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # CALC ECONÓMICO POR OT
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _calc_economico(db, ot_id, cfg):
     pres = db.execute(
         """SELECT mat_previsto,pintura_previsto,mo_previsto,consumibles_previsto,
-                  ingenieria_previsto,COALESCE(subcontratos_previsto,0),COALESCE(fletes_previsto,0),
-                  gastos_gen_previsto,impuestos_previsto,beneficio_previsto
+                  ingenieria_previsto,gastos_gen_previsto,impuestos_previsto,beneficio_previsto
            FROM economico_presupuesto WHERE ot_id=?""", (ot_id,)).fetchone()
-    p_mat      = float(pres[0] or 0) if pres else 0.0
-    p_pint     = float(pres[1] or 0) if pres else 0.0
-    p_mo       = float(pres[2] or 0) if pres else 0.0
-    p_cons     = float(pres[3] or 0) if pres else 0.0
-    p_ing      = float(pres[4] or 0) if pres else 0.0
-    p_sub_prev = float(pres[5] or 0) if pres else 0.0
-    p_flet_prev= float(pres[6] or 0) if pres else 0.0
-    p_gg       = float(pres[7] or 0) if pres else 0.0
-    p_imp      = float(pres[8] or 0) if pres else 0.0
-    p_ben      = float(pres[9] or 0) if pres else 0.0
-    p_cd = p_mat + p_pint + p_mo + p_cons + p_ing + p_sub_prev + p_flet_prev
+    p_mat  = float(pres[0] or 0) if pres else 0.0
+    p_pint = float(pres[1] or 0) if pres else 0.0
+    p_mo   = float(pres[2] or 0) if pres else 0.0
+    p_cons = float(pres[3] or 0) if pres else 0.0
+    p_ing  = float(pres[4] or 0) if pres else 0.0
+    p_gg   = float(pres[5] or 0) if pres else 0.0
+    p_imp  = float(pres[6] or 0) if pres else 0.0
+    p_ben  = float(pres[7] or 0) if pres else 0.0
+    p_cd = p_mat + p_pint + p_mo + p_cons + p_ing
     p_tc = p_cd + p_gg + p_imp
     p_pv = p_tc + p_ben
 
@@ -223,7 +179,6 @@ def _calc_economico(db, ot_id, cfg):
     r_mat      = _rm.get("Materiales",   0.0)
     r_pint     = _rm.get("Pintura",      0.0)
     r_sub      = _rm.get("Subcontratos", 0.0)
-    r_flete    = _rm.get("Fletes",       0.0)
     r_ing_real = _rm.get("Ingeniería",   0.0)
 
     hh = db.execute("SELECT COALESCE(SUM(horas),0) FROM partes_trabajo WHERE ot_id=?", (ot_id,)).fetchone()
@@ -231,7 +186,7 @@ def _calc_economico(db, ot_id, cfg):
 
     r_mo   = hh_total * cfg["precio_hora_mo"]
     r_cons = hh_total * cfg["precio_hora_cons"]
-    r_cd   = r_mat + r_pint + r_sub + r_flete + r_mo + r_cons + r_ing_real
+    r_cd   = r_mat + r_pint + r_sub + r_mo + r_cons + r_ing_real
     r_imp  = r_cd * cfg["pct_impuestos"] / 100.0
     r_tot  = r_cd + r_imp
 
@@ -247,9 +202,8 @@ def _calc_economico(db, ot_id, cfg):
 
     return {
         "p":  {"mat":p_mat,"pintura":p_pint,"mo":p_mo,"cons":p_cons,
-               "ing":p_ing,"sub":p_sub_prev,"flete":p_flet_prev,
-               "gg":p_gg,"imp":p_imp,"ben":p_ben,"cd":p_cd,"tc":p_tc,"pv":p_pv},
-        "rm": {"mat":r_mat,"pintura":r_pint,"sub":r_sub,"flete":r_flete,"ing":r_ing_real},
+               "ing":p_ing,"gg":p_gg,"imp":p_imp,"ben":p_ben,"cd":p_cd,"tc":p_tc,"pv":p_pv},
+        "rm": {"mat":r_mat,"pintura":r_pint,"sub":r_sub,"ing":r_ing_real},
         "ra": {"mo":r_mo,"cons":r_cons,"imp":r_imp},
         "r":  {"cd":r_cd,"tot":r_tot},
         "hh": hh_total, "kg": kg, "avf": avf,
@@ -258,20 +212,16 @@ def _calc_economico(db, ot_id, cfg):
 
 
 def _aggregate_obra(ots_data):
-    agg = {k:0.0 for k in ["p_mat","p_pint","p_mo","p_cons","p_ing","p_sub","p_flete",
-                            "p_gg","p_imp","p_ben",
-                            "p_cd","p_tc","p_pv","r_mat","r_pint","r_sub","r_flete","r_ing","r_mo","r_cons",
+    agg = {k:0.0 for k in ["p_mat","p_pint","p_mo","p_cons","p_ing","p_gg","p_imp","p_ben",
+                            "p_cd","p_tc","p_pv","r_mat","r_pint","r_sub","r_ing","r_mo","r_cons",
                             "r_imp","r_cd","r_tot","hh","kg"]}
     avf_list = []
     for d in ots_data:
         for k,v in [("p_mat",d["p"]["mat"]),("p_pint",d["p"]["pintura"]),("p_mo",d["p"]["mo"]),
-                    ("p_cons",d["p"]["cons"]),("p_ing",d["p"]["ing"]),
-                    ("p_sub",d["p"]["sub"]),("p_flete",d["p"]["flete"]),
-                    ("p_gg",d["p"]["gg"]),
+                    ("p_cons",d["p"]["cons"]),("p_ing",d["p"]["ing"]),("p_gg",d["p"]["gg"]),
                     ("p_imp",d["p"]["imp"]),("p_ben",d["p"]["ben"]),("p_cd",d["p"]["cd"]),
                     ("p_tc",d["p"]["tc"]),("p_pv",d["p"]["pv"]),
-                    ("r_mat",d["rm"]["mat"]),("r_pint",d["rm"]["pintura"]),("r_sub",d["rm"]["sub"]),
-                    ("r_flete",d["rm"]["flete"]),("r_ing",d["rm"]["ing"]),
+                    ("r_mat",d["rm"]["mat"]),("r_pint",d["rm"]["pintura"]),("r_sub",d["rm"]["sub"]),("r_ing",d["rm"]["ing"]),
                     ("r_mo",d["ra"]["mo"]),("r_cons",d["ra"]["cons"]),
                     ("r_imp",d["ra"]["imp"]),("r_cd",d["r"]["cd"]),("r_tot",d["r"]["tot"]),
                     ("hh",d["hh"]),("kg",d["kg"])]:
@@ -443,7 +393,6 @@ def economico_dashboard():
             if d["p"]["pv"]>0: ts["ms"] += (d["p"]["pv"]-d["r"]["tot"])/d["p"]["pv"]*100
 
         agg = _aggregate_obra(ots_data)
-        cd_ejecutado = _calc_cd_ejecutado(db, [d["ot_id"] for d in ots_data])
         mg  = ((agg["p_pv"]-agg["r_tot"])/agg["p_pv"]*100.0) if agg["p_pv"]>0 else 0.0
         mc  = _cm(mg)
         af  = agg["avf"]; ae = agg["ave"]
@@ -468,7 +417,6 @@ def economico_dashboard():
   <div style="padding:12px 18px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;border-bottom:1px solid #f1f5f9;">
     <div><div style="font-size:.68rem;color:#9ca3af;font-weight:700;">KG</div><div style="font-weight:700;">{agg['kg']:,.0f}</div></div>
     <div><div style="font-size:.68rem;color:#9ca3af;font-weight:700;">PV PREVISTO</div><div style="font-weight:700;color:#6366f1;">{_m(agg['p_pv'])}</div></div>
-    <div><div style="font-size:.68rem;color:#9ca3af;font-weight:700;">CD EJECUTADO</div><div style="font-weight:700;color:#0891b2;" title="Costo directo previsto de OTs con despacho conforme">{_m(cd_ejecutado)}</div><div style="font-size:.65rem;color:#9ca3af;">{_pct(cd_ejecutado/agg['p_cd']*100 if agg.get('p_cd',0)>0 else 0)} del prev.</div></div>
     <div><div style="font-size:.68rem;color:#9ca3af;font-weight:700;">COSTO REAL</div><div style="font-weight:700;">{_m(agg['r_tot'])}</div></div>
     <div><div style="font-size:.68rem;color:#9ca3af;font-weight:700;">MARGEN REAL</div><div style="font-weight:800;color:{mc};font-size:.98rem;">{_pct(mg)}</div></div>
     <div><div style="font-size:.68rem;color:#9ca3af;font-weight:700;">$/KG REAL</div><div style="font-weight:700;">{_m(agg['r_tot']/agg['kg'] if agg['kg']>0 else 0)}</div></div>
@@ -525,6 +473,7 @@ def economico_dashboard():
     <div style="font-size:.76rem;opacity:.8;margin-top:2px;">Agrupado por obra · KPIs · Costos previstos vs reales</div></div>
   <div style="display:flex;gap:7px;flex-wrap:wrap;">
     <a href="/modulo/economico/dashboard-ejecutivo" style="background:#fff;color:#6366f1;font-weight:700;">📊 Dashboard Ejecutivo</a>
+    <a href="/modulo/economico/flujo-caja" style="background:#fef3c7;color:#92400e;font-weight:700;">💹 Flujo de Caja</a>
     <a href="/modulo/economico/gastos-fijos" style="background:#fef3c7;color:#92400e;font-weight:700;">🏭 Gastos Fijos</a>
     <a href="/modulo/economico/config">⚙️ Config global</a>
     <a href="/">← Inicio</a>
@@ -606,7 +555,6 @@ def economico_obra(obra_nombre):
     total_estructura_real = float(total_mant_real or 0.0) + float(total_gf_real or 0.0)
     gg_asig_obra = (total_estructura_real * (agg["r_cd"] / total_prod_cd)) if total_prod_cd > 0 else 0.0
     r_tot_adj = agg["r_tot"] + gg_asig_obra
-    cd_ejecutado = _calc_cd_ejecutado(db, [d["ot_id"] for d in ots_data])
     mg  = ((agg["p_pv"]-r_tot_adj)/agg["p_pv"]*100.0) if agg["p_pv"]>0 else 0.0
     mc  = _cm(mg)
     af  = agg["avf"]; ae = agg["ave"]
@@ -653,8 +601,7 @@ def economico_obra(obra_nombre):
     for nombre, prev, real in [
         ("Materiales",agg["p_mat"],agg["r_mat"]),("Pintura",agg["p_pint"],agg["r_pint"]),
         ("Mano de Obra",agg["p_mo"],agg["r_mo"]),("Consumibles",agg["p_cons"],agg["r_cons"]),
-        ("Ingeniería",agg["p_ing"],agg["r_ing"]),("Subcontratos",agg["p_sub"],agg["r_sub"]),
-        ("Fletes",agg["p_flete"],agg["r_flete"]),
+        ("Ingeniería",agg["p_ing"],agg["r_ing"]),("Subcontratos",0.0,agg["r_sub"]),
         ("Gastos Generales",agg["p_gg"],gg_asig_obra),("Impuestos",agg["p_imp"],agg["r_imp"])]:
         da = real-prev; dp = (da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c = _cd(da); ic = "▲" if da>0 else ("▼" if da<0 else "–")
@@ -694,10 +641,6 @@ def economico_obra(obra_nombre):
     <div style="flex:1;min-width:120px;border-top:3px solid #6366f1;padding-top:8px;">
       <div style="font-size:.66rem;color:#9ca3af;font-weight:700;">PRECIO VENTA PREV.</div>
       <div style="font-size:1.1rem;font-weight:800;color:#6366f1;">{_m(agg['p_pv'])}</div></div>
-    <div style="flex:1;min-width:130px;border-top:3px solid #0891b2;padding-top:8px;">
-      <div style="font-size:.66rem;color:#9ca3af;font-weight:700;">CD EJECUTADO</div>
-      <div style="font-size:1.1rem;font-weight:800;color:#0891b2;" title="Costo directo previsto de OTs con control de despacho conforme">{_m(cd_ejecutado)}</div>
-      <div style="font-size:.7rem;color:#9ca3af;">{_pct(cd_ejecutado/agg['p_cd']*100 if agg.get('p_cd',0)>0 else 0)} del CD prev.</div></div>
     <div style="flex:1;min-width:120px;border-top:3px solid #1e293b;padding-top:8px;">
       <div style="font-size:.66rem;color:#9ca3af;font-weight:700;">COSTO REAL TOTAL</div>
       <div style="font-size:1.1rem;font-weight:800;color:#1e293b;">{_m(r_tot_adj)}</div></div>
@@ -766,21 +709,18 @@ def economico_ot(ot_id):
             if accion == "guardar_presupuesto":
                 vals = [float(request.form.get(c) or 0) for c in
                         ["mat_previsto","pintura_previsto","mo_previsto","consumibles_previsto",
-                         "ingenieria_previsto","subcontratos_previsto","fletes_previsto",
-                         "gastos_gen_previsto","impuestos_previsto","beneficio_previsto"]]
+                         "ingenieria_previsto","gastos_gen_previsto","impuestos_previsto","beneficio_previsto"]]
                 ex = db.execute("SELECT id FROM economico_presupuesto WHERE ot_id=?", (ot_id,)).fetchone()
                 if ex:
                     db.execute("""UPDATE economico_presupuesto SET
                         mat_previsto=?,pintura_previsto=?,mo_previsto=?,consumibles_previsto=?,
-                        ingenieria_previsto=?,subcontratos_previsto=?,fletes_previsto=?,
-                        gastos_gen_previsto=?,impuestos_previsto=?,beneficio_previsto=?,
+                        ingenieria_previsto=?,gastos_gen_previsto=?,impuestos_previsto=?,beneficio_previsto=?,
                         updated_at=CURRENT_TIMESTAMP WHERE ot_id=?""", (*vals, ot_id))
                 else:
                     db.execute("""INSERT INTO economico_presupuesto
                         (ot_id,mat_previsto,pintura_previsto,mo_previsto,consumibles_previsto,
-                         ingenieria_previsto,subcontratos_previsto,fletes_previsto,
-                         gastos_gen_previsto,impuestos_previsto,beneficio_previsto)
-                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (ot_id, *vals))
+                         ingenieria_previsto,gastos_gen_previsto,impuestos_previsto,beneficio_previsto)
+                        VALUES(?,?,?,?,?,?,?,?,?)""", (ot_id, *vals))
                 db.commit(); mensaje = "Presupuesto guardado."
             elif accion == "agregar_costo_mensual":
                 mes_c    = (request.form.get("mes") or "").strip()
@@ -865,8 +805,7 @@ def economico_ot(ot_id):
     for nombre, prev, real in [
         ("Materiales",p["mat"],rm["mat"]),("Pintura",p["pintura"],rm["pintura"]),
         ("Mano de Obra",p["mo"],ra["mo"]),("Consumibles",p["cons"],ra["cons"]),
-        ("Ingeniería",p["ing"],rm["ing"]),("Subcontratos",p["sub"],rm["sub"]),
-        ("Fletes",p["flete"],rm["flete"]),
+        ("Ingeniería",p["ing"],rm["ing"]),("Subcontratos",0.0,rm["sub"]),
       ("Gastos Generales",p["gg"],gg_real_ot),("Impuestos",p["imp"],ra["imp"])]:
         da=real-prev; dp=(da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c=_cd(da); ic="▲" if da>0 else ("▼" if da<0 else "–")
@@ -958,8 +897,6 @@ def economico_ot(ot_id):
         <div class="fg"><label>Mano de Obra ($)</label><input type="number" name="mo_previsto" step="0.01" min="0" value="{_fv(p['mo'])}"></div>
         <div class="fg"><label>Consumibles ($)</label><input type="number" name="consumibles_previsto" step="0.01" min="0" value="{_fv(p['cons'])}"></div>
         <div class="fg"><label>Ingeniería ($)</label><input type="number" name="ingenieria_previsto" step="0.01" min="0" value="{_fv(p['ing'])}"></div>
-        <div class="fg"><label>Subcontratos ($)</label><input type="number" name="subcontratos_previsto" step="0.01" min="0" value="{_fv(p['sub'])}"></div>
-        <div class="fg"><label>Fletes ($)</label><input type="number" name="fletes_previsto" step="0.01" min="0" value="{_fv(p['flete'])}"></div>
         <div class="fg"><label>Gastos Generales ($)</label><input type="number" name="gastos_gen_previsto" step="0.01" min="0" value="{_fv(p['gg'])}"></div>
         <div class="fg"><label>Impuestos ($)</label><input type="number" name="impuestos_previsto" step="0.01" min="0" value="{_fv(p['imp'])}"></div>
         <div class="fg" style="margin-top:8px;"><label>Beneficio ($)</label><input type="number" name="beneficio_previsto" step="0.01" min="0" value="{_fv(p['ben'])}"></div>
@@ -985,7 +922,6 @@ def economico_ot(ot_id):
             <select name="concepto" required style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">
               <option>Materiales</option><option>Pintura</option>
               <option>Ingeniería</option><option>Subcontratos</option>
-              <option>Fletes</option>
             </select></div>
           <div><label style="font-size:.75rem;">Monto ($)</label><br>
             <input type="number" name="monto" step="0.01" min="0.01" required
@@ -1438,7 +1374,7 @@ def economico_dashboard_ejecutivo():
     obras_data = []   # lista de dicts por obra
     rubros_global = {r: {"prev": 0.0, "real": 0.0} for r in
                      ["Materiales","Pintura","Mano de Obra","Consumibles",
-                      "Ingeniería","Subcontratos","Fletes","Gastos Generales","Impuestos"]}
+                      "Ingeniería","Subcontratos","Gastos Generales","Impuestos"]}
 
     for obra_key in sorted(obras_dict.keys()):
         info = obras_dict[obra_key]
@@ -1471,14 +1407,13 @@ def economico_dashboard_ejecutivo():
 
         # Acumular rubros globales
         for nm, prev, real in [
-            ("Materiales",      agg["p_mat"],   agg["r_mat"]),
-            ("Pintura",         agg["p_pint"],  agg["r_pint"]),
-            ("Mano de Obra",    agg["p_mo"],    agg["r_mo"]),
-            ("Consumibles",     agg["p_cons"],  agg["r_cons"]),
-            ("Ingeniería",      agg["p_ing"],   agg["r_ing"]),
-            ("Subcontratos",    agg["p_sub"],   agg["r_sub"]),
-            ("Fletes",          agg["p_flete"], agg["r_flete"]),
-            ("Impuestos",       agg["p_imp"],   agg["r_imp"]),
+            ("Materiales",      agg["p_mat"],  agg["r_mat"]),
+            ("Pintura",         agg["p_pint"], agg["r_pint"]),
+            ("Mano de Obra",    agg["p_mo"],   agg["r_mo"]),
+            ("Consumibles",     agg["p_cons"], agg["r_cons"]),
+            ("Ingeniería",      agg["p_ing"],  agg["r_ing"]),
+            ("Subcontratos",    0.0,           agg["r_sub"]),
+            ("Impuestos",       agg["p_imp"],  agg["r_imp"]),
         ]:
             rubros_global[nm]["prev"] += prev
             rubros_global[nm]["real"] += real
@@ -1565,8 +1500,6 @@ def economico_dashboard_ejecutivo():
     n_criticos  = sum(1 for o in obras_data if o["sem_lbl"] == "Crítico")
     costo_cd      = sum(o["r_cd"]          for o in obras_data)
     costo_cd_prev = sum(o["agg"]["p_cd"]   for o in obras_data)
-    _all_prod_ot_ids = [oi["id"] for info in obras_dict.values() for oi in info["ots"]]
-    cd_terminado  = _calc_cd_ejecutado(db, _all_prod_ot_ids)
     ae_prom       = sum(o["ae"]             for o in obras_data) / n_obras
     # Margen proyectado del portfolio: ponderado por valor de obra (mismo criterio
     # que la fila TOTAL). Evita que obras sin avance (af=0, costo=0) inflen el promedio
@@ -1875,35 +1808,23 @@ def economico_dashboard_ejecutivo():
         mant_panel_html = ""
 
     # KPI cards top
-    def _kpi(titulo, valor, color="#6366f1", sub="", tooltip=""):
-        tt_attr = f' title="{tooltip}"' if tooltip else ""
-        tt_icon = (f' <span style="font-size:.72rem;color:{color};opacity:.55;cursor:help;">&#9432;</span>'
-                   ) if tooltip else ""
+    def _kpi(titulo, valor, color="#6366f1", sub=""):
         return (f'<div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);'
-                f'padding:16px 20px;flex:1;min-width:150px;border-left:4px solid {color};cursor:default;"{tt_attr}>'
-                f'<div style="font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">{titulo}{tt_icon}</div>'
+                f'padding:16px 20px;flex:1;min-width:150px;border-left:4px solid {color};">'
+                f'<div style="font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">{titulo}</div>'
                 f'<div style="font-size:1.45rem;font-weight:900;color:{color};margin:6px 0 2px;line-height:1;">{valor}</div>'
                 f'<div style="font-size:.72rem;color:#9ca3af;">{sub}</div>'
                 f'</div>')
 
     kpi_html = (
         _kpi("Obras con desvío",         f"{'🔴 ' if n_riesgo>0 else '🟢 '}{n_riesgo}",
-             "#991b1b" if n_riesgo>0 else "#166534", f"de {n_obras} obras",
-             "Obras donde el margen está por debajo del objetivo o el avance económico supera al físico") +
+             "#991b1b" if n_riesgo>0 else "#166534", f"de {n_obras} obras") +
         _kpi("Margen prom. proyectado",  f"{'🟢' if mg_prom>=10 else '🟠' if mg_prom>=5 else '🔴'} {mg_prom:.1f}%",
-             _cm(mg_prom), "a la finalización",
-             "Proyección ponderada del margen a la finalización, basada en el costo actual y el avance físico de cada obra") +
-        _kpi("Costo directo ejecutado",  _m(costo_cd),      "#1e293b", "acumulado",
-             "Suma de costos reales de producción: materiales, pintura, MO, consumibles, subcontratos, fletes e ingeniería (sin GG ni impuestos)") +
-        _kpi("CD terminado (despacho)",  _m(cd_terminado),  "#0891b2",
-             f"{_pct(cd_terminado/costo_cd_prev*100 if costo_cd_prev>0 else 0)} del CD prev.",
-             "Costo directo PRESUPUESTADO de las OTs con control de despacho conforme. Indica el valor planificado del trabajo realmente terminado y despachado.") +
-        _kpi("Costo directo previsto",   _m(costo_cd_prev), "#3b82f6", "presupuestado",
-             "Suma del costo directo presupuestado de todas las obras: materiales + pintura + MO + consumibles + subcontratos + fletes + ingeniería") +
-        _kpi("Av. económico promedio",   f"{ae_prom:.1f}%", "#3b82f6", "sobre presupuesto",
-             "Promedio de cuánto del costo total presupuestado ya se gastó. Si supera el avance físico → el gasto avanza más rápido que la producción (alerta).") +
-        _kpi("Riesgo global",            f"{riesgo_em} {riesgo_lbl}", riesgo_c, f"mg prom. {mg_prom:.1f}% · {n_criticos} obra{'s' if n_criticos!=1 else ''} crítica{'s' if n_criticos!=1 else ''}",
-             "Semáforo del portfolio: Verde ≥15%, Naranja 5–15%, Rojo <5% de margen proyectado promedio ponderado")
+             _cm(mg_prom), "a la finalización") +
+        _kpi("Costo directo ejecutado",  _m(costo_cd),      "#1e293b", "acumulado") +
+        _kpi("Costo directo previsto",   _m(costo_cd_prev), "#3b82f6", "presupuestado") +
+        _kpi("Av. económico promedio",   f"{ae_prom:.1f}%", "#3b82f6", "sobre presupuesto") +
+        _kpi("Riesgo global",            f"{riesgo_em} {riesgo_lbl}", riesgo_c, f"mg prom. {mg_prom:.1f}% · {n_criticos} obra{'s' if n_criticos!=1 else ''} crítica{'s' if n_criticos!=1 else ''}")
     )
 
     return f"""<!DOCTYPE html>
@@ -2222,3 +2143,307 @@ def economico_dashboard_ejecutivo():
   </script>
 </body>
 </html>"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FLUJO DE CAJA — análisis temporal mensual
+# ─────────────────────────────────────────────────────────────────────────────
+
+@economico_bp.route("/modulo/economico/flujo-caja")
+def economico_flujo_caja():
+    db = get_db(); _ensure_schema(db)
+    import json as _jfc
+    import datetime as _dtfc
+    from db_utils import DB_ENGINE as _DB_ENG
+
+    hoy = _dtfc.date.today()
+    mes_sel = (request.args.get("mes") or hoy.strftime("%Y-%m")).strip()[:7]
+    try:
+        _yr, _mo = int(mes_sel[:4]), int(mes_sel[5:7])
+    except Exception:
+        _yr, _mo = hoy.year, hoy.month
+        mes_sel = f"{_yr}-{_mo:02d}"
+
+    _prev_dt = _dtfc.date(_yr, _mo, 1) - _dtfc.timedelta(days=1)
+    mes_prev = _prev_dt.strftime("%Y-%m")
+
+    _MESES_N = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
+    def _lbl(m):
+        try: return f"{_MESES_N[int(m[5:7])-1]} {m[:4]}"
+        except Exception: return m
+
+    _mysql = (_DB_ENG == "mysql")
+    _fmt_pt = "DATE_FORMAT(fecha,'%Y-%m')" if _mysql else "strftime('%Y-%m',fecha)"
+
+    # ── Costos variables por mes (economico_costos_reales_mensual) ────────────
+    cv_rows = db.execute(
+        "SELECT mes, COALESCE(SUM(monto),0) FROM economico_costos_reales_mensual GROUP BY mes"
+    ).fetchall()
+    cv_mes = {str(r[0]): float(r[1] or 0) for r in cv_rows}
+
+    # ── MO mensual (partes_trabajo × tarifas por obra) ────────────────────────
+    hh_rows = db.execute(
+        f"SELECT {_fmt_pt} AS mes, ot_id, SUM(horas) AS hh "
+        f"FROM partes_trabajo WHERE fecha IS NOT NULL AND fecha!='' GROUP BY mes, ot_id"
+    ).fetchall()
+    ot_obras = {str(r[0]): str(r[1] or "").strip()
+                for r in db.execute("SELECT id, COALESCE(obra,'') FROM ordenes_trabajo").fetchall()}
+    _cfg_cache: dict = {}
+    mo_mes: dict = {}
+    for r in hh_rows:
+        mes_h, ot_h, hh_h = str(r[0] or ""), r[1], float(r[2] or 0)
+        obra_h = ot_obras.get(str(ot_h or ""), "")
+        if obra_h not in _cfg_cache:
+            _cfg_cache[obra_h] = _get_config_obra(db, obra_h)
+        c = _cfg_cache[obra_h]
+        mo_mes[mes_h] = mo_mes.get(mes_h, 0.0) + hh_h * (c["precio_hora_mo"] + c["precio_hora_cons"])
+
+    # ── Gastos fijos por mes ──────────────────────────────────────────────────
+    gf_mes = {str(r[0]): float(r[1] or 0)
+              for r in db.execute("SELECT mes, SUM(monto) FROM economico_gastos_fijos GROUP BY mes").fetchall()}
+
+    # ── Mantenimiento por mes ─────────────────────────────────────────────────
+    mant_ot_ids = {str(r[0]) for r in db.execute(
+        "SELECT id FROM ordenes_trabajo WHERE COALESCE(es_mantenimiento,0)=1").fetchall()}
+    mant_mes: dict = {}
+    for r in hh_rows:
+        if str(r[1] or "") not in mant_ot_ids:
+            continue
+        mes_m, ot_m, hh_m = str(r[0] or ""), r[1], float(r[2] or 0)
+        obra_m = ot_obras.get(str(ot_m or ""), "")
+        if obra_m not in _cfg_cache:
+            _cfg_cache[obra_m] = _get_config_obra(db, obra_m)
+        c = _cfg_cache[obra_m]
+        mant_mes[mes_m] = mant_mes.get(mes_m, 0.0) + hh_m * (c["precio_hora_mo"] + c["precio_hora_cons"])
+
+    all_meses = sorted(set(list(cv_mes) + list(mo_mes) + list(gf_mes) + list(mant_mes)))
+    def _egr(m): return cv_mes.get(m,0) + mo_mes.get(m,0) + gf_mes.get(m,0) + mant_mes.get(m,0)
+
+    # Chart: últimos 12 meses con datos (o hasta hoy)
+    chart_meses = all_meses[-12:] if all_meses else [mes_sel]
+    # Incluir mes_sel aunque no tenga datos aún
+    if mes_sel not in chart_meses:
+        chart_meses = sorted(set(chart_meses + [mes_sel]))[-12:]
+
+    acum, acum_vals = 0.0, []
+    for m in chart_meses:
+        acum += _egr(m)
+        acum_vals.append(round(acum))
+
+    chart_lbl_js   = _jfc.dumps([_lbl(m) for m in chart_meses])
+    chart_cv_js    = _jfc.dumps([round(cv_mes.get(m,0))   for m in chart_meses])
+    chart_mo_js    = _jfc.dumps([round(mo_mes.get(m,0))   for m in chart_meses])
+    chart_gf_js    = _jfc.dumps([round(gf_mes.get(m,0) + mant_mes.get(m,0)) for m in chart_meses])
+    chart_acum_js  = _jfc.dumps(acum_vals)
+    chart_sel_js   = _jfc.dumps(chart_meses.index(mes_sel) if mes_sel in chart_meses else -1)
+
+    # ── KPIs del período ──────────────────────────────────────────────────────
+    egr_sel  = _egr(mes_sel);  egr_prv = _egr(mes_prev)
+    cv_sel   = cv_mes.get(mes_sel, 0);   cv_prv  = cv_mes.get(mes_prev, 0)
+    mo_sel   = mo_mes.get(mes_sel, 0);   mo_prv  = mo_mes.get(mes_prev, 0)
+    gf_sel   = gf_mes.get(mes_sel, 0) + mant_mes.get(mes_sel, 0)
+    gf_prv   = gf_mes.get(mes_prev, 0) + mant_mes.get(mes_prev, 0)
+
+    def _d(val, prev):
+        if prev <= 0: return ""
+        pct = (val - prev) / prev * 100
+        ic = "▲" if pct > 0 else "▼"
+        c  = "#dc2626" if pct > 0 else "#16a34a"
+        return (f'<div style="font-size:.72rem;color:{c};font-weight:700;margin-top:3px;">'
+                f'{ic} {abs(pct):.1f}% vs {_lbl(mes_prev)}</div>')
+
+    def _kpi(tit, val, sub, clr, delta_html="", tip=""):
+        tt = f' title="{tip}"' if tip else ""
+        ti = ' <span style="opacity:.5;cursor:help;font-size:.7rem;">&#9432;</span>' if tip else ""
+        return (f'<div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);'
+                f'padding:16px 18px;flex:1;min-width:140px;border-left:4px solid {clr};"{tt}>'
+                f'<div style="font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;">{tit}{ti}</div>'
+                f'<div style="font-size:1.25rem;font-weight:900;color:{clr};margin:4px 0 1px;">{val}</div>'
+                f'<div style="font-size:.72rem;color:#9ca3af;">{sub}</div>'
+                f'{delta_html}</div>')
+
+    kpis_html = (
+        _kpi("Total egresos", _m(egr_sel), _lbl(mes_sel), "#dc2626", _d(egr_sel, egr_prv),
+             "Suma total de costos del mes: variables + MO + estructura") +
+        _kpi("Costos variables", _m(cv_sel), "mat · pintura · subc · fletes",  "#6366f1", _d(cv_sel, cv_prv),
+             "Montos cargados en Costos Reales Mensuales para el período") +
+        _kpi("Mano de Obra", _m(mo_sel), "HH × tarifa por obra", "#0891b2", _d(mo_sel, mo_prv),
+             "Calculado desde partes de trabajo × precio_hora configurado por obra") +
+        _kpi("Estructura / GF", _m(gf_sel), "gastos fijos + mantenimiento", "#f59e0b", _d(gf_sel, gf_prv),
+             "Gastos fijos del mes más costos de obras marcadas como mantenimiento")
+    )
+
+    # Selector de meses disponibles
+    opts_meses = "".join(
+        f'<option value="{m}" {"selected" if m == mes_sel else ""}>{_lbl(m)}</option>'
+        for m in sorted(set(all_meses + [hoy.strftime("%Y-%m")]), reverse=True)[:18]
+    )
+
+    return f"""<!DOCTYPE html><html lang="es"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flujo de Caja — Económico</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+*{{box-sizing:border-box;}}body{{font-family:system-ui,sans-serif;background:#f1f5f9;margin:0;padding:0;}}
+.hdr{{background:linear-gradient(135deg,#1e293b,#334155);color:#fff;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}}
+.hdr h1{{margin:0;font-size:1.1rem;}} .hdr a{{color:#fff;text-decoration:none;font-size:.8rem;background:rgba(255,255,255,.15);padding:5px 11px;border-radius:6px;}}
+.hdr a:hover{{background:rgba(255,255,255,.28);}}
+.body{{padding:18px;display:flex;flex-direction:column;gap:16px;}}
+.card{{background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);overflow:hidden;}}
+.ct{{background:#f8fafc;border-bottom:1px solid #e5e7eb;padding:11px 16px;font-weight:700;font-size:.88rem;color:#1e293b;}}
+.cb{{padding:16px;}}
+.kpi-row{{display:flex;flex-wrap:wrap;gap:12px;}}
+select{{padding:7px 10px;border:1px solid #d1d5db;border-radius:7px;font-size:.9rem;background:#fff;color:#1e293b;}}
+select:focus{{outline:none;border-color:#334155;}}
+.legend{{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:.75rem;color:#6b7280;}}
+.leg{{display:flex;align-items:center;gap:4px;}}
+.dot{{width:10px;height:10px;border-radius:2px;}}
+</style></head><body>
+<div class="hdr">
+  <div><h1>💹 Flujo de Caja — Análisis Temporal</h1>
+    <div style="font-size:.74rem;opacity:.7;margin-top:2px;">Egresos mensuales · Comparación de períodos · Tendencia acumulada</div></div>
+  <div style="display:flex;gap:7px;flex-wrap:wrap;">
+    <a href="/modulo/economico/dashboard-ejecutivo">📊 Dashboard</a>
+    <a href="/modulo/economico">← Módulo</a>
+    <a href="/">Inicio</a>
+  </div>
+</div>
+<div class="body">
+
+  <!-- Filtro de período -->
+  <div class="card"><div class="cb" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+    <div style="font-size:.85rem;font-weight:700;color:#374151;">📅 Período:</div>
+    <form method="get" style="display:flex;align-items:center;gap:8px;">
+      <select name="mes" onchange="this.form.submit()">{opts_meses}</select>
+    </form>
+    <div style="font-size:.78rem;color:#9ca3af;">Comparando con {_lbl(mes_prev)}</div>
+  </div></div>
+
+  <!-- KPIs del período -->
+  <div class="card"><div class="ct">📊 KPIs — {_lbl(mes_sel)}</div>
+    <div class="cb"><div class="kpi-row">{kpis_html}</div></div>
+  </div>
+
+  <!-- Gráfico flujo de caja -->
+  <div class="card"><div class="ct">📈 Flujo de Caja — Egresos mensuales y acumulado</div>
+    <div class="cb">
+      <div style="position:relative;height:320px;"><canvas id="chartFlujo"></canvas></div>
+      <div class="legend">
+        <span class="leg"><span class="dot" style="background:rgba(99,102,241,.75)"></span>Costos variables</span>
+        <span class="leg"><span class="dot" style="background:rgba(8,145,178,.75)"></span>Mano de Obra</span>
+        <span class="leg"><span class="dot" style="background:rgba(245,158,11,.75)"></span>Estructura / GF</span>
+        <span class="leg"><span class="dot" style="background:#dc2626;height:2px;width:18px;border-radius:2px;"></span>Acumulado egresos</span>
+      </div>
+      <div style="font-size:.73rem;color:#9ca3af;margin-top:6px;">
+        El mes resaltado corresponde al período seleccionado. La línea roja muestra el egreso acumulado total desde el inicio del registro.
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabla mensual detallada -->
+  <div class="card"><div class="ct">📋 Detalle mensual</div>
+    <div class="cb" style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:.83rem;">
+        <thead>
+          <tr style="background:#1e293b;color:#fff;">
+            <th style="padding:8px 10px;text-align:left;">Mes</th>
+            <th style="padding:8px 10px;text-align:right;">Costos variables</th>
+            <th style="padding:8px 10px;text-align:right;">Mano de Obra</th>
+            <th style="padding:8px 10px;text-align:right;">Estructura / GF</th>
+            <th style="padding:8px 10px;text-align:right;background:#dc2626;">Total egresos</th>
+            <th style="padding:8px 10px;text-align:right;">Acumulado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {"".join(
+            f'<tr style="background:{"#fef2f2" if m == mes_sel else ("#f8fafc" if i%2==0 else "#fff")};'
+            f'{"font-weight:700;" if m == mes_sel else ""}">'
+            f'<td style="padding:7px 10px;border-bottom:1px solid #f1f5f9;">{_lbl(m)}'
+            f'{"  ← período sel." if m == mes_sel else ""}</td>'
+            f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;">{_m(cv_mes.get(m,0))}</td>'
+            f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;">{_m(mo_mes.get(m,0))}</td>'
+            f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;">{_m(gf_mes.get(m,0)+mant_mes.get(m,0))}</td>'
+            f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;font-weight:700;color:#dc2626;">{_m(_egr(m))}</td>'
+            f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;color:#6b7280;">{_m(acum_vals[j] if j < len(acum_vals) else 0)}</td>'
+            f'</tr>'
+            for j, (i, m) in enumerate((i, m) for i, m in enumerate(chart_meses))
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+<script>
+(function(){{
+  const ctx = document.getElementById('chartFlujo').getContext('2d');
+  const sel = {chart_sel_js};
+  new Chart(ctx, {{
+    type: 'bar',
+    data: {{
+      labels: {chart_lbl_js},
+      datasets: [
+        {{
+          label: 'Costos variables',
+          data: {chart_cv_js},
+          backgroundColor: ctx_i => ctx_i.dataIndex === sel ? 'rgba(99,102,241,.95)' : 'rgba(99,102,241,.65)',
+          stack: 'egresos', borderRadius: 3, borderWidth: 0,
+        }},
+        {{
+          label: 'Mano de Obra',
+          data: {chart_mo_js},
+          backgroundColor: ctx_i => ctx_i.dataIndex === sel ? 'rgba(8,145,178,.95)' : 'rgba(8,145,178,.65)',
+          stack: 'egresos', borderRadius: 3, borderWidth: 0,
+        }},
+        {{
+          label: 'Estructura / GF',
+          data: {chart_gf_js},
+          backgroundColor: ctx_i => ctx_i.dataIndex === sel ? 'rgba(245,158,11,.95)' : 'rgba(245,158,11,.65)',
+          stack: 'egresos', borderRadius: 3, borderWidth: 0,
+        }},
+        {{
+          label: 'Acumulado egresos',
+          data: {chart_acum_js},
+          type: 'line',
+          yAxisID: 'yAcum',
+          borderColor: '#dc2626',
+          backgroundColor: 'rgba(220,38,38,.08)',
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: '#dc2626',
+          fill: false,
+          tension: 0.3,
+          order: 0,
+        }}
+      ]
+    }},
+    options: {{
+      responsive: true, maintainAspectRatio: false,
+      interaction: {{ mode: 'index', intersect: false }},
+      plugins: {{
+        legend: {{ display: false }},
+        tooltip: {{
+          callbacks: {{
+            label: c => ` ${{c.dataset.label}}: ${{(c.parsed.y/1000000).toFixed(2)}} M`
+          }}
+        }}
+      }},
+      scales: {{
+        x: {{ stacked: true, ticks: {{ font: {{ size: 10 }}, maxRotation: 45 }} }},
+        y: {{ stacked: true, beginAtZero: true,
+              title: {{ display: true, text: 'Egresos mensuales ($)', font: {{ size: 10 }} }},
+              ticks: {{ callback: v => '$' + (v/1000000).toFixed(1) + 'M', font: {{ size: 10 }} }},
+              grid: {{ color: '#f1f5f9' }} }},
+        yAcum: {{
+          position: 'right',
+          beginAtZero: true,
+          title: {{ display: true, text: 'Acumulado ($)', font: {{ size: 10 }} }},
+          ticks: {{ callback: v => '$' + (v/1000000).toFixed(1) + 'M', font: {{ size: 10 }} }},
+          grid: {{ drawOnChartArea: false }}
+        }}
+      }}
+    }}
+  }});
+}})();
+</script>
+</body></html>"""
