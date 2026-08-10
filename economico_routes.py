@@ -1878,22 +1878,43 @@ def economico_dashboard_ejecutivo():
     # CD Ejecutado mensual = only direct costs (same scope as p_cd / accumulated KPIs)
     def _egr_de(m): return _cv_mes.get(m,0) + _mo_mes.get(m,0)
 
-    # CD Previsto mensual: distribucion proporcional a HH → suma exactamente p_cd acumulado
+    # CD Previsto mensual = misma fuente que p_cd acumulado: lineal por periodo programado de OT
     _pcd_map_de = {str(r[0]): float(r[1] or 0) for r in db.execute(
-        "SELECT ot_id, COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)"
-        "+COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0) FROM economico_presupuesto"
+        'SELECT ot_id, COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)'
+        '+COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0) FROM economico_presupuesto'
     ).fetchall()}
-    _total_hh_ot_de: dict = {}
-    for _r in _hh_rows:
-        _ot_k = str(_r[1] or "")
-        _total_hh_ot_de[_ot_k] = _total_hh_ot_de.get(_ot_k, 0.0) + float(_r[2] or 0)
+    _prog_de = {str(r[0]): (str(r[1] or '')[:10], str(r[2] or '')[:10]) for r in db.execute(
+        'SELECT ot_id, MIN(fecha_inicio), MAX(fecha_fin) FROM programacion GROUP BY ot_id'
+    ).fetchall()}
+    _pt_s_de = {str(r[0]): str(r[1] or '')[:10] for r in db.execute(
+        'SELECT ot_id, MIN(fecha) FROM partes_trabajo GROUP BY ot_id'
+    ).fetchall()}
+    _fe_de = {str(r[0]): str(r[1] or '')[:10] for r in db.execute(
+        'SELECT id, COALESCE(fecha_entrega,\'\') FROM ordenes_trabajo'
+    ).fetchall()}
+
+    def _pv_lin_de(pcd, sid):
+        import datetime as _ddpv; from calendar import monthrange as _mrde
+        fi_s, ff_s = _prog_de.get(sid, ('', ''))
+        if not fi_s: fi_s = _pt_s_de.get(sid, '')
+        if not ff_s: ff_s = _fe_de.get(sid, '')
+        try: fi = _ddpv.date.fromisoformat(fi_s[:10]); ff = _ddpv.date.fromisoformat(ff_s[:10])
+        except Exception: return {}
+        if ff <= fi or pcd <= 0: return {}
+        td = max((ff - fi).days, 1); res = {}
+        cur = _ddpv.date(fi.year, fi.month, 1)
+        while _ddpv.date(cur.year, cur.month, 1) <= _ddpv.date(ff.year, ff.month, 1):
+            yr, mo = cur.year, cur.month; _, dim = _mrde(yr, mo)
+            ms = max(fi, _ddpv.date(yr, mo, 1)); me = min(ff, _ddpv.date(yr, mo, dim))
+            if me >= ms: res[f'{yr}-{mo:02d}'] = res.get(f'{yr}-{mo:02d}', 0.0) + pcd * (me - ms).days / td
+            cur = _ddpv.date(yr+1, 1, 1) if mo == 12 else _ddpv.date(yr, mo+1, 1)
+        return res
+
     _ing_mes_de: dict = {}
-    for _r in _hh_rows:
-        _ot_k = str(_r[1] or ""); _pcd_k = _pcd_map_de.get(_ot_k, 0)
-        _tot_hh = _total_hh_ot_de.get(_ot_k, 0)
-        if _tot_hh > 0 and _pcd_k > 0:
-            _m_k = str(_r[0] or "")
-            _ing_mes_de[_m_k] = _ing_mes_de.get(_m_k, 0.0) + float(_r[2] or 0) / _tot_hh * _pcd_k
+    for _ks_de, _pv_de in _pcd_map_de.items():
+        if _pv_de > 0:
+            for _mk_de, _vv_de in _pv_lin_de(_pv_de, _ks_de).items():
+                _ing_mes_de[_mk_de] = _ing_mes_de.get(_mk_de, 0.0) + _vv_de
 
     _egr_s = _egr_de(_mes_fil); _egr_p = _egr_de(_prev_de)
     _ing_s = _ing_mes_de.get(_mes_fil, 0); _ing_p = _ing_mes_de.get(_prev_de, 0)
@@ -2349,25 +2370,53 @@ def economico_flujo_caja():
         mant_mes[mes_m] = mant_mes.get(mes_m, 0.0) + hh_m * (c["precio_hora_mo"] + c["precio_hora_cons"])
 
     all_meses = sorted(set(list(cv_mes) + list(mo_mes) + list(gf_mes) + list(mant_mes)))
-    # CD ejecutado mensual = direct costs only (same scope as p_cd accumulated KPI)
+    # CD Ejecutado mensual = misma fuente que el acumulado r_cd:
+    # mat+pint+sub+flete+ing (de economico_costos_reales_mensual) + MO+cons (de partes_trabajo x tarifa)
     def _egr(m): return cv_mes.get(m,0) + mo_mes.get(m,0)
 
-    # CD Previsto mensual: distribucion proporcional a HH → suma exactamente p_cd acumulado
-    # Key type garantizado como str para evitar mismatch entre OT ids enteros y strings
+    # CD Previsto mensual = misma fuente que el acumulado p_cd:
+    # distribuir p_cd linealmente segun el periodo programado de cada OT
     _pcd_fc = {str(r[0]): float(r[1] or 0) for r in db.execute(
         "SELECT ot_id, COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)"
         "+COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0) FROM economico_presupuesto"
     ).fetchall()}
-    _total_hh_ot_fc: dict = {}
-    for r in hh_rows:
-        _k = str(r[1] or "")
-        _total_hh_ot_fc[_k] = _total_hh_ot_fc.get(_k, 0.0) + float(r[2] or 0)
+    _prog_fc = {str(r[0]): (str(r[1] or "")[:10], str(r[2] or "")[:10]) for r in db.execute(
+        "SELECT ot_id, MIN(fecha_inicio), MAX(fecha_fin) FROM programacion GROUP BY ot_id"
+    ).fetchall()}
+    _pt_start_fc = {str(r[0]): str(r[1] or "")[:10] for r in db.execute(
+        "SELECT ot_id, MIN(fecha) FROM partes_trabajo GROUP BY ot_id"
+    ).fetchall()}
+    _fe_fc = {str(r[0]): str(r[1] or "")[:10] for r in db.execute(
+        "SELECT id, COALESCE(fecha_entrega,'') FROM ordenes_trabajo"
+    ).fetchall()}
+
+    def _pv_lineal(pcd, ot_id_str):
+        """Distribuye p_cd linealmente en el periodo programado (str keys, sin key mismatch)."""
+        import datetime as _dtpv; from calendar import monthrange as _mrpv
+        fi_s, ff_s = _prog_fc.get(ot_id_str, ("", ""))
+        if not fi_s: fi_s = _pt_start_fc.get(ot_id_str, "")
+        if not ff_s: ff_s = _fe_fc.get(ot_id_str, "")
+        try:
+            fi = _dtpv.date.fromisoformat(fi_s[:10])
+            ff = _dtpv.date.fromisoformat(ff_s[:10])
+        except Exception: return {}
+        if ff <= fi or pcd <= 0: return {}
+        total_days = max((ff - fi).days, 1)
+        result: dict = {}
+        cur = _dtpv.date(fi.year, fi.month, 1)
+        while _dtpv.date(cur.year, cur.month, 1) <= _dtpv.date(ff.year, ff.month, 1):
+            yr, mo = cur.year, cur.month; _, dim = _mrpv(yr, mo)
+            ms = max(fi, _dtpv.date(yr, mo, 1)); me = min(ff, _dtpv.date(yr, mo, dim))
+            if me >= ms:
+                result[f"{yr}-{mo:02d}"] = result.get(f"{yr}-{mo:02d}", 0.0) + pcd * (me - ms).days / total_days
+            cur = _dtpv.date(yr+1, 1, 1) if mo == 12 else _dtpv.date(yr, mo+1, 1)
+        return result
+
     ing_mes: dict = {}
-    for r in hh_rows:
-        _k = str(r[1] or ""); _pcd_v = _pcd_fc.get(_k, 0); _tot = _total_hh_ot_fc.get(_k, 0)
-        if _tot > 0 and _pcd_v > 0:
-            _mes_k = str(r[0] or "")
-            ing_mes[_mes_k] = ing_mes.get(_mes_k, 0.0) + float(r[2] or 0) / _tot * _pcd_v
+    for _ot_str, _pcd_v in _pcd_fc.items():
+        if _pcd_v > 0:
+            for _m_pv, _v_pv in _pv_lineal(_pcd_v, _ot_str).items():
+                ing_mes[_m_pv] = ing_mes.get(_m_pv, 0.0) + _v_pv
 
     all_meses = sorted(set(list(all_meses) + list(ing_mes)))
 
@@ -2668,7 +2717,7 @@ def _curva_s_impl():
     # ── Obras disponibles ─────────────────────────────────────────────────────
     all_obras = [r[0] for r in db.execute(
         "SELECT DISTINCT TRIM(COALESCE(obra,'')) FROM ordenes_trabajo "
-        "WHERE COALESCE(es_mantenimiento,0)=0 AND TRIM(COALESCE(obra,''))!='' ORDER BY obra"
+        "WHERE COALESCE(es_mantenimiento,0)=0 AND TRIM(COALESCE(obra,''))!='' ORDER BY 1"
     ).fetchall()]
 
     # ── OTs a analizar ────────────────────────────────────────────────────────
