@@ -1875,7 +1875,8 @@ def economico_dashboard_ejecutivo():
         _c = _cfg_de[_ob]
         _mant_mes[str(_r[0] or "")] = _mant_mes.get(str(_r[0] or ""), 0.0) + float(_r[2] or 0) * (_c["precio_hora_mo"] + _c["precio_hora_cons"])
 
-    def _egr_de(m): return _cv_mes.get(m,0) + _mo_mes.get(m,0) + _gf_mes.get(m,0) + _mant_mes.get(m,0)
+    # CD Ejecutado mensual = only direct costs (same scope as p_cd / accumulated KPIs)
+    def _egr_de(m): return _cv_mes.get(m,0) + _mo_mes.get(m,0)
 
     # CD previsto mensual = (HH trabajadas en el mes / HH previstas OT) × p_cd de la OT
     _pcd_map_de = {str(r[0]): float(r[1] or 0) for r in db.execute(
@@ -1897,7 +1898,7 @@ def economico_dashboard_ejecutivo():
     _mo_s  = _mo_mes.get(_mes_fil,0);  _mo_p  = _mo_mes.get(_prev_de,0)
     _gf_s  = _gf_mes.get(_mes_fil,0)+_mant_mes.get(_mes_fil,0)
     _gf_p  = _gf_mes.get(_prev_de,0) +_mant_mes.get(_prev_de,0)
-    _saldo_s = _ing_s - _egr_s
+    _saldo_s = _ing_s - _egr_s  # CD Previsto - CD Ejecutado (both direct cost scope)
 
     def _delta_de(val, prev):
         if prev <= 0: return ""
@@ -1925,12 +1926,12 @@ def economico_dashboard_ejecutivo():
         _kpi_per("CD Previsto mensual", _m(_ing_s), "(HH/HH prev.) × CD previsto", "#16a34a",
                  _delta_de(_ing_s, _ing_p),
                  "Costo directo presupuestado del mes: (HH / HH previstas) × p_cd por OT") +
-        _kpi_per("Total egresos", _m(_egr_s), _lbl_de(_mes_fil), "#dc2626",
+        _kpi_per("CD Ejecutado mensual", _m(_egr_s), "costos directos reales", "#dc2626",
                  _delta_de(_egr_s, _egr_p), "Suma de todos los costos del mes: variables + MO + estructura") +
         _kpi_per("Saldo del mes", _m(abs(_saldo_s)),
                  "✅ positivo" if _saldo_s >= 0 else "⚠ negativo",
                  "#16a34a" if _saldo_s >= 0 else "#dc2626", "",
-                 "CD Previsto mensual − Egresos del mes. Negativo: costos superan el CD planificado.") +
+                 "CD Previsto − CD Ejecutado (costos directos). Coherente con indicadores acumulados.") +
         _kpi_per("Estructura / GF", _m(_gf_s), "gastos fijos + mantenimiento","#f59e0b",
                  _delta_de(_gf_s, _gf_p),  "Gastos fijos del mes + costos de obras de mantenimiento")
     )
@@ -2346,7 +2347,8 @@ def economico_flujo_caja():
         mant_mes[mes_m] = mant_mes.get(mes_m, 0.0) + hh_m * (c["precio_hora_mo"] + c["precio_hora_cons"])
 
     all_meses = sorted(set(list(cv_mes) + list(mo_mes) + list(gf_mes) + list(mant_mes)))
-    def _egr(m): return cv_mes.get(m,0) + mo_mes.get(m,0) + gf_mes.get(m,0) + mant_mes.get(m,0)
+    # CD ejecutado mensual = direct costs only (same scope as p_cd accumulated KPI)
+    def _egr(m): return cv_mes.get(m,0) + mo_mes.get(m,0)
 
     # CD previsto mensual = (HH del mes / HH previstas OT) × p_cd de la OT
     _pcd_fc = {str(r[0]): float(r[1] or 0) for r in db.execute(
@@ -2417,8 +2419,8 @@ def economico_flujo_caja():
     kpis_html = (
         _kpi("CD Previsto mensual", _m(ing_sel), "(HH/HH prev.) × CD previsto", "#16a34a", _d(ing_sel, ing_prv),
              "Costo directo presupuestado del mes: (HH / HH previstas) × p_cd por OT") +
-        _kpi("Total egresos", _m(egr_sel), _lbl(mes_sel), "#dc2626", _d(egr_sel, egr_prv),
-             "Suma total de costos del mes: variables + MO + estructura") +
+        _kpi("CD Ejecutado mensual", _m(egr_sel), "costos directos reales", "#dc2626", _d(egr_sel, egr_prv),
+             "Costos directos reales del mes: materiales + MO. Sin GF ni overhead.") +
         _kpi("Saldo del mes", _m(abs(saldo_sel)),
              "✅ positivo" if saldo_sel >= 0 else "⚠ negativo",
              "#16a34a" if saldo_sel >= 0 else "#dc2626", "",
@@ -2674,16 +2676,28 @@ def economico_curva_s():
               for r in ots_rows}
     ph = ",".join("?" * len(ot_ids))
 
-    # ── BAC por OT (precio de venta previsto = presupuesto total) ─────────────
-    bac_map = {str(r[0]): float(r[1] or 0) for r in db.execute(f"""
-        SELECT ot_id,
-               COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)+
-               COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0)+
-               COALESCE(subcontratos_previsto,0)+COALESCE(fletes_previsto,0)+
-               COALESCE(gastos_gen_previsto,0)+COALESCE(impuestos_previsto,0)+
-               COALESCE(beneficio_previsto,0)
-        FROM economico_presupuesto WHERE ot_id IN ({ph})
-    """, ot_ids).fetchall()}
+    # BAC = PV total; safe fallback omits fletes/subcontratos_previsto if migration is pending
+    _bac_cols_full = (
+        "COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)"
+        "+COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0)"
+        "+COALESCE(subcontratos_previsto,0)+COALESCE(fletes_previsto,0)"
+        "+COALESCE(gastos_gen_previsto,0)+COALESCE(impuestos_previsto,0)+COALESCE(beneficio_previsto,0)"
+    )
+    _bac_cols_safe = (
+        "COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)"
+        "+COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0)"
+        "+COALESCE(gastos_gen_previsto,0)+COALESCE(impuestos_previsto,0)+COALESCE(beneficio_previsto,0)"
+    )
+    try:
+        bac_map = {str(r[0]): float(r[1] or 0) for r in db.execute(
+            f"SELECT ot_id, {_bac_cols_full} FROM economico_presupuesto WHERE ot_id IN ({ph})",
+            ot_ids
+        ).fetchall()}
+    except Exception:
+        bac_map = {str(r[0]): float(r[1] or 0) for r in db.execute(
+            f"SELECT ot_id, {_bac_cols_safe} FROM economico_presupuesto WHERE ot_id IN ({ph})",
+            ot_ids
+        ).fetchall()}
 
     # ── Fechas de programación por OT ─────────────────────────────────────────
     prog_map = {r[0]: (str(r[1] or "")[:10], str(r[2] or "")[:10])
