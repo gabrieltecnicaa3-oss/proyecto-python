@@ -2634,6 +2634,19 @@ select:focus{{outline:none;border-color:#334155;}}
 
 @economico_bp.route("/modulo/economico/curva-s")
 def economico_curva_s():
+    try:
+        return _curva_s_impl()
+    except Exception as _cs_exc:
+        import traceback as _tb
+        _err = _tb.format_exc()
+        print(_err)  # visible en logs de Railway
+        return (f'<h2 style="font-family:sans-serif;color:#dc2626">Error en Curva S/EVM</h2>'
+                f'<pre style="background:#fef2f2;padding:16px;font-size:.78rem;border-radius:8px;'
+                f'overflow:auto;max-width:960px;margin:20px auto;">{html_lib.escape(_err)}</pre>'
+                f'<a href="/modulo/economico" style="margin:20px;display:inline-block;">← Volver</a>'), 500
+
+
+def _curva_s_impl():
     db = get_db(); _ensure_schema(db)
     import json as _jcs
     import datetime as _dtcs
@@ -2680,17 +2693,15 @@ def economico_curva_s():
               for r in ots_rows}
     ph = ",".join("?" * len(ot_ids))
 
-    # BAC = PV total; safe fallback omits fletes/subcontratos_previsto if migration is pending
+    # BAC = p_cd (mismo scope que "Costo Directo Previsto" del dashboard)
     _bac_cols_full = (
         "COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)"
         "+COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0)"
         "+COALESCE(subcontratos_previsto,0)+COALESCE(fletes_previsto,0)"
-        "+COALESCE(gastos_gen_previsto,0)+COALESCE(impuestos_previsto,0)+COALESCE(beneficio_previsto,0)"
     )
     _bac_cols_safe = (
         "COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)"
         "+COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0)"
-        "+COALESCE(gastos_gen_previsto,0)+COALESCE(impuestos_previsto,0)+COALESCE(beneficio_previsto,0)"
     )
     try:
         bac_map = {str(r[0]): float(r[1] or 0) for r in db.execute(
