@@ -1850,7 +1850,7 @@ def economico_dashboard_ejecutivo():
     ).fetchall()}
     _hh_rows = db.execute(
         f"SELECT {_fmt_pt_de} AS mes, ot_id, SUM(horas) FROM partes_trabajo "
-        f"WHERE fecha IS NOT NULL AND fecha!='' GROUP BY mes, ot_id"
+        f"WHERE fecha IS NOT NULL AND fecha!='' GROUP BY {_fmt_pt_de}, ot_id"
     ).fetchall()
     _ot_obras_de = {str(r[0]): str(r[1] or "").strip()
                     for r in db.execute("SELECT id, COALESCE(obra,'') FROM ordenes_trabajo").fetchall()}
@@ -2314,7 +2314,7 @@ def economico_flujo_caja():
     # ── MO mensual (partes_trabajo × tarifas por obra) ────────────────────────
     hh_rows = db.execute(
         f"SELECT {_fmt_pt} AS mes, ot_id, SUM(horas) AS hh "
-        f"FROM partes_trabajo WHERE fecha IS NOT NULL AND fecha!='' GROUP BY mes, ot_id"
+        f"FROM partes_trabajo WHERE fecha IS NOT NULL AND fecha!='' GROUP BY {_fmt_pt}, ot_id"
     ).fetchall()
     ot_obras = {str(r[0]): str(r[1] or "").strip()
                 for r in db.execute("SELECT id, COALESCE(obra,'') FROM ordenes_trabajo").fetchall()}
@@ -2350,20 +2350,48 @@ def economico_flujo_caja():
     # CD ejecutado mensual = direct costs only (same scope as p_cd accumulated KPI)
     def _egr(m): return cv_mes.get(m,0) + mo_mes.get(m,0)
 
-    # CD previsto mensual = (HH del mes / HH previstas OT) × p_cd de la OT
+    # CD Previsto mensual = linear distribution of p_cd over the programmed project period
+    # This is the Planned Value (PV) curve and correctly exceeds actual costs when under budget.
     _pcd_fc = {str(r[0]): float(r[1] or 0) for r in db.execute(
         "SELECT ot_id, COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)"
         "+COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0) FROM economico_presupuesto"
     ).fetchall()}
-    _hs_fc = {str(r[0]): float(r[1] or 0) for r in db.execute(
-        "SELECT id, COALESCE(hs_previstas,0) FROM ordenes_trabajo"
+    _prog_fc = {r[0]: (str(r[1] or "")[:10], str(r[2] or "")[:10]) for r in db.execute(
+        "SELECT ot_id, MIN(fecha_inicio), MAX(fecha_fin) FROM programacion GROUP BY ot_id"
     ).fetchall()}
+    _pt_start_fc = {r[0]: str(r[1] or "")[:10] for r in db.execute(
+        "SELECT ot_id, MIN(fecha) FROM partes_trabajo GROUP BY ot_id"
+    ).fetchall()}
+    _fe_fc = {r[0]: str(r[1] or "")[:10] for r in db.execute(
+        "SELECT id, COALESCE(fecha_entrega,'') FROM ordenes_trabajo"
+    ).fetchall()}
+
+    def _dist_pv_fc(pcd, ot_id):
+        import datetime as _dtfc; from calendar import monthrange as _mrfc
+        fi_s, ff_s = _prog_fc.get(ot_id, ("", ""))
+        if not fi_s: fi_s = _pt_start_fc.get(ot_id, "")
+        if not ff_s: ff_s = _fe_fc.get(ot_id, "")
+        try:
+            fi = _dtfc.date.fromisoformat(fi_s[:10]); ff = _dtfc.date.fromisoformat(ff_s[:10])
+        except Exception: return {}
+        if ff <= fi or pcd <= 0: return {}
+        total_days = max((ff - fi).days, 1); result = {}
+        cur = _dtfc.date(fi.year, fi.month, 1)
+        while _dtfc.date(cur.year, cur.month, 1) <= _dtfc.date(ff.year, ff.month, 1):
+            yr, mo = cur.year, cur.month; _, dim = _mrfc(yr, mo)
+            ms = max(fi, _dtfc.date(yr, mo, 1)); me = min(ff, _dtfc.date(yr, mo, dim))
+            if me >= ms:
+                result[f"{yr}-{mo:02d}"] = result.get(f"{yr}-{mo:02d}", 0.0) + pcd * (me - ms).days / total_days
+            cur = _dtfc.date(yr+1, 1, 1) if mo == 12 else _dtfc.date(yr, mo+1, 1)
+        return result
+
     ing_mes: dict = {}
-    for r in hh_rows:
-        _ot_k = str(r[1] or ""); _hs_p = _hs_fc.get(_ot_k, 0); _pv_k = _pcd_fc.get(_ot_k, 0)
-        if _hs_p > 0 and _pv_k > 0:
-            _m_k = str(r[0] or "")
-            ing_mes[_m_k] = ing_mes.get(_m_k, 0.0) + (float(r[2] or 0) / _hs_p) * _pv_k
+    _all_ot_ids_fc = list({r[1] for r in hh_rows} | set(str(k) for k in _pcd_fc))
+    for _ot_fc in _all_ot_ids_fc:
+        _pcd_v = _pcd_fc.get(str(_ot_fc), 0) or _pcd_fc.get(_ot_fc, 0)
+        if _pcd_v <= 0: continue
+        for _m_fc, _v_fc in _dist_pv_fc(_pcd_v, _ot_fc).items():
+            ing_mes[_m_fc] = ing_mes.get(_m_fc, 0.0) + _v_fc
 
     all_meses = sorted(set(list(all_meses) + list(ing_mes)))
 
@@ -2746,7 +2774,7 @@ def economico_curva_s():
     # ── EV mensual (HH mes / HH previstas × BAC) ─────────────────────────────
     hh_rows = db.execute(
         f"SELECT {_fmt_pt} AS mes, ot_id, SUM(horas) FROM partes_trabajo "
-        f"WHERE ot_id IN ({ph}) AND fecha IS NOT NULL AND fecha!='' GROUP BY mes, ot_id",
+        f"WHERE ot_id IN ({ph}) AND fecha IS NOT NULL AND fecha!='' GROUP BY {_fmt_pt}, ot_id",
         ot_ids
     ).fetchall()
     _cfg_cs: dict = {}
