@@ -2586,6 +2586,18 @@ select:focus{{outline:none;border-color:#334155;}}
             for i, m in enumerate(chart_meses)
           )}
         </tbody>
+        <tfoot>
+          <tr style="background:#1e293b;color:#fff;font-weight:700;">
+            <td style="padding:8px 10px;">TOTAL ({len(chart_meses)} meses)</td>
+            <td style="padding:8px 10px;text-align:right;color:#86efac;">{_m(sum(ing_mes.get(m,0) for m in chart_meses))}</td>
+            <td style="padding:8px 10px;text-align:right;color:#fca5a5;">{_m(sum(_egr(m) for m in chart_meses))}</td>
+            {(lambda _st=sum(ing_mes.get(m,0)-_egr(m) for m in chart_meses):
+              f'<td style="padding:8px 10px;text-align:right;color:{"#86efac" if _st>=0 else "#fca5a5"};">{_m(_st)}</td>')()}
+            <td style="padding:8px 10px;text-align:right;">{_m(sum(mo_mes.get(m,0) for m in chart_meses))}</td>
+            <td style="padding:8px 10px;text-align:right;">{_m(sum(gf_mes.get(m,0)+mant_mes.get(m,0) for m in chart_meses))}</td>
+            <td style="padding:8px 10px;text-align:right;">{_m(sum(cv_mes.get(m,0) for m in chart_meses))}</td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   </div>
