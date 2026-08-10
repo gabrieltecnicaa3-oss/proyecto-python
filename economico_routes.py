@@ -1877,6 +1877,20 @@ def economico_dashboard_ejecutivo():
 
     def _egr_de(m): return _cv_mes.get(m,0) + _mo_mes.get(m,0) + _gf_mes.get(m,0) + _mant_mes.get(m,0)
 
+    # Valor ganado acumulado: suma(avance_fisico% × PV previsto) por OT productiva
+    _ing_rows = db.execute("""
+        SELECT COALESCE(ot.estado_avance,0),
+               COALESCE(ep.mat_previsto,0)+COALESCE(ep.pintura_previsto,0)+
+               COALESCE(ep.mo_previsto,0)+COALESCE(ep.consumibles_previsto,0)+
+               COALESCE(ep.ingenieria_previsto,0)+COALESCE(ep.subcontratos_previsto,0)+
+               COALESCE(ep.fletes_previsto,0)+COALESCE(ep.gastos_gen_previsto,0)+
+               COALESCE(ep.impuestos_previsto,0)+COALESCE(ep.beneficio_previsto,0)
+        FROM ordenes_trabajo ot
+        LEFT JOIN economico_presupuesto ep ON ep.ot_id=ot.id
+        WHERE COALESCE(ot.es_mantenimiento,0)=0
+    """).fetchall()
+    _ingresos_total = sum(float(r[0] or 0)/100.0 * float(r[1] or 0) for r in _ing_rows)
+
     _egr_s = _egr_de(_mes_fil); _egr_p = _egr_de(_prev_de)
     _cv_s  = _cv_mes.get(_mes_fil,0);  _cv_p  = _cv_mes.get(_prev_de,0)
     _mo_s  = _mo_mes.get(_mes_fil,0);  _mo_p  = _mo_mes.get(_prev_de,0)
@@ -1908,8 +1922,9 @@ def economico_dashboard_ejecutivo():
     _kpi_per_html = (
         _kpi_per("Total egresos", _m(_egr_s), _lbl_de(_mes_fil), "#dc2626",
                  _delta_de(_egr_s, _egr_p), "Suma de todos los costos del mes: variables + MO + estructura") +
-        _kpi_per("Costos variables", _m(_cv_s), "mat · pintura · subc",       "#6366f1",
-                 _delta_de(_cv_s, _cv_p),  "Costos cargados en la sección Costos Reales Mensuales") +
+        _kpi_per("Total ingresos estimados", _m(_ingresos_total),
+                 "avance físico × PV previsto", "#16a34a", "",
+                 "Suma de (estado_avance % × precio de venta previsto) por OT — valor ganado acumulado del portfolio") +
         _kpi_per("Mano de Obra", _m(_mo_s), "HH × tarifa por obra",           "#0891b2",
                  _delta_de(_mo_s, _mo_p),  "Calculado desde partes de trabajo × precio_hora") +
         _kpi_per("Estructura / GF", _m(_gf_s), "gastos fijos + mantenimiento","#f59e0b",
