@@ -2418,7 +2418,17 @@ def economico_flujo_caja():
             for _m_pv, _v_pv in _pv_lineal(_pcd_v, _ot_str).items():
                 ing_mes[_m_pv] = ing_mes.get(_m_pv, 0.0) + _v_pv
 
+    # OTs sin fechas: distribuir su p_cd en el primer mes con datos (para que el total sume)
+    _ing_total_dist = sum(ing_mes.values())
+    _pcd_total = sum(_pcd_fc.values())
+    _pcd_sin_fecha = _pcd_total - _ing_total_dist
+    if _pcd_sin_fecha > 1 and all_meses:
+        _primer_mes = all_meses[0]
+        ing_mes[_primer_mes] = ing_mes.get(_primer_mes, 0.0) + _pcd_sin_fecha
+
     all_meses = sorted(set(list(all_meses) + list(ing_mes)))
+    # tabla_meses = todos los meses con datos (para que los totales coincidan con acumulados)
+    tabla_meses = all_meses if all_meses else [mes_sel]
 
     # Chart: últimos 12 meses con datos
     chart_meses = all_meses[-12:] if all_meses else [mes_sel]
@@ -2583,19 +2593,19 @@ select:focus{{outline:none;border-color:#334155;}}
             f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;">{_m(gf_mes.get(m,0)+mant_mes.get(m,0))}</td>'
             f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;">{_m(cv_mes.get(m,0))}</td>'
             f'</tr>')()
-            for i, m in enumerate(chart_meses)
+            for i, m in enumerate(tabla_meses)
           )}
         </tbody>
         <tfoot>
           <tr style="background:#1e293b;color:#fff;font-weight:700;">
-            <td style="padding:8px 10px;">TOTAL ({len(chart_meses)} meses)</td>
-            <td style="padding:8px 10px;text-align:right;color:#86efac;">{_m(sum(ing_mes.get(m,0) for m in chart_meses))}</td>
-            <td style="padding:8px 10px;text-align:right;color:#fca5a5;">{_m(sum(_egr(m) for m in chart_meses))}</td>
-            {(lambda _st=sum(ing_mes.get(m,0)-_egr(m) for m in chart_meses):
+            <td style="padding:8px 10px;">TOTAL ({len(tabla_meses)} meses)</td>
+            <td style="padding:8px 10px;text-align:right;color:#86efac;">{_m(sum(ing_mes.get(m,0) for m in tabla_meses))}</td>
+            <td style="padding:8px 10px;text-align:right;color:#fca5a5;">{_m(sum(_egr(m) for m in tabla_meses))}</td>
+            {(lambda _st=sum(ing_mes.get(m,0)-_egr(m) for m in tabla_meses):
               f'<td style="padding:8px 10px;text-align:right;color:{"#86efac" if _st>=0 else "#fca5a5"};">{_m(_st)}</td>')()}
-            <td style="padding:8px 10px;text-align:right;">{_m(sum(mo_mes.get(m,0) for m in chart_meses))}</td>
-            <td style="padding:8px 10px;text-align:right;">{_m(sum(gf_mes.get(m,0)+mant_mes.get(m,0) for m in chart_meses))}</td>
-            <td style="padding:8px 10px;text-align:right;">{_m(sum(cv_mes.get(m,0) for m in chart_meses))}</td>
+            <td style="padding:8px 10px;text-align:right;">{_m(sum(mo_mes.get(m,0) for m in tabla_meses))}</td>
+            <td style="padding:8px 10px;text-align:right;">{_m(sum(gf_mes.get(m,0)+mant_mes.get(m,0) for m in tabla_meses))}</td>
+            <td style="padding:8px 10px;text-align:right;">{_m(sum(cv_mes.get(m,0) for m in tabla_meses))}</td>
           </tr>
         </tfoot>
       </table>
