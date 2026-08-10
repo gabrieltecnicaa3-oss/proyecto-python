@@ -1877,25 +1877,20 @@ def economico_dashboard_ejecutivo():
 
     def _egr_de(m): return _cv_mes.get(m,0) + _mo_mes.get(m,0) + _gf_mes.get(m,0) + _mant_mes.get(m,0)
 
-    # Ingreso mensual = (HH trabajadas en el mes / HH previstas de la OT) × PV de la OT
-    _pv_map_de = {str(r[0]): float(r[1] or 0) for r in db.execute("""
-        SELECT ot_id,
-               COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)+
-               COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0)+
-               COALESCE(subcontratos_previsto,0)+COALESCE(fletes_previsto,0)+
-               COALESCE(gastos_gen_previsto,0)+COALESCE(impuestos_previsto,0)+
-               COALESCE(beneficio_previsto,0)
-        FROM economico_presupuesto
-    """).fetchall()}
+    # CD previsto mensual = (HH trabajadas en el mes / HH previstas OT) × p_cd de la OT
+    _pcd_map_de = {str(r[0]): float(r[1] or 0) for r in db.execute(
+        "SELECT ot_id, COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)"
+        "+COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0) FROM economico_presupuesto"
+    ).fetchall()}
     _hs_map_de = {str(r[0]): float(r[1] or 0) for r in db.execute(
         "SELECT id, COALESCE(hs_previstas,0) FROM ordenes_trabajo"
     ).fetchall()}
     _ing_mes_de: dict = {}
     for _r in _hh_rows:
-        _ot_k = str(_r[1] or ""); _hs_p = _hs_map_de.get(_ot_k, 0); _pv_k = _pv_map_de.get(_ot_k, 0)
-        if _hs_p > 0 and _pv_k > 0:
+        _ot_k = str(_r[1] or ""); _hs_p = _hs_map_de.get(_ot_k, 0); _pcd_k = _pcd_map_de.get(_ot_k, 0)
+        if _hs_p > 0 and _pcd_k > 0:
             _m_k = str(_r[0] or "")
-            _ing_mes_de[_m_k] = _ing_mes_de.get(_m_k, 0.0) + (float(_r[2] or 0) / _hs_p) * _pv_k
+            _ing_mes_de[_m_k] = _ing_mes_de.get(_m_k, 0.0) + (float(_r[2] or 0) / _hs_p) * _pcd_k
 
     _egr_s = _egr_de(_mes_fil); _egr_p = _egr_de(_prev_de)
     _ing_s = _ing_mes_de.get(_mes_fil, 0); _ing_p = _ing_mes_de.get(_prev_de, 0)
@@ -1927,15 +1922,15 @@ def economico_dashboard_ejecutivo():
         for m in _all_meses_de
     )
     _kpi_per_html = (
-        _kpi_per("Ingresos estimados", _m(_ing_s), "HH mes × (PV/HH previstas)", "#16a34a",
+        _kpi_per("CD Previsto mensual", _m(_ing_s), "(HH/HH prev.) × CD previsto", "#16a34a",
                  _delta_de(_ing_s, _ing_p),
-                 "Ingreso del mes = (HH trabajadas / HH previstas por OT) × PV previsto. Aproxima el valor generado mensualmente.") +
+                 "Costo directo presupuestado del mes: (HH / HH previstas) × p_cd por OT") +
         _kpi_per("Total egresos", _m(_egr_s), _lbl_de(_mes_fil), "#dc2626",
                  _delta_de(_egr_s, _egr_p), "Suma de todos los costos del mes: variables + MO + estructura") +
         _kpi_per("Saldo del mes", _m(abs(_saldo_s)),
                  "✅ positivo" if _saldo_s >= 0 else "⚠ negativo",
                  "#16a34a" if _saldo_s >= 0 else "#dc2626", "",
-                 "Ingresos estimados − Egresos del mes. Negativo indica que los costos superan el valor generado.") +
+                 "CD Previsto mensual − Egresos del mes. Negativo: costos superan el CD planificado.") +
         _kpi_per("Estructura / GF", _m(_gf_s), "gastos fijos + mantenimiento","#f59e0b",
                  _delta_de(_gf_s, _gf_p),  "Gastos fijos del mes + costos de obras de mantenimiento")
     )
@@ -2353,22 +2348,17 @@ def economico_flujo_caja():
     all_meses = sorted(set(list(cv_mes) + list(mo_mes) + list(gf_mes) + list(mant_mes)))
     def _egr(m): return cv_mes.get(m,0) + mo_mes.get(m,0) + gf_mes.get(m,0) + mant_mes.get(m,0)
 
-    # Ingreso mensual estimado = (HH del mes / HH previstas OT) × PV de la OT
-    _pv_fc = {str(r[0]): float(r[1] or 0) for r in db.execute("""
-        SELECT ot_id,
-               COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)+
-               COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0)+
-               COALESCE(subcontratos_previsto,0)+COALESCE(fletes_previsto,0)+
-               COALESCE(gastos_gen_previsto,0)+COALESCE(impuestos_previsto,0)+
-               COALESCE(beneficio_previsto,0)
-        FROM economico_presupuesto
-    """).fetchall()}
+    # CD previsto mensual = (HH del mes / HH previstas OT) × p_cd de la OT
+    _pcd_fc = {str(r[0]): float(r[1] or 0) for r in db.execute(
+        "SELECT ot_id, COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)"
+        "+COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0) FROM economico_presupuesto"
+    ).fetchall()}
     _hs_fc = {str(r[0]): float(r[1] or 0) for r in db.execute(
         "SELECT id, COALESCE(hs_previstas,0) FROM ordenes_trabajo"
     ).fetchall()}
     ing_mes: dict = {}
     for r in hh_rows:
-        _ot_k = str(r[1] or ""); _hs_p = _hs_fc.get(_ot_k, 0); _pv_k = _pv_fc.get(_ot_k, 0)
+        _ot_k = str(r[1] or ""); _hs_p = _hs_fc.get(_ot_k, 0); _pv_k = _pcd_fc.get(_ot_k, 0)
         if _hs_p > 0 and _pv_k > 0:
             _m_k = str(r[0] or "")
             ing_mes[_m_k] = ing_mes.get(_m_k, 0.0) + (float(r[2] or 0) / _hs_p) * _pv_k
@@ -2425,14 +2415,14 @@ def economico_flujo_caja():
                 f'{delta_html}</div>')
 
     kpis_html = (
-        _kpi("Ingresos estimados", _m(ing_sel), "HH mes × (PV/HH previstas)", "#16a34a", _d(ing_sel, ing_prv),
-             "Ingreso del mes = (HH trabajadas / HH previstas por OT) × PV previsto") +
+        _kpi("CD Previsto mensual", _m(ing_sel), "(HH/HH prev.) × CD previsto", "#16a34a", _d(ing_sel, ing_prv),
+             "Costo directo presupuestado del mes: (HH / HH previstas) × p_cd por OT") +
         _kpi("Total egresos", _m(egr_sel), _lbl(mes_sel), "#dc2626", _d(egr_sel, egr_prv),
              "Suma total de costos del mes: variables + MO + estructura") +
         _kpi("Saldo del mes", _m(abs(saldo_sel)),
              "✅ positivo" if saldo_sel >= 0 else "⚠ negativo",
              "#16a34a" if saldo_sel >= 0 else "#dc2626", "",
-             "Ingresos estimados − Egresos del mes") +
+             "CD Previsto mensual − Egresos del mes") +
         _kpi("Mano de Obra", _m(mo_sel), "HH × tarifa por obra", "#0891b2", _d(mo_sel, mo_prv),
              "Calculado desde partes de trabajo × precio_hora configurado por obra") +
         _kpi("Estructura / GF", _m(gf_sel), "gastos fijos + mantenimiento", "#f59e0b", _d(gf_sel, gf_prv),
@@ -2900,7 +2890,6 @@ def economico_curva_s():
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{titulo}</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 <style>
 *{{box-sizing:border-box;}}body{{font-family:system-ui,sans-serif;background:#f1f5f9;margin:0;padding:0;}}
 .hdr{{background:linear-gradient(135deg,#1e293b,#4338ca);color:#fff;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}}
@@ -3026,17 +3015,7 @@ tr:last-child td{{border-bottom:none;}}
             label: c => ` ${{c.dataset.label}}: $${{(c.parsed.y/1000000).toFixed(2)}}M`
           }}
         }},
-        annotation: {{
-          annotations: {{
-            hoy: {{
-              type: 'line', scaleID: 'x', value: todayIdx,
-              borderColor: '#374151', borderWidth: 2, borderDash: [5,3],
-              label: {{ content: 'Hoy', enabled: true, position: 'start',
-                        backgroundColor: '#374151', color: '#fff',
-                        font: {{ size: 10 }} }}
-            }}
-          }}
-        }}
+        annotation: {{}}
       }},
       scales: {{
         x: {{ ticks: {{ font: {{ size: 10 }}, maxRotation: 45 }} }},
@@ -3046,6 +3025,22 @@ tr:last-child td{{border-bottom:none;}}
           grid: {{ color: '#f1f5f9' }}
         }}
       }}
+    }}
+  }}, {{
+    id: 'todayLine',
+    afterDatasetsDraw(chart) {{
+      const idx = todayIdx;
+      const meta = chart.getDatasetMeta(0);
+      if (!meta.data[idx]) return;
+      const x = meta.data[idx].x, ctx = chart.ctx;
+      const {{top, bottom}} = chart.chartArea;
+      ctx.save();
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom);
+      ctx.lineWidth = 2; ctx.strokeStyle = '#374151';
+      ctx.setLineDash([5, 3]); ctx.stroke();
+      ctx.fillStyle = '#374151'; ctx.font = 'bold 10px system-ui';
+      ctx.fillText('Hoy', x + 4, top + 14);
+      ctx.restore();
     }}
   }});
 }})();
