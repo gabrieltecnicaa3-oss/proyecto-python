@@ -1878,20 +1878,22 @@ def economico_dashboard_ejecutivo():
     # CD Ejecutado mensual = only direct costs (same scope as p_cd / accumulated KPIs)
     def _egr_de(m): return _cv_mes.get(m,0) + _mo_mes.get(m,0)
 
-    # CD previsto mensual = (HH trabajadas en el mes / HH previstas OT) × p_cd de la OT
+    # CD Previsto mensual: distribucion proporcional a HH → suma exactamente p_cd acumulado
     _pcd_map_de = {str(r[0]): float(r[1] or 0) for r in db.execute(
         "SELECT ot_id, COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)"
         "+COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0) FROM economico_presupuesto"
     ).fetchall()}
-    _hs_map_de = {str(r[0]): float(r[1] or 0) for r in db.execute(
-        "SELECT id, COALESCE(hs_previstas,0) FROM ordenes_trabajo"
-    ).fetchall()}
+    _total_hh_ot_de: dict = {}
+    for _r in _hh_rows:
+        _ot_k = str(_r[1] or "")
+        _total_hh_ot_de[_ot_k] = _total_hh_ot_de.get(_ot_k, 0.0) + float(_r[2] or 0)
     _ing_mes_de: dict = {}
     for _r in _hh_rows:
-        _ot_k = str(_r[1] or ""); _hs_p = _hs_map_de.get(_ot_k, 0); _pcd_k = _pcd_map_de.get(_ot_k, 0)
-        if _hs_p > 0 and _pcd_k > 0:
+        _ot_k = str(_r[1] or ""); _pcd_k = _pcd_map_de.get(_ot_k, 0)
+        _tot_hh = _total_hh_ot_de.get(_ot_k, 0)
+        if _tot_hh > 0 and _pcd_k > 0:
             _m_k = str(_r[0] or "")
-            _ing_mes_de[_m_k] = _ing_mes_de.get(_m_k, 0.0) + (float(_r[2] or 0) / _hs_p) * _pcd_k
+            _ing_mes_de[_m_k] = _ing_mes_de.get(_m_k, 0.0) + float(_r[2] or 0) / _tot_hh * _pcd_k
 
     _egr_s = _egr_de(_mes_fil); _egr_p = _egr_de(_prev_de)
     _ing_s = _ing_mes_de.get(_mes_fil, 0); _ing_p = _ing_mes_de.get(_prev_de, 0)
@@ -1989,7 +1991,7 @@ def economico_dashboard_ejecutivo():
     <!-- KPIs de período mensual -->
     <div class="card" style="border-top:3px solid #dc2626;">
       <div class="ct" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-        <span>📅 Egresos del período</span>
+        <span>📅 Balance del período</span>
         <form method="get" style="margin:0;display:flex;align-items:center;gap:8px;">
           <label style="font-size:.78rem;color:#6b7280;font-weight:600;">Mes:</label>
           <select name="mes" onchange="this.form.submit()"
@@ -2350,48 +2352,22 @@ def economico_flujo_caja():
     # CD ejecutado mensual = direct costs only (same scope as p_cd accumulated KPI)
     def _egr(m): return cv_mes.get(m,0) + mo_mes.get(m,0)
 
-    # CD Previsto mensual = linear distribution of p_cd over the programmed project period
-    # This is the Planned Value (PV) curve and correctly exceeds actual costs when under budget.
+    # CD Previsto mensual: distribucion proporcional a HH → suma exactamente p_cd acumulado
+    # Key type garantizado como str para evitar mismatch entre OT ids enteros y strings
     _pcd_fc = {str(r[0]): float(r[1] or 0) for r in db.execute(
         "SELECT ot_id, COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)"
         "+COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0) FROM economico_presupuesto"
     ).fetchall()}
-    _prog_fc = {r[0]: (str(r[1] or "")[:10], str(r[2] or "")[:10]) for r in db.execute(
-        "SELECT ot_id, MIN(fecha_inicio), MAX(fecha_fin) FROM programacion GROUP BY ot_id"
-    ).fetchall()}
-    _pt_start_fc = {r[0]: str(r[1] or "")[:10] for r in db.execute(
-        "SELECT ot_id, MIN(fecha) FROM partes_trabajo GROUP BY ot_id"
-    ).fetchall()}
-    _fe_fc = {r[0]: str(r[1] or "")[:10] for r in db.execute(
-        "SELECT id, COALESCE(fecha_entrega,'') FROM ordenes_trabajo"
-    ).fetchall()}
-
-    def _dist_pv_fc(pcd, ot_id):
-        import datetime as _dtfc; from calendar import monthrange as _mrfc
-        fi_s, ff_s = _prog_fc.get(ot_id, ("", ""))
-        if not fi_s: fi_s = _pt_start_fc.get(ot_id, "")
-        if not ff_s: ff_s = _fe_fc.get(ot_id, "")
-        try:
-            fi = _dtfc.date.fromisoformat(fi_s[:10]); ff = _dtfc.date.fromisoformat(ff_s[:10])
-        except Exception: return {}
-        if ff <= fi or pcd <= 0: return {}
-        total_days = max((ff - fi).days, 1); result = {}
-        cur = _dtfc.date(fi.year, fi.month, 1)
-        while _dtfc.date(cur.year, cur.month, 1) <= _dtfc.date(ff.year, ff.month, 1):
-            yr, mo = cur.year, cur.month; _, dim = _mrfc(yr, mo)
-            ms = max(fi, _dtfc.date(yr, mo, 1)); me = min(ff, _dtfc.date(yr, mo, dim))
-            if me >= ms:
-                result[f"{yr}-{mo:02d}"] = result.get(f"{yr}-{mo:02d}", 0.0) + pcd * (me - ms).days / total_days
-            cur = _dtfc.date(yr+1, 1, 1) if mo == 12 else _dtfc.date(yr, mo+1, 1)
-        return result
-
+    _total_hh_ot_fc: dict = {}
+    for r in hh_rows:
+        _k = str(r[1] or "")
+        _total_hh_ot_fc[_k] = _total_hh_ot_fc.get(_k, 0.0) + float(r[2] or 0)
     ing_mes: dict = {}
-    _all_ot_ids_fc = list({r[1] for r in hh_rows} | set(str(k) for k in _pcd_fc))
-    for _ot_fc in _all_ot_ids_fc:
-        _pcd_v = _pcd_fc.get(str(_ot_fc), 0) or _pcd_fc.get(_ot_fc, 0)
-        if _pcd_v <= 0: continue
-        for _m_fc, _v_fc in _dist_pv_fc(_pcd_v, _ot_fc).items():
-            ing_mes[_m_fc] = ing_mes.get(_m_fc, 0.0) + _v_fc
+    for r in hh_rows:
+        _k = str(r[1] or ""); _pcd_v = _pcd_fc.get(_k, 0); _tot = _total_hh_ot_fc.get(_k, 0)
+        if _tot > 0 and _pcd_v > 0:
+            _mes_k = str(r[0] or "")
+            ing_mes[_mes_k] = ing_mes.get(_mes_k, 0.0) + float(r[2] or 0) / _tot * _pcd_v
 
     all_meses = sorted(set(list(all_meses) + list(ing_mes)))
 
@@ -2929,8 +2905,6 @@ def economico_curva_s():
     titulo = f"Curva S EVM — {_E(obra_fil)}" if obra_fil else "Curva S EVM — Portfolio"
 
     return f"""<!DOCTYPE html><html lang="es"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{titulo}</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <style>
 *{{box-sizing:border-box;}}body{{font-family:system-ui,sans-serif;background:#f1f5f9;margin:0;padding:0;}}
