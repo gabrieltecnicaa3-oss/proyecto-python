@@ -1979,6 +1979,7 @@ def economico_dashboard_ejecutivo():
       <div style="font-size:.74rem;opacity:.7;margin-top:2px;">Visión consolidada · {n_obras} obras activas</div>
     </div>
     <div style="display:flex;gap:7px;flex-wrap:wrap;">
+      <a href="/modulo/economico/curva-s" style="background:rgba(99,102,241,.3);font-weight:700;">📉 Curva S / EVM</a>
       <a href="/modulo/economico">← Módulo Económico</a>
       <a href="/">Inicio</a>
     </div>
@@ -2622,6 +2623,427 @@ select:focus{{outline:none;border-color:#334155;}}
           title: {{ display: true, text: 'Acumulado ($)', font: {{ size: 10 }} }},
           ticks: {{ callback: v => '$' + (v/1000000).toFixed(1) + 'M', font: {{ size: 10 }} }},
           grid: {{ drawOnChartArea: false }}
+        }}
+      }}
+    }}
+  }});
+}})();
+</script>
+</body></html>"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CURVA S / EVM — Earned Value Management
+# ─────────────────────────────────────────────────────────────────────────────
+
+@economico_bp.route("/modulo/economico/curva-s")
+def economico_curva_s():
+    db = get_db(); _ensure_schema(db)
+    import json as _jcs
+    import datetime as _dtcs
+    from calendar import monthrange as _mr
+    from db_utils import DB_ENGINE as _DB_CS
+
+    hoy = _dtcs.date.today()
+    mes_hoy = hoy.strftime("%Y-%m")
+    obra_fil = (request.args.get("obra") or "").strip()
+
+    _MESES_N = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
+    def _lbl(m):
+        try: return f"{_MESES_N[int(m[5:7])-1]} {m[:4]}"
+        except Exception: return m
+
+    _mysql = (_DB_CS == "mysql")
+    _fmt_pt = "DATE_FORMAT(fecha,'%Y-%m')" if _mysql else "strftime('%Y-%m',fecha)"
+
+    # ── Obras disponibles ─────────────────────────────────────────────────────
+    all_obras = [r[0] for r in db.execute(
+        "SELECT DISTINCT TRIM(COALESCE(obra,'')) FROM ordenes_trabajo "
+        "WHERE COALESCE(es_mantenimiento,0)=0 AND TRIM(COALESCE(obra,''))!='' ORDER BY obra"
+    ).fetchall()]
+
+    # ── OTs a analizar ────────────────────────────────────────────────────────
+    if obra_fil and obra_fil in all_obras:
+        _where = "COALESCE(es_mantenimiento,0)=0 AND TRIM(COALESCE(obra,''))=?"
+        _params = (obra_fil,)
+    else:
+        obra_fil = ""
+        _where = "COALESCE(es_mantenimiento,0)=0"
+        _params = ()
+    ots_rows = db.execute(
+        f"SELECT id, COALESCE(obra,''), COALESCE(estado_avance,0), "
+        f"COALESCE(fecha_entrega,''), COALESCE(hs_previstas,0) "
+        f"FROM ordenes_trabajo WHERE {_where} ORDER BY id", _params
+    ).fetchall()
+    if not ots_rows:
+        return "<p>Sin OTs.</p><a href='/modulo/economico'>← Volver</a>"
+
+    ot_ids = [r[0] for r in ots_rows]
+    ot_map = {r[0]: {"obra": str(r[1]).strip(), "avance": float(r[2] or 0),
+                      "fe": str(r[3])[:10], "hs_prev": float(r[4] or 0)}
+              for r in ots_rows}
+    ph = ",".join("?" * len(ot_ids))
+
+    # ── BAC por OT (precio de venta previsto = presupuesto total) ─────────────
+    bac_map = {str(r[0]): float(r[1] or 0) for r in db.execute(f"""
+        SELECT ot_id,
+               COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)+
+               COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0)+
+               COALESCE(subcontratos_previsto,0)+COALESCE(fletes_previsto,0)+
+               COALESCE(gastos_gen_previsto,0)+COALESCE(impuestos_previsto,0)+
+               COALESCE(beneficio_previsto,0)
+        FROM economico_presupuesto WHERE ot_id IN ({ph})
+    """, ot_ids).fetchall()}
+
+    # ── Fechas de programación por OT ─────────────────────────────────────────
+    prog_map = {r[0]: (str(r[1] or "")[:10], str(r[2] or "")[:10])
+                for r in db.execute(
+                    f"SELECT ot_id, MIN(fecha_inicio), MAX(fecha_fin) "
+                    f"FROM programacion WHERE ot_id IN ({ph}) GROUP BY ot_id", ot_ids
+                ).fetchall()}
+    pt_start = {r[0]: str(r[1] or "")[:10] for r in db.execute(
+        f"SELECT ot_id, MIN(fecha) FROM partes_trabajo WHERE ot_id IN ({ph}) GROUP BY ot_id",
+        ot_ids
+    ).fetchall()}
+
+    def _dates(ot_id):
+        fi, ff = prog_map.get(ot_id, ("", ""))
+        if not fi: fi = pt_start.get(ot_id, "")
+        if not ff: ff = ot_map[ot_id]["fe"]
+        return fi, ff
+
+    # ── Distribución lineal del PV por mes ────────────────────────────────────
+    def _dist_pv(bac, fi_s, ff_s):
+        try:
+            fi = _dtcs.date.fromisoformat(fi_s[:10])
+            ff = _dtcs.date.fromisoformat(ff_s[:10])
+        except Exception:
+            return {}
+        if ff <= fi or bac <= 0:
+            return {}
+        total_days = (ff - fi).days
+        result: dict = {}
+        cur = _dtcs.date(fi.year, fi.month, 1)
+        while _dtcs.date(cur.year, cur.month, 1) <= _dtcs.date(ff.year, ff.month, 1):
+            yr, mo = cur.year, cur.month
+            _, dim = _mr(yr, mo)
+            ms = max(fi, _dtcs.date(yr, mo, 1))
+            me = min(ff, _dtcs.date(yr, mo, dim))
+            if me >= ms:
+                result[f"{yr}-{mo:02d}"] = result.get(f"{yr}-{mo:02d}", 0.0) + bac * (me - ms).days / total_days
+            cur = _dtcs.date(yr+1, 1, 1) if mo == 12 else _dtcs.date(yr, mo+1, 1)
+        return result
+
+    pv_mes: dict = {}
+    for oid in ot_ids:
+        for m, v in _dist_pv(bac_map.get(str(oid), 0), *_dates(oid)).items():
+            pv_mes[m] = pv_mes.get(m, 0.0) + v
+
+    # ── EV mensual (HH mes / HH previstas × BAC) ─────────────────────────────
+    hh_rows = db.execute(
+        f"SELECT {_fmt_pt} AS mes, ot_id, SUM(horas) FROM partes_trabajo "
+        f"WHERE ot_id IN ({ph}) AND fecha IS NOT NULL AND fecha!='' GROUP BY mes, ot_id",
+        ot_ids
+    ).fetchall()
+    _cfg_cs: dict = {}
+    ev_mes: dict = {}
+    ac_mo_mes: dict = {}  # MO actual por mes
+    for r in hh_rows:
+        mes_h, ot_h, hh_h = str(r[0] or ""), r[1], float(r[2] or 0)
+        hs_p = ot_map.get(ot_h, {}).get("hs_prev", 0)
+        bac_ot = bac_map.get(str(ot_h), 0)
+        if hs_p > 0 and bac_ot > 0:
+            ev_mes[mes_h] = ev_mes.get(mes_h, 0.0) + (hh_h / hs_p) * bac_ot
+        obra_h = ot_map.get(ot_h, {}).get("obra", "")
+        if obra_h not in _cfg_cs: _cfg_cs[obra_h] = _get_config_obra(db, obra_h)
+        c = _cfg_cs[obra_h]
+        ac_mo_mes[mes_h] = ac_mo_mes.get(mes_h, 0.0) + hh_h * (c["precio_hora_mo"] + c["precio_hora_cons"])
+
+    # ── AC mensual (costos variables + MO) ───────────────────────────────────
+    ac_mes: dict = dict(ac_mo_mes)
+    for r in db.execute(f"SELECT mes, COALESCE(SUM(monto),0) FROM economico_costos_reales_mensual "
+                        f"WHERE ot_id IN ({ph}) GROUP BY mes", ot_ids).fetchall():
+        m = str(r[0] or "")
+        ac_mes[m] = ac_mes.get(m, 0.0) + float(r[1] or 0)
+    if not obra_fil:  # GF solo para vista global
+        for r in db.execute("SELECT mes, SUM(monto) FROM economico_gastos_fijos GROUP BY mes").fetchall():
+            m = str(r[0] or "")
+            ac_mes[m] = ac_mes.get(m, 0.0) + float(r[1] or 0)
+
+    # ── Serie de meses (chart) ────────────────────────────────────────────────
+    all_m = sorted(set(list(pv_mes) + list(ev_mes) + list(ac_mes)))
+    if not all_m: all_m = [mes_hoy]
+
+    pv_cum, ev_cum, ac_cum = 0.0, 0.0, 0.0
+    pv_ser, ev_ser, ac_ser = [], [], []
+    for m in all_m:
+        pv_cum += pv_mes.get(m, 0); ev_cum += ev_mes.get(m, 0); ac_cum += ac_mes.get(m, 0)
+        pv_ser.append(round(pv_cum)); ev_ser.append(round(ev_cum)); ac_ser.append(round(ac_cum))
+
+    today_idx = next((i for i, m in enumerate(all_m) if m >= mes_hoy), len(all_m) - 1)
+
+    # ── EVM snapshot a hoy ───────────────────────────────────────────────────
+    BAC = sum(bac_map.get(str(oid), 0) for oid in ot_ids)
+    EV  = sum(ot_map[oid]["avance"] / 100.0 * bac_map.get(str(oid), 0) for oid in ot_ids)
+    PV  = sum(v for m, v in pv_mes.items() if m <= mes_hoy)
+    AC  = sum(v for m, v in ac_mes.items() if m <= mes_hoy)
+
+    SV   = EV - PV
+    CV   = EV - AC
+    SPI  = EV / PV if PV > 0 else 0.0
+    CPI  = EV / AC if AC > 0 else 0.0
+    EAC  = AC + (BAC - EV) / CPI if CPI > 0 else BAC
+    VAC  = BAC - EAC
+    TCPI = (BAC - EV) / (BAC - AC) if (BAC - AC) > 0 else 0.0
+    pct_complete = EV / BAC * 100 if BAC > 0 else 0
+
+    # Desvío en meses (SV / tasa mensual de PV)
+    pv_rate = PV / max(today_idx + 1, 1)
+    sv_months = SV / pv_rate if pv_rate > 0 else 0.0
+
+    # ── Línea EAC forecast ────────────────────────────────────────────────────
+    eac_ser = [None] * len(all_m)
+    if 0 <= today_idx < len(all_m):
+        eac_ser[today_idx] = ac_ser[today_idx]
+        remaining_cost = (BAC - EV) / CPI if CPI > 0 else (BAC - EV)
+        future_months = max(len(all_m) - today_idx - 1, 1)
+        monthly_r = remaining_cost / future_months
+        for i in range(today_idx + 1, len(all_m)):
+            eac_ser[i] = round((eac_ser[i-1] or 0) + monthly_r)
+
+    # ── Semáforos Q&A ─────────────────────────────────────────────────────────
+    def _qa_card(q, em, lbl, val, detail, color):
+        return (f'<div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);'
+                f'padding:16px 18px;flex:1;min-width:210px;border-left:5px solid {color};">'
+                f'<div style="font-size:.7rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:4px;">{q}</div>'
+                f'<div style="font-size:1rem;font-weight:900;color:{color};margin-bottom:2px;">{em} {lbl}</div>'
+                f'<div style="font-size:.85rem;font-weight:700;color:{color};margin-bottom:4px;">{val}</div>'
+                f'<div style="font-size:.76rem;color:#6b7280;">{detail}</div></div>')
+
+    _c1 = "#16a34a" if SPI >= 0.95 else ("#f59e0b" if SPI >= 0.8 else "#dc2626")
+    _c2 = "#16a34a" if CPI >= 0.95 else ("#f59e0b" if CPI >= 0.8 else "#dc2626")
+    _c3 = "#16a34a" if VAC >= 0 else ("#f59e0b" if VAC >= -BAC*0.05 else "#dc2626")
+    _c4 = "#16a34a" if abs(sv_months) <= 0.5 else ("#f59e0b" if abs(sv_months) <= 2 else "#dc2626")
+
+    qa_html = (
+        _qa_card("¿Vamos según lo previsto?",
+                 "✅" if SPI >= 0.95 else ("⚠️" if SPI >= 0.8 else "🔴"),
+                 f"SPI = {SPI:.2f}",
+                 "En tiempo" if SPI >= 0.95 else ("Leve retraso" if SPI >= 0.8 else "Retraso significativo"),
+                 f"Avance ganado {_pct(pct_complete)} vs planificado {_pct(PV/BAC*100 if BAC else 0)}", _c1) +
+        _qa_card("¿Gastamos más de lo que producimos?",
+                 "✅" if CPI >= 0.95 else ("⚠️" if CPI >= 0.8 else "🔴"),
+                 f"CPI = {CPI:.2f}",
+                 "Costo controlado" if CPI >= 0.95 else ("Leve sobrecosto" if CPI >= 0.8 else "Sobrecosto crítico"),
+                 f"Cada $ gastado genera {_pct(CPI*100)} de valor", _c2) +
+        _qa_card("¿Terminaremos dentro del presupuesto?",
+                 "✅" if VAC >= 0 else ("⚠️" if VAC >= -BAC*0.05 else "🔴"),
+                 f"EAC = {_m(EAC)}",
+                 f"{'Superávit' if VAC >= 0 else 'Déficit'} {_m(abs(VAC))}",
+                 f"BAC {_m(BAC)} · TCPI = {TCPI:.2f}", _c3) +
+        _qa_card("¿El plazo comprometido es razonable?",
+                 "✅" if abs(sv_months) <= 0.5 else ("⚠️" if abs(sv_months) <= 2 else "🔴"),
+                 f"{abs(sv_months):.1f} mes{'es' if abs(sv_months)!=1 else ''} {'adelante' if sv_months >= 0 else 'atrás'}",
+                 "En término" if abs(sv_months) <= 0.5 else ("Retraso leve" if abs(sv_months) <= 2 else "Retraso importante"),
+                 f"SV = {_m(SV)} | plazo {'se mantiene' if abs(sv_months) <= 2 else 'en riesgo'}", _c4)
+    )
+
+    # ── Tabla de indicadores EVM ──────────────────────────────────────────────
+    def _evm_row(lbl, val, interp, color, tip=""):
+        tt = f' title="{tip}"' if tip else ""
+        ti = f' <span style="opacity:.5;cursor:help;font-size:.7rem;"{tt}>&#9432;</span>' if tip else ""
+        return (f'<tr><td style="padding:7px 10px;font-weight:600;color:#374151;">{lbl}{ti}</td>'
+                f'<td style="padding:7px 10px;text-align:right;font-weight:800;color:{color};">{val}</td>'
+                f'<td style="padding:7px 10px;font-size:.8rem;color:{color};">{interp}</td></tr>')
+
+    evm_rows = (
+        _evm_row("BAC — Presupuesto total",   _m(BAC), "Budget at Completion", "#1e293b",
+                 "Costo total planificado para completar el proyecto") +
+        _evm_row("PV — Valor planificado",    _m(PV),  f"{_pct(PV/BAC*100 if BAC else 0)} del BAC", "#6366f1",
+                 "BCWS: lo que debería haberse gastado hasta hoy según el plan") +
+        _evm_row("EV — Valor ganado",         _m(EV),  f"{_pct(pct_complete)} completado", "#0891b2",
+                 "BCWP: valor presupuestado del trabajo realmente realizado (avance% × BAC)") +
+        _evm_row("AC — Costo real",           _m(AC),  "gastado hasta hoy", "#dc2626" if AC > EV else "#374151",
+                 "ACWP: costo real acumulado hasta la fecha") +
+        _evm_row("SV — Varianza de plazo",    _m(SV),  f"{'Adelantado' if SV >= 0 else 'Atrasado'} {_m(abs(SV))}",
+                 "#16a34a" if SV >= 0 else "#dc2626",
+                 "EV − PV: positivo = adelantado, negativo = atrasado (en términos de costo)") +
+        _evm_row("CV — Varianza de costo",    _m(CV),  f"{'Bajo presupuesto' if CV >= 0 else 'Sobrecosto'} {_m(abs(CV))}",
+                 "#16a34a" if CV >= 0 else "#dc2626",
+                 "EV − AC: positivo = bajo presupuesto, negativo = sobrecosto") +
+        _evm_row("SPI — Índice de plazo",     f"{SPI:.3f}", "≥ 1 = en tiempo · < 1 = atrasado",
+                 "#16a34a" if SPI >= 0.95 else ("#f59e0b" if SPI >= 0.8 else "#dc2626"),
+                 "EV / PV. Mide eficiencia del cronograma") +
+        _evm_row("CPI — Índice de costo",     f"{CPI:.3f}", "≥ 1 = eficiente · < 1 = sobrecosto",
+                 "#16a34a" if CPI >= 0.95 else ("#f59e0b" if CPI >= 0.8 else "#dc2626"),
+                 "EV / AC. Mide eficiencia del costo. CPI < 1: gastamos más de lo que producimos") +
+        _evm_row("EAC — Estimado al término", _m(EAC), f"VAC {'+' if VAC>=0 else ''}{_m(VAC)}",
+                 "#16a34a" if VAC >= 0 else "#dc2626",
+                 "AC + (BAC − EV) / CPI. Proyección del costo final al ritmo actual") +
+        _evm_row("TCPI — Eficiencia necesaria", f"{TCPI:.3f}", "CPI requerido para terminar en presupuesto",
+                 "#16a34a" if TCPI <= 1.0 else ("#f59e0b" if TCPI <= 1.1 else "#dc2626"),
+                 "(BAC − EV) / (BAC − AC). TCPI > 1 significa que hay que mejorar la eficiencia") +
+        _evm_row("SV (tiempo)",              f"{sv_months:+.1f} meses",
+                 f"{'Adelantado' if sv_months >= 0 else 'Atrasado'}",
+                 "#16a34a" if sv_months >= -0.5 else ("#f59e0b" if sv_months >= -2 else "#dc2626"),
+                 "Desvío de plazo estimado en meses (SV / tasa mensual de PV)")
+    )
+
+    # ── Chart JS data ─────────────────────────────────────────────────────────
+    obra_opts = f'<option value="">📊 Todas las obras</option>' + "".join(
+        f'<option value="{_E(o)}" {"selected" if o == obra_fil else ""}>{_E(o)}</option>'
+        for o in all_obras
+    )
+    titulo = f"Curva S EVM — {_E(obra_fil)}" if obra_fil else "Curva S EVM — Portfolio"
+
+    return f"""<!DOCTYPE html><html lang="es"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{titulo}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+<style>
+*{{box-sizing:border-box;}}body{{font-family:system-ui,sans-serif;background:#f1f5f9;margin:0;padding:0;}}
+.hdr{{background:linear-gradient(135deg,#1e293b,#4338ca);color:#fff;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}}
+.hdr h1{{margin:0;font-size:1.05rem;}}
+.hdr a{{color:#fff;text-decoration:none;font-size:.8rem;background:rgba(255,255,255,.15);padding:5px 11px;border-radius:6px;}}
+.hdr a:hover{{background:rgba(255,255,255,.28);}}
+.body{{padding:18px;display:flex;flex-direction:column;gap:16px;}}
+.card{{background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);overflow:hidden;}}
+.ct{{background:#f8fafc;border-bottom:1px solid #e5e7eb;padding:11px 16px;font-weight:700;font-size:.88rem;color:#1e293b;}}
+.cb{{padding:16px;}}
+table{{width:100%;border-collapse:collapse;font-size:.84rem;}}
+th{{background:#1e293b;color:#fff;padding:8px 10px;text-align:left;font-size:.78rem;}}
+td{{padding:7px 10px;border-bottom:1px solid #f1f5f9;vertical-align:middle;}}
+tr:last-child td{{border-bottom:none;}}
+.leg{{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:.76rem;color:#6b7280;}}
+.leg span{{display:flex;align-items:center;gap:5px;}}
+</style></head><body>
+<div class="hdr">
+  <div>
+    <h1>📉 Curva S — Análisis de Valor Ganado (EVM)</h1>
+    <div style="font-size:.73rem;opacity:.7;margin-top:2px;">{titulo} · {len(ot_ids)} OTs · BAC {_m(BAC)}</div>
+  </div>
+  <div style="display:flex;gap:7px;flex-wrap:wrap;">
+    <a href="/modulo/economico/dashboard-ejecutivo">📊 Dashboard</a>
+    <a href="/modulo/economico">← Módulo</a>
+    <a href="/">Inicio</a>
+  </div>
+</div>
+<div class="body">
+
+  <!-- Filtro de obra -->
+  <div class="card"><div class="cb" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+    <div style="font-weight:700;font-size:.85rem;color:#374151;">🏗 Obra:</div>
+    <form method="get" style="display:flex;align-items:center;gap:8px;">
+      <select name="obra" onchange="this.form.submit()"
+        style="padding:6px 10px;border:1px solid #d1d5db;border-radius:7px;font-size:.88rem;background:#fff;min-width:200px;">
+        {obra_opts}
+      </select>
+    </form>
+    <div style="font-size:.78rem;color:#9ca3af;">Datos hasta: {hoy.strftime("%d/%m/%Y")}</div>
+  </div></div>
+
+  <!-- Q&A cards -->
+  <div class="card"><div class="ct">🎯 Indicadores de situación</div>
+    <div class="cb"><div style="display:flex;flex-wrap:wrap;gap:12px;">{qa_html}</div></div>
+  </div>
+
+  <!-- Curva S chart -->
+  <div class="card"><div class="ct">📈 Curva S — PV · EV · AC</div>
+    <div class="cb">
+      <div style="position:relative;height:380px;"><canvas id="chartS"></canvas></div>
+      <div class="leg">
+        <span><span style="display:inline-block;width:24px;height:3px;background:#6366f1;border-radius:2px;"></span>PV — Valor Planificado (BCWS)</span>
+        <span><span style="display:inline-block;width:24px;height:3px;background:#0891b2;border-radius:2px;"></span>EV — Valor Ganado (BCWP)</span>
+        <span><span style="display:inline-block;width:24px;height:3px;background:#dc2626;border-radius:2px;"></span>AC — Costo Real (ACWP)</span>
+        <span><span style="display:inline-block;width:24px;height:3px;background:#f59e0b;border-radius:2px;border-top:2px dashed #f59e0b;"></span>EAC — Proyección</span>
+        <span style="font-size:.7rem;color:#9ca3af;">| Línea vertical = hoy</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabla EVM -->
+  <div class="card"><div class="ct">📊 Indicadores EVM detallados</div>
+    <div class="cb" style="overflow-x:auto;">
+      <table>
+        <thead><tr><th style="width:40%;">Indicador</th><th style="text-align:right;width:20%;">Valor</th><th>Interpretación</th></tr></thead>
+        <tbody>{evm_rows}</tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+<script>
+(function(){{
+  const labels = {_jcs.dumps([_lbl(m) for m in all_m])};
+  const pvData = {_jcs.dumps(pv_ser)};
+  const evData = {_jcs.dumps(ev_ser)};
+  const acData = {_jcs.dumps(ac_ser)};
+  const eacData = {_jcs.dumps(eac_ser)};
+  const todayIdx = {today_idx};
+  const todayLbl = {_jcs.dumps(_lbl(mes_hoy))};
+
+  new Chart(document.getElementById('chartS').getContext('2d'), {{
+    type: 'line',
+    data: {{
+      labels,
+      datasets: [
+        {{
+          label: 'PV (Planificado)',
+          data: pvData,
+          borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,.07)',
+          borderWidth: 2.5, pointRadius: 2, tension: 0.35, fill: false, order: 2,
+        }},
+        {{
+          label: 'EV (Ganado)',
+          data: evData,
+          borderColor: '#0891b2', backgroundColor: 'rgba(8,145,178,.07)',
+          borderWidth: 2.5, pointRadius: 2, tension: 0.35, fill: false, order: 1,
+        }},
+        {{
+          label: 'AC (Real)',
+          data: acData,
+          borderColor: '#dc2626', backgroundColor: 'rgba(220,38,38,.06)',
+          borderWidth: 2.5, pointRadius: 2, tension: 0.35, fill: false, order: 1,
+        }},
+        {{
+          label: 'EAC (Proyección)',
+          data: eacData,
+          borderColor: '#f59e0b', backgroundColor: 'transparent',
+          borderWidth: 2, borderDash: [7, 4],
+          pointRadius: ctx_i => ctx_i.dataIndex === todayIdx ? 5 : 0,
+          tension: 0.25, fill: false, order: 0, spanGaps: false,
+        }}
+      ]
+    }},
+    options: {{
+      responsive: true, maintainAspectRatio: false,
+      interaction: {{ mode: 'index', intersect: false }},
+      plugins: {{
+        legend: {{ display: false }},
+        tooltip: {{
+          callbacks: {{
+            label: c => ` ${{c.dataset.label}}: $${{(c.parsed.y/1000000).toFixed(2)}}M`
+          }}
+        }},
+        annotation: {{
+          annotations: {{
+            hoy: {{
+              type: 'line', scaleID: 'x', value: todayIdx,
+              borderColor: '#374151', borderWidth: 2, borderDash: [5,3],
+              label: {{ content: 'Hoy', enabled: true, position: 'start',
+                        backgroundColor: '#374151', color: '#fff',
+                        font: {{ size: 10 }} }}
+            }}
+          }}
+        }}
+      }},
+      scales: {{
+        x: {{ ticks: {{ font: {{ size: 10 }}, maxRotation: 45 }} }},
+        y: {{
+          beginAtZero: true,
+          ticks: {{ callback: v => '$' + (v/1000000).toFixed(1) + 'M', font: {{ size: 10 }} }},
+          grid: {{ color: '#f1f5f9' }}
         }}
       }}
     }}
