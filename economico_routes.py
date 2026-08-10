@@ -1946,7 +1946,7 @@ def economico_dashboard_ejecutivo():
         for m in _all_meses_de
     )
     _kpi_per_html = (
-        _kpi_per("CD Previsto mensual", _m(_ing_s), "(HH/HH prev.) × CD previsto", "#16a34a",
+        _kpi_per("CD Previsto mensual", _m(_ing_s), "distrib. lineal p_cd por período OT", "#16a34a",
                  _delta_de(_ing_s, _ing_p),
                  "Costo directo presupuestado del mes: (HH / HH previstas) × p_cd por OT") +
         _kpi_per("CD Ejecutado mensual", _m(_egr_s), "costos directos reales", "#dc2626",
@@ -2480,7 +2480,7 @@ def economico_flujo_caja():
                 f'{delta_html}</div>')
 
     kpis_html = (
-        _kpi("CD Previsto mensual", _m(ing_sel), "(HH/HH prev.) × CD previsto", "#16a34a", _d(ing_sel, ing_prv),
+        _kpi("CD Previsto mensual", _m(ing_sel), "distrib. lineal p_cd por período OT", "#16a34a", _d(ing_sel, ing_prv),
              "Costo directo presupuestado del mes: (HH / HH previstas) × p_cd por OT") +
         _kpi("CD Ejecutado mensual", _m(egr_sel), "costos directos reales", "#dc2626", _d(egr_sel, egr_prv),
              "Costos directos reales del mes: materiales + MO. Sin GF ni overhead.") +
