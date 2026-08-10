@@ -1877,25 +1877,32 @@ def economico_dashboard_ejecutivo():
 
     def _egr_de(m): return _cv_mes.get(m,0) + _mo_mes.get(m,0) + _gf_mes.get(m,0) + _mant_mes.get(m,0)
 
-    # Valor ganado acumulado: suma(avance_fisico% × PV previsto) por OT productiva
-    _ing_rows = db.execute("""
-        SELECT COALESCE(ot.estado_avance,0),
-               COALESCE(ep.mat_previsto,0)+COALESCE(ep.pintura_previsto,0)+
-               COALESCE(ep.mo_previsto,0)+COALESCE(ep.consumibles_previsto,0)+
-               COALESCE(ep.ingenieria_previsto,0)+COALESCE(ep.subcontratos_previsto,0)+
-               COALESCE(ep.fletes_previsto,0)+COALESCE(ep.gastos_gen_previsto,0)+
-               COALESCE(ep.impuestos_previsto,0)+COALESCE(ep.beneficio_previsto,0)
-        FROM ordenes_trabajo ot
-        LEFT JOIN economico_presupuesto ep ON ep.ot_id=ot.id
-        WHERE COALESCE(ot.es_mantenimiento,0)=0
-    """).fetchall()
-    _ingresos_total = sum(float(r[0] or 0)/100.0 * float(r[1] or 0) for r in _ing_rows)
+    # Ingreso mensual = (HH trabajadas en el mes / HH previstas de la OT) × PV de la OT
+    _pv_map_de = {str(r[0]): float(r[1] or 0) for r in db.execute("""
+        SELECT ot_id,
+               COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)+
+               COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0)+
+               COALESCE(subcontratos_previsto,0)+COALESCE(fletes_previsto,0)+
+               COALESCE(gastos_gen_previsto,0)+COALESCE(impuestos_previsto,0)+
+               COALESCE(beneficio_previsto,0)
+        FROM economico_presupuesto
+    """).fetchall()}
+    _hs_map_de = {str(r[0]): float(r[1] or 0) for r in db.execute(
+        "SELECT id, COALESCE(hs_previstas,0) FROM ordenes_trabajo"
+    ).fetchall()}
+    _ing_mes_de: dict = {}
+    for _r in _hh_rows:
+        _ot_k = str(_r[1] or ""); _hs_p = _hs_map_de.get(_ot_k, 0); _pv_k = _pv_map_de.get(_ot_k, 0)
+        if _hs_p > 0 and _pv_k > 0:
+            _m_k = str(_r[0] or "")
+            _ing_mes_de[_m_k] = _ing_mes_de.get(_m_k, 0.0) + (float(_r[2] or 0) / _hs_p) * _pv_k
 
     _egr_s = _egr_de(_mes_fil); _egr_p = _egr_de(_prev_de)
-    _cv_s  = _cv_mes.get(_mes_fil,0);  _cv_p  = _cv_mes.get(_prev_de,0)
+    _ing_s = _ing_mes_de.get(_mes_fil, 0); _ing_p = _ing_mes_de.get(_prev_de, 0)
     _mo_s  = _mo_mes.get(_mes_fil,0);  _mo_p  = _mo_mes.get(_prev_de,0)
     _gf_s  = _gf_mes.get(_mes_fil,0)+_mant_mes.get(_mes_fil,0)
     _gf_p  = _gf_mes.get(_prev_de,0) +_mant_mes.get(_prev_de,0)
+    _saldo_s = _ing_s - _egr_s
 
     def _delta_de(val, prev):
         if prev <= 0: return ""
@@ -1920,13 +1927,15 @@ def economico_dashboard_ejecutivo():
         for m in _all_meses_de
     )
     _kpi_per_html = (
+        _kpi_per("Ingresos estimados", _m(_ing_s), "HH mes × (PV/HH previstas)", "#16a34a",
+                 _delta_de(_ing_s, _ing_p),
+                 "Ingreso del mes = (HH trabajadas / HH previstas por OT) × PV previsto. Aproxima el valor generado mensualmente.") +
         _kpi_per("Total egresos", _m(_egr_s), _lbl_de(_mes_fil), "#dc2626",
                  _delta_de(_egr_s, _egr_p), "Suma de todos los costos del mes: variables + MO + estructura") +
-        _kpi_per("Total ingresos estimados", _m(_ingresos_total),
-                 "avance físico × PV previsto", "#16a34a", "",
-                 "Suma de (estado_avance % × precio de venta previsto) por OT — valor ganado acumulado del portfolio") +
-        _kpi_per("Mano de Obra", _m(_mo_s), "HH × tarifa por obra",           "#0891b2",
-                 _delta_de(_mo_s, _mo_p),  "Calculado desde partes de trabajo × precio_hora") +
+        _kpi_per("Saldo del mes", _m(abs(_saldo_s)),
+                 "✅ positivo" if _saldo_s >= 0 else "⚠ negativo",
+                 "#16a34a" if _saldo_s >= 0 else "#dc2626", "",
+                 "Ingresos estimados − Egresos del mes. Negativo indica que los costos superan el valor generado.") +
         _kpi_per("Estructura / GF", _m(_gf_s), "gastos fijos + mantenimiento","#f59e0b",
                  _delta_de(_gf_s, _gf_p),  "Gastos fijos del mes + costos de obras de mantenimiento")
     )
@@ -2343,30 +2352,58 @@ def economico_flujo_caja():
     all_meses = sorted(set(list(cv_mes) + list(mo_mes) + list(gf_mes) + list(mant_mes)))
     def _egr(m): return cv_mes.get(m,0) + mo_mes.get(m,0) + gf_mes.get(m,0) + mant_mes.get(m,0)
 
-    # Chart: últimos 12 meses con datos (o hasta hoy)
+    # Ingreso mensual estimado = (HH del mes / HH previstas OT) × PV de la OT
+    _pv_fc = {str(r[0]): float(r[1] or 0) for r in db.execute("""
+        SELECT ot_id,
+               COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)+
+               COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0)+
+               COALESCE(subcontratos_previsto,0)+COALESCE(fletes_previsto,0)+
+               COALESCE(gastos_gen_previsto,0)+COALESCE(impuestos_previsto,0)+
+               COALESCE(beneficio_previsto,0)
+        FROM economico_presupuesto
+    """).fetchall()}
+    _hs_fc = {str(r[0]): float(r[1] or 0) for r in db.execute(
+        "SELECT id, COALESCE(hs_previstas,0) FROM ordenes_trabajo"
+    ).fetchall()}
+    ing_mes: dict = {}
+    for r in hh_rows:
+        _ot_k = str(r[1] or ""); _hs_p = _hs_fc.get(_ot_k, 0); _pv_k = _pv_fc.get(_ot_k, 0)
+        if _hs_p > 0 and _pv_k > 0:
+            _m_k = str(r[0] or "")
+            ing_mes[_m_k] = ing_mes.get(_m_k, 0.0) + (float(r[2] or 0) / _hs_p) * _pv_k
+
+    all_meses = sorted(set(list(all_meses) + list(ing_mes)))
+
+    # Chart: últimos 12 meses con datos
     chart_meses = all_meses[-12:] if all_meses else [mes_sel]
-    # Incluir mes_sel aunque no tenga datos aún
     if mes_sel not in chart_meses:
         chart_meses = sorted(set(chart_meses + [mes_sel]))[-12:]
 
-    acum, acum_vals = 0.0, []
+    acum_egr, acum_ing = 0.0, 0.0
+    acum_vals, acum_ing_vals, saldo_vals = [], [], []
     for m in chart_meses:
-        acum += _egr(m)
-        acum_vals.append(round(acum))
+        acum_egr += _egr(m); acum_ing += ing_mes.get(m, 0)
+        acum_vals.append(round(acum_egr))
+        acum_ing_vals.append(round(acum_ing))
+        saldo_vals.append(round(acum_ing - acum_egr))
 
     chart_lbl_js   = _jfc.dumps([_lbl(m) for m in chart_meses])
     chart_cv_js    = _jfc.dumps([round(cv_mes.get(m,0))   for m in chart_meses])
     chart_mo_js    = _jfc.dumps([round(mo_mes.get(m,0))   for m in chart_meses])
     chart_gf_js    = _jfc.dumps([round(gf_mes.get(m,0) + mant_mes.get(m,0)) for m in chart_meses])
+    chart_ing_js   = _jfc.dumps([round(ing_mes.get(m,0))  for m in chart_meses])
     chart_acum_js  = _jfc.dumps(acum_vals)
+    chart_acum_ing_js = _jfc.dumps(acum_ing_vals)
+    chart_saldo_js = _jfc.dumps(saldo_vals)
     chart_sel_js   = _jfc.dumps(chart_meses.index(mes_sel) if mes_sel in chart_meses else -1)
 
     # ── KPIs del período ──────────────────────────────────────────────────────
     egr_sel  = _egr(mes_sel);  egr_prv = _egr(mes_prev)
-    cv_sel   = cv_mes.get(mes_sel, 0);   cv_prv  = cv_mes.get(mes_prev, 0)
-    mo_sel   = mo_mes.get(mes_sel, 0);   mo_prv  = mo_mes.get(mes_prev, 0)
+    ing_sel  = ing_mes.get(mes_sel, 0); ing_prv = ing_mes.get(mes_prev, 0)
+    mo_sel   = mo_mes.get(mes_sel, 0);  mo_prv  = mo_mes.get(mes_prev, 0)
     gf_sel   = gf_mes.get(mes_sel, 0) + mant_mes.get(mes_sel, 0)
     gf_prv   = gf_mes.get(mes_prev, 0) + mant_mes.get(mes_prev, 0)
+    saldo_sel = ing_sel - egr_sel
 
     def _d(val, prev):
         if prev <= 0: return ""
@@ -2387,10 +2424,14 @@ def economico_flujo_caja():
                 f'{delta_html}</div>')
 
     kpis_html = (
+        _kpi("Ingresos estimados", _m(ing_sel), "HH mes × (PV/HH previstas)", "#16a34a", _d(ing_sel, ing_prv),
+             "Ingreso del mes = (HH trabajadas / HH previstas por OT) × PV previsto") +
         _kpi("Total egresos", _m(egr_sel), _lbl(mes_sel), "#dc2626", _d(egr_sel, egr_prv),
              "Suma total de costos del mes: variables + MO + estructura") +
-        _kpi("Costos variables", _m(cv_sel), "mat · pintura · subc · fletes",  "#6366f1", _d(cv_sel, cv_prv),
-             "Montos cargados en Costos Reales Mensuales para el período") +
+        _kpi("Saldo del mes", _m(abs(saldo_sel)),
+             "✅ positivo" if saldo_sel >= 0 else "⚠ negativo",
+             "#16a34a" if saldo_sel >= 0 else "#dc2626", "",
+             "Ingresos estimados − Egresos del mes") +
         _kpi("Mano de Obra", _m(mo_sel), "HH × tarifa por obra", "#0891b2", _d(mo_sel, mo_prv),
              "Calculado desde partes de trabajo × precio_hora configurado por obra") +
         _kpi("Estructura / GF", _m(gf_sel), "gastos fijos + mantenimiento", "#f59e0b", _d(gf_sel, gf_prv),
@@ -2456,10 +2497,12 @@ select:focus{{outline:none;border-color:#334155;}}
         <span class="leg"><span class="dot" style="background:rgba(99,102,241,.75)"></span>Costos variables</span>
         <span class="leg"><span class="dot" style="background:rgba(8,145,178,.75)"></span>Mano de Obra</span>
         <span class="leg"><span class="dot" style="background:rgba(245,158,11,.75)"></span>Estructura / GF</span>
-        <span class="leg"><span class="dot" style="background:#dc2626;height:2px;width:18px;border-radius:2px;"></span>Acumulado egresos</span>
+        <span class="leg"><span class="dot" style="background:#16a34a;height:2px;width:18px;border-radius:2px;"></span>Ingresos acum.</span>
+        <span class="leg"><span class="dot" style="background:#dc2626;height:2px;width:18px;border-radius:2px;"></span>Egresos acum.</span>
+        <span class="leg"><span class="dot" style="background:#6366f1;height:2px;width:18px;border-radius:2px;border-top:2px dashed #6366f1;"></span>Saldo acum.</span>
       </div>
       <div style="font-size:.73rem;color:#9ca3af;margin-top:6px;">
-        El mes resaltado corresponde al período seleccionado. La línea roja muestra el egreso acumulado total desde el inicio del registro.
+        Barras = egresos mensuales. Líneas = acumulados de ingresos, egresos y saldo. Ingreso estimado = (HH/HH previstas) × PV por OT.
       </div>
     </div>
   </div>
@@ -2471,26 +2514,30 @@ select:focus{{outline:none;border-color:#334155;}}
         <thead>
           <tr style="background:#1e293b;color:#fff;">
             <th style="padding:8px 10px;text-align:left;">Mes</th>
-            <th style="padding:8px 10px;text-align:right;">Costos variables</th>
-            <th style="padding:8px 10px;text-align:right;">Mano de Obra</th>
-            <th style="padding:8px 10px;text-align:right;">Estructura / GF</th>
+            <th style="padding:8px 10px;text-align:right;background:#166534;">Ingresos est.</th>
             <th style="padding:8px 10px;text-align:right;background:#dc2626;">Total egresos</th>
-            <th style="padding:8px 10px;text-align:right;">Acumulado</th>
+            <th style="padding:8px 10px;text-align:right;">Saldo mes</th>
+            <th style="padding:8px 10px;text-align:right;">MO</th>
+            <th style="padding:8px 10px;text-align:right;">Estructura</th>
+            <th style="padding:8px 10px;text-align:right;">Costos var.</th>
           </tr>
         </thead>
         <tbody>
           {"".join(
+            (lambda _saldo=round(ing_mes.get(m,0)-_egr(m)):
             f'<tr style="background:{"#fef2f2" if m == mes_sel else ("#f8fafc" if i%2==0 else "#fff")};'
             f'{"font-weight:700;" if m == mes_sel else ""}">'
             f'<td style="padding:7px 10px;border-bottom:1px solid #f1f5f9;">{_lbl(m)}'
-            f'{"  ← período sel." if m == mes_sel else ""}</td>'
-            f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;">{_m(cv_mes.get(m,0))}</td>'
+            f'{"  ←" if m == mes_sel else ""}</td>'
+            f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;color:#166534;font-weight:700;">{_m(ing_mes.get(m,0))}</td>'
+            f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;color:#dc2626;font-weight:700;">{_m(_egr(m))}</td>'
+            f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;font-weight:700;color:{"#16a34a" if _saldo>=0 else "#dc2626"};">'
+            f'{"+" if _saldo>=0 else ""}{_m(_saldo)}</td>'
             f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;">{_m(mo_mes.get(m,0))}</td>'
             f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;">{_m(gf_mes.get(m,0)+mant_mes.get(m,0))}</td>'
-            f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;font-weight:700;color:#dc2626;">{_m(_egr(m))}</td>'
-            f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;color:#6b7280;">{_m(acum_vals[j] if j < len(acum_vals) else 0)}</td>'
-            f'</tr>'
-            for j, (i, m) in enumerate((i, m) for i, m in enumerate(chart_meses))
+            f'<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f1f5f9;">{_m(cv_mes.get(m,0))}</td>'
+            f'</tr>')()
+            for i, m in enumerate(chart_meses)
           )}
         </tbody>
       </table>
@@ -2526,18 +2573,29 @@ select:focus{{outline:none;border-color:#334155;}}
           stack: 'egresos', borderRadius: 3, borderWidth: 0,
         }},
         {{
-          label: 'Acumulado egresos',
+          label: 'Ingresos acumulados',
+          data: {chart_acum_ing_js},
+          type: 'line', yAxisID: 'yAcum',
+          borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,.07)',
+          borderWidth: 2.5, pointRadius: 3, pointBackgroundColor: '#16a34a',
+          fill: false, tension: 0.3, order: 0,
+        }},
+        {{
+          label: 'Egresos acumulados',
           data: {chart_acum_js},
-          type: 'line',
-          yAxisID: 'yAcum',
-          borderColor: '#dc2626',
-          backgroundColor: 'rgba(220,38,38,.08)',
-          borderWidth: 2,
-          pointRadius: 3,
-          pointBackgroundColor: '#dc2626',
-          fill: false,
-          tension: 0.3,
-          order: 0,
+          type: 'line', yAxisID: 'yAcum',
+          borderColor: '#dc2626', backgroundColor: 'rgba(220,38,38,.07)',
+          borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#dc2626',
+          fill: false, tension: 0.3, order: 0,
+        }},
+        {{
+          label: 'Saldo acumulado',
+          data: {chart_saldo_js},
+          type: 'line', yAxisID: 'yAcum',
+          borderColor: '#6366f1', borderDash: [6,3],
+          backgroundColor: 'transparent',
+          borderWidth: 1.5, pointRadius: 2, pointBackgroundColor: '#6366f1',
+          fill: false, tension: 0.3, order: 0,
         }}
       ]
     }},
