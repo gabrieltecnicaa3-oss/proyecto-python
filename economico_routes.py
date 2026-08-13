@@ -2829,25 +2829,34 @@ def _curva_s_impl():
         for m, v in _dist_pv(bac_map.get(str(oid), 0), *_dates(oid)).items():
             pv_mes[m] = pv_mes.get(m, 0.0) + v
 
-    # ── EV mensual (HH mes / HH previstas × BAC) ─────────────────────────────
+    # ── EV mensual ────────────────────────────────────────────────────────────
+    # El EV de la tabla se calcula como avance real (%) × BAC. Si el gráfico usa
+    # horas del mes para derivar EV, se desincroniza con la tabla. Para alinear la
+    # curva con la vista EVM, escalamos el PV acumulado por el ratio real de avance
+    # actual (EV / PV_hoy) y dejamos que el último punto coincida con el EV del snapshot.
     hh_rows = db.execute(
         f"SELECT {_fmt_pt} AS mes, ot_id, SUM(horas) FROM partes_trabajo "
         f"WHERE ot_id IN ({ph}) AND fecha IS NOT NULL AND fecha!='' GROUP BY {_fmt_pt}, ot_id",
         ot_ids
     ).fetchall()
     _cfg_cs: dict = {}
-    ev_mes: dict = {}
     ac_mo_mes: dict = {}  # MO actual por mes
     for r in hh_rows:
         mes_h, ot_h, hh_h = str(r[0] or ""), r[1], float(r[2] or 0)
-        hs_p = ot_map.get(ot_h, {}).get("hs_prev", 0)
-        bac_ot = bac_map.get(str(ot_h), 0)
-        if hs_p > 0 and bac_ot > 0:
-            ev_mes[mes_h] = ev_mes.get(mes_h, 0.0) + (hh_h / hs_p) * bac_ot
         obra_h = ot_map.get(ot_h, {}).get("obra", "")
         if obra_h not in _cfg_cs: _cfg_cs[obra_h] = _get_config_obra(db, obra_h)
         c = _cfg_cs[obra_h]
         ac_mo_mes[mes_h] = ac_mo_mes.get(mes_h, 0.0) + hh_h * (c["precio_hora_mo"] + c["precio_hora_cons"])
+
+    # EV histórico para la curva, alineado con el cálculo del snapshot de la tabla.
+    ev_mes: dict = {}
+    if pv_mes:
+        pv_hoy = sum(v for m, v in pv_mes.items() if m <= mes_hoy)
+        if pv_hoy > 0:
+            ev_scale = (sum(ot_map[oid]["avance"] / 100.0 * bac_map.get(str(oid), 0) for oid in ot_ids) / pv_hoy)
+            for m, pv_val in pv_mes.items():
+                pv_acum = sum(v for mm, v in pv_mes.items() if mm <= m)
+                ev_mes[m] = pv_acum * ev_scale
 
     # ── AC mensual (costos variables + MO) ───────────────────────────────────
     ac_mes: dict = dict(ac_mo_mes)
