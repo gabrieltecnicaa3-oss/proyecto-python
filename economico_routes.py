@@ -2907,9 +2907,16 @@ def _curva_s_impl():
     TCPI = (BAC - EV) / (BAC - AC) if (BAC - AC) > 0 else 0.0
     pct_complete = EV / BAC * 100 if BAC > 0 else 0
 
-    # Desvío en meses (SV / tasa mensual de PV)
+    # Desvío en meses (solo cuando el PV mensual es válido y el desvío no es absurdo).
+    # El SV es una variación de valor, no de tiempo; no se debe convertir a meses sin un
+    # filtro razonable porque en proyectos con PV bajo o fechas raras puede producir valores
+    # irreales como "361.8 meses".
     pv_rate = PV / max(today_idx + 1, 1)
-    sv_months = SV / pv_rate if pv_rate > 0 else 0.0
+    sv_months = 0.0
+    if pv_rate > 0 and PV > 0 and abs(SV) <= max(PV, 1.0):
+        sv_months = SV / pv_rate
+    if abs(sv_months) > 24:
+        sv_months = 0.0
 
     # ── Línea EAC forecast ────────────────────────────────────────────────────
     eac_ser = [None] * len(all_m)
@@ -2933,7 +2940,16 @@ def _curva_s_impl():
     _c1 = "#16a34a" if SPI >= 0.95 else ("#f59e0b" if SPI >= 0.8 else "#dc2626")
     _c2 = "#16a34a" if CPI >= 0.95 else ("#f59e0b" if CPI >= 0.8 else "#dc2626")
     _c3 = "#16a34a" if VAC >= 0 else ("#f59e0b" if VAC >= -BAC*0.05 else "#dc2626")
-    _c4 = "#16a34a" if abs(sv_months) <= 0.5 else ("#f59e0b" if abs(sv_months) <= 2 else "#dc2626")
+    if sv_months == 0:
+        _c4 = "#6b7280"
+        sv_tiempo_txt = "N/D"
+        sv_tiempo_desc = "No aplicable"
+        sv_tiempo_detail = "El desvío de cronograma no se calcula desde un SV monetario sin tasa de PV válida"
+    else:
+        _c4 = "#16a34a" if abs(sv_months) <= 0.5 else ("#f59e0b" if abs(sv_months) <= 2 else "#dc2626")
+        sv_tiempo_txt = f"{abs(sv_months):.1f} mes{'es' if abs(sv_months)!=1 else ''} {'adelante' if sv_months >= 0 else 'atrás'}"
+        sv_tiempo_desc = "En término" if abs(sv_months) <= 0.5 else ("Retraso leve" if abs(sv_months) <= 2 else "Retraso importante")
+        sv_tiempo_detail = f"SV = {_m(SV)} | plazo {'se mantiene' if abs(sv_months) <= 2 else 'en riesgo'}"
 
     qa_html = (
         _qa_card("¿Vamos según lo previsto?",
@@ -2952,10 +2968,10 @@ def _curva_s_impl():
                  f"{'Superávit' if VAC >= 0 else 'Déficit'} {_m(abs(VAC))}",
                  f"BAC {_m(BAC)} · TCPI = {TCPI:.2f}", _c3) +
         _qa_card("¿El plazo comprometido es razonable?",
-                 "✅" if abs(sv_months) <= 0.5 else ("⚠️" if abs(sv_months) <= 2 else "🔴"),
-                 f"{abs(sv_months):.1f} mes{'es' if abs(sv_months)!=1 else ''} {'adelante' if sv_months >= 0 else 'atrás'}",
-                 "En término" if abs(sv_months) <= 0.5 else ("Retraso leve" if abs(sv_months) <= 2 else "Retraso importante"),
-                 f"SV = {_m(SV)} | plazo {'se mantiene' if abs(sv_months) <= 2 else 'en riesgo'}", _c4)
+                 "⚪" if sv_months == 0 else ("✅" if abs(sv_months) <= 0.5 else ("⚠️" if abs(sv_months) <= 2 else "🔴")),
+                 sv_tiempo_txt,
+                 sv_tiempo_desc,
+                 sv_tiempo_detail, _c4)
     )
 
     # ── Tabla de indicadores EVM ──────────────────────────────────────────────
@@ -2993,10 +3009,10 @@ def _curva_s_impl():
         _evm_row("TCPI — Eficiencia necesaria", f"{TCPI:.3f}", "CPI requerido para terminar en presupuesto",
                  "#16a34a" if TCPI <= 1.0 else ("#f59e0b" if TCPI <= 1.1 else "#dc2626"),
                  "(BAC − EV) / (BAC − AC). TCPI > 1 significa que hay que mejorar la eficiencia") +
-        _evm_row("SV (tiempo)",              f"{sv_months:+.1f} meses",
-                 f"{'Adelantado' if sv_months >= 0 else 'Atrasado'}",
-                 "#16a34a" if sv_months >= -0.5 else ("#f59e0b" if sv_months >= -2 else "#dc2626"),
-                 "Desvío de plazo estimado en meses (SV / tasa mensual de PV)")
+        _evm_row("SV (tiempo)",              "N/D" if sv_months == 0 else f"{sv_months:+.1f} meses",
+                 "No aplicable" if sv_months == 0 else ("Adelantado" if sv_months >= 0 else "Atrasado"),
+                 "#6b7280" if sv_months == 0 else ("#16a34a" if sv_months >= -0.5 else ("#f59e0b" if sv_months >= -2 else "#dc2626")),
+                 "El SV en $ no se convierte a meses si la tasa de PV mensual no es válida")
     )
 
     # ── Chart JS data ─────────────────────────────────────────────────────────
