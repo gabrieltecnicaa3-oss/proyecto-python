@@ -954,137 +954,102 @@ def economico_ot(ot_id):
       <button type="submit" class="btn" style="background:#0891b2;color:#fff;">💾 Guardar tasas</button>
     </form>
   </div></div>
-  <!-- Carga de costos reales mensuales -->
-  <div class="card"><div class="ct">➕ Carga de Costos Reales</div><div class="cb">
-    <form method="post" style="margin-bottom:16px;">
-      <input type="hidden" name="accion" value="agregar_costo_mensual">
-      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
-        <div><label style="font-size:.75rem;">Mes</label><br>
-          <input type="month" name="mes" required style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;"
-          value="{_mes_actual}"></div>
-        <div><label style="font-size:.75rem;">Concepto</label><br>
-          <select name="concepto" required style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">
-            <option>Materiales</option><option>Pintura</option>
-            <option>Ingeniería</option><option>Subcontratos</option><option>Fletes</option>
-          </select></div>
-        <div><label style="font-size:.75rem;">Monto ($)</label><br>
-          <input type="number" name="monto" step="0.01" min="0.01" required
-            style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;width:140px;"></div>
-        <button type="submit" class="btn" style="background:#0891b2;color:#fff;">➕ Agregar</button>
+  <div class="two">
+    <div class="card"><div class="ct">📋 Costos Previstos</div><div class="cb">
+      <form method="post">
+        <input type="hidden" name="accion" value="guardar_presupuesto">
+        <div style="font-size:.72rem;font-weight:700;color:#374151;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #e5e7eb;">1 - PRESUPUESTO / PREVISTO</div>
+        <div style="font-size:.72rem;color:#6b7280;margin-bottom:10px;">Valores de entrada. Precio de venta = costo directo + gastos generales + impuestos + beneficio.</div>
+
+        <div style="margin-bottom:12px;">
+          <div style="font-size:.72rem;font-weight:700;color:#1f2937;margin-bottom:6px;">1.1 Costos directos</div>
+          <div class="fg"><label>Materiales ($)</label><input type="number" name="mat_previsto" step="0.01" min="0" value="{_fv(p['mat'])}"></div>
+          <div class="fg"><label>Pintura ($)</label><input type="number" name="pintura_previsto" step="0.01" min="0" value="{_fv(p['pintura'])}"></div>
+          <div class="fg"><label>Fletes ($)</label><input type="number" name="fletes_previsto" step="0.01" min="0" value="{_fv(p['fletes'])}"></div>
+          <div class="fg"><label>Subcontratos ($)</label><input type="number" name="subcontratos_previsto" step="0.01" min="0" value="{_fv(p['subcontratos'])}"></div>
+          <div class="fg"><label>Mano de obra ($)</label><input type="number" name="mo_previsto" step="0.01" min="0" value="{_fv(p['mo'])}"></div>
+          <div class="fg"><label>Consumibles ($)</label><input type="number" name="consumibles_previsto" step="0.01" min="0" value="{_fv(p['cons'])}"></div>
+          <div class="fg"><label>Ingeniería ($)</label><input type="number" name="ingenieria_previsto" step="0.01" min="0" value="{_fv(p['ing'])}"></div>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <div style="font-size:.72rem;font-weight:700;color:#1f2937;margin-bottom:6px;">1.2 Gastos generales</div>
+          <div class="fg"><label>Gastos generales ($)</label><input type="number" name="gastos_gen_previsto" step="0.01" min="0" value="{_fv(p['gg'])}"></div>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <div style="font-size:.72rem;font-weight:700;color:#1f2937;margin-bottom:6px;">1.3 Impuestos</div>
+          <div class="fg"><label>Impuestos ($)</label><input type="number" name="impuestos_previsto" step="0.01" min="0" value="{_fv(p['imp'])}"></div>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <div style="font-size:.72rem;font-weight:700;color:#1f2937;margin-bottom:6px;">1.4 Beneficio</div>
+          <div class="fg"><label>Beneficio ($)</label><input type="number" name="beneficio_previsto" step="0.01" min="0" value="{_fv(p['ben'])}"></div>
+        </div>
+
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+          <span style="font-size:.78rem;color:#6b7280;">Costo directo</span>
+          <span style="font-weight:700;color:#6366f1;">{_m(p['cd'])}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+          <span style="font-size:.78rem;color:#6b7280;">Total presupuesto</span>
+          <span style="font-weight:700;color:#111827;">{_m(p['tc'])}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;">
+          <span style="font-size:.78rem;font-weight:700;">Precio de venta</span>
+          <span style="font-weight:800;color:#6366f1;font-size:.98rem;">{_m(p['pv'])}</span>
+        </div>
+        <button type="submit" class="btn" style="background:#6366f1;color:#fff;width:100%;margin-top:8px;">💾 Guardar presupuesto</button>
+      </form>
+    </div></div>
+    <div class="card"><div class="ct">💸 Costos Reales</div><div class="cb">
+      <form method="post" style="margin-bottom:16px;">
+        <input type="hidden" name="accion" value="agregar_costo_mensual">
+        <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">2 - COSTOS REALES · Carga mensual</div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
+          <div><label style="font-size:.75rem;">Mes</label><br>
+            <input type="month" name="mes" required style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;"
+            value="{_mes_actual}"></div>
+          <div><label style="font-size:.75rem;">Concepto</label><br>
+            <select name="concepto" required style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">
+              <option>Materiales</option><option>Pintura</option>
+              <option>Ingeniería</option><option>Subcontratos</option><option>Fletes</option>
+            </select></div>
+          <div><label style="font-size:.75rem;">Monto ($)</label><br>
+            <input type="number" name="monto" step="0.01" min="0.01" required
+              style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;width:140px;"></div>
+          <button type="submit" class="btn" style="background:#0891b2;color:#fff;">➕ Agregar</button>
+        </div>
+      </form>
+      {_historial_html}
+      <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">2.1 Costo directo real</div>
+      <div class="fg"><label>Materiales</label><div class="rv">{_m(rm['mat'])}</div></div>
+      <div class="fg"><label>Pintura</label><div class="rv">{_m(rm['pintura'])}</div></div>
+      <div class="fg"><label>Fletes</label><div class="rv">{_m(rm['fletes'])}</div></div>
+      <div class="fg"><label>Ingeniería</label><div class="rv">{_m(rm['ing'])}</div></div>
+      <div class="fg"><label>Mano de obra</label><div class="rv">{_m(ra['mo'])}</div></div>
+      <div class="fg"><label>Consumibles</label><div class="rv">{_m(ra['cons'])}</div></div>
+      <div style="display:flex;justify-content:space-between;margin:10px 0 3px;">
+        <span style="font-size:.78rem;color:#6b7280;">Subtotal costo directo real</span>
+        <span style="font-weight:700;color:#111827;">{_m(r['cd'])}</span>
       </div>
-    </form>
-    {_historial_html}
-  </div></div>
 
-  <!-- Tabla comparativa Previsto vs Real -->
-  <div class="card"><div class="ct">📊 Estructura de Costos — Previsto vs Real</div><div class="cb">
-    <form method="post">
-      <input type="hidden" name="accion" value="guardar_presupuesto">
-      <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:.84rem;">
-          <thead>
-            <tr>
-              <th style="text-align:left;padding:8px 10px;background:#6366f1;color:#fff;font-size:.78rem;">Rubro</th>
-              <th style="text-align:right;padding:8px 10px;background:#6366f1;color:#fff;font-size:.78rem;">Previsto</th>
-              <th style="text-align:right;padding:8px 10px;background:#0891b2;color:#fff;font-size:.78rem;">Real</th>
-            </tr>
-          </thead>
-          <tbody>
-            <!-- 1.1 Costos directos -->
-            <tr style="background:#f8fafc;">
-              <td colspan="3" style="padding:8px 10px;font-size:.72rem;font-weight:800;color:#374151;letter-spacing:.04em;">1.1 COSTOS DIRECTOS</td>
-            </tr>
-            <tr style="border-bottom:1px solid #f1f5f9;">
-              <td style="padding:7px 10px;">Materiales</td>
-              <td style="padding:4px 10px;text-align:right;"><input type="number" name="mat_previsto" step="0.01" min="0" value="{_fv(p['mat'])}" style="width:130px;padding:4px 7px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;text-align:right;"></td>
-              <td style="padding:7px 10px;text-align:right;font-weight:600;color:#0891b2;">{_m(rm['mat'])}</td>
-            </tr>
-            <tr style="border-bottom:1px solid #f1f5f9;">
-              <td style="padding:7px 10px;">Pintura</td>
-              <td style="padding:4px 10px;text-align:right;"><input type="number" name="pintura_previsto" step="0.01" min="0" value="{_fv(p['pintura'])}" style="width:130px;padding:4px 7px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;text-align:right;"></td>
-              <td style="padding:7px 10px;text-align:right;font-weight:600;color:#0891b2;">{_m(rm['pintura'])}</td>
-            </tr>
-            <tr style="border-bottom:1px solid #f1f5f9;">
-              <td style="padding:7px 10px;">Fletes</td>
-              <td style="padding:4px 10px;text-align:right;"><input type="number" name="fletes_previsto" step="0.01" min="0" value="{_fv(p['fletes'])}" style="width:130px;padding:4px 7px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;text-align:right;"></td>
-              <td style="padding:7px 10px;text-align:right;font-weight:600;color:#0891b2;">{_m(rm['fletes'])}</td>
-            </tr>
-            <tr style="border-bottom:1px solid #f1f5f9;">
-              <td style="padding:7px 10px;">Subcontratos</td>
-              <td style="padding:4px 10px;text-align:right;"><input type="number" name="subcontratos_previsto" step="0.01" min="0" value="{_fv(p['subcontratos'])}" style="width:130px;padding:4px 7px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;text-align:right;"></td>
-              <td style="padding:7px 10px;text-align:right;font-weight:600;color:#0891b2;">{_m(rm['sub'])}</td>
-            </tr>
-            <tr style="border-bottom:1px solid #f1f5f9;">
-              <td style="padding:7px 10px;">Mano de obra</td>
-              <td style="padding:4px 10px;text-align:right;"><input type="number" name="mo_previsto" step="0.01" min="0" value="{_fv(p['mo'])}" style="width:130px;padding:4px 7px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;text-align:right;"></td>
-              <td style="padding:7px 10px;text-align:right;font-weight:600;color:#0891b2;">{_m(ra['mo'])}</td>
-            </tr>
-            <tr style="border-bottom:1px solid #f1f5f9;">
-              <td style="padding:7px 10px;">Consumibles</td>
-              <td style="padding:4px 10px;text-align:right;"><input type="number" name="consumibles_previsto" step="0.01" min="0" value="{_fv(p['cons'])}" style="width:130px;padding:4px 7px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;text-align:right;"></td>
-              <td style="padding:7px 10px;text-align:right;font-weight:600;color:#0891b2;">{_m(ra['cons'])}</td>
-            </tr>
-            <tr style="border-bottom:1px solid #f1f5f9;">
-              <td style="padding:7px 10px;">Ingeniería</td>
-              <td style="padding:4px 10px;text-align:right;"><input type="number" name="ingenieria_previsto" step="0.01" min="0" value="{_fv(p['ing'])}" style="width:130px;padding:4px 7px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;text-align:right;"></td>
-              <td style="padding:7px 10px;text-align:right;font-weight:600;color:#0891b2;">{_m(rm['ing'])}</td>
-            </tr>
-            <tr style="background:#ede9fe;font-weight:700;border-bottom:2px solid #c4b5fd;">
-              <td style="padding:7px 10px;color:#5b21b6;">Subtotal directo</td>
-              <td style="padding:7px 10px;text-align:right;color:#5b21b6;">{_m(p['cd'])}</td>
-              <td style="padding:7px 10px;text-align:right;color:#0891b2;">{_m(r['cd'])}</td>
-            </tr>
+      <div style="font-size:.76rem;font-weight:700;color:#374151;margin:12px 0 8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">2.2 Gastos generales</div>
+      <div class="fg"><label>Gastos generales</label><div class="rv">{_m(gg_real_ot)}</div></div>
 
-            <!-- 1.2 Gastos generales -->
-            <tr style="background:#f8fafc;">
-              <td colspan="3" style="padding:8px 10px;font-size:.72rem;font-weight:800;color:#374151;letter-spacing:.04em;">1.2 GASTOS GENERALES</td>
-            </tr>
-            <tr style="border-bottom:1px solid #f1f5f9;">
-              <td style="padding:7px 10px;">Gastos generales</td>
-              <td style="padding:4px 10px;text-align:right;"><input type="number" name="gastos_gen_previsto" step="0.01" min="0" value="{_fv(p['gg'])}" style="width:130px;padding:4px 7px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;text-align:right;"></td>
-              <td style="padding:7px 10px;text-align:right;font-weight:600;color:#0891b2;">{_m(gg_real_ot)}</td>
-            </tr>
+      <div style="font-size:.76rem;font-weight:700;color:#374151;margin:12px 0 8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">2.3 Impuestos (sobre costo directo real)</div>
+      <div class="fg"><label>Impuestos</label><div class="rv">{_m(ra['imp'])}</div></div>
 
-            <!-- 1.3 Impuestos -->
-            <tr style="background:#f8fafc;">
-              <td colspan="3" style="padding:8px 10px;font-size:.72rem;font-weight:800;color:#374151;letter-spacing:.04em;">1.3 IMPUESTOS</td>
-            </tr>
-            <tr style="border-bottom:1px solid #f1f5f9;">
-              <td style="padding:7px 10px;">Impuestos</td>
-              <td style="padding:4px 10px;text-align:right;"><input type="number" name="impuestos_previsto" step="0.01" min="0" value="{_fv(p['imp'])}" style="width:130px;padding:4px 7px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;text-align:right;"></td>
-              <td style="padding:7px 10px;text-align:right;font-weight:600;color:#0891b2;">{_m(ra['imp'])}</td>
-            </tr>
-
-            <!-- 1.4 Beneficio -->
-            <tr style="background:#f8fafc;">
-              <td colspan="3" style="padding:8px 10px;font-size:.72rem;font-weight:800;color:#374151;letter-spacing:.04em;">1.4 BENEFICIO</td>
-            </tr>
-            <tr style="border-bottom:2px solid #e5e7eb;">
-              <td style="padding:7px 10px;">Beneficio</td>
-              <td style="padding:4px 10px;text-align:right;"><input type="number" name="beneficio_previsto" step="0.01" min="0" value="{_fv(p['ben'])}" style="width:130px;padding:4px 7px;border:1px solid #d1d5db;border-radius:5px;font-size:.83rem;text-align:right;"></td>
-              <td style="padding:7px 10px;text-align:right;color:#9ca3af;font-size:.78rem;">—</td>
-            </tr>
-
-            <!-- Totales -->
-            <tr style="background:#f1f5f9;font-weight:700;">
-              <td style="padding:8px 10px;color:#374151;">Costo total</td>
-              <td style="padding:8px 10px;text-align:right;color:#6366f1;font-size:.95rem;">{_m(p['tc'])}</td>
-              <td style="padding:8px 10px;text-align:right;color:#0891b2;font-size:.95rem;">{_m(r_tot_adj)}</td>
-            </tr>
-            <tr style="background:#ede9fe;font-weight:800;">
-              <td style="padding:8px 10px;color:#5b21b6;">Precio de venta prev.</td>
-              <td style="padding:8px 10px;text-align:right;color:#6366f1;font-size:1rem;">{_m(p['pv'])}</td>
-              <td style="padding:8px 10px;text-align:right;">
-                <span style="font-size:.85rem;font-weight:800;color:{mc};">Margen: {_pct(mg)}</span><br>
-                <span style="font-size:.75rem;color:#6b7280;">{_m(p['pv']-r_tot_adj)}</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">
+      <div style="display:flex;justify-content:space-between;"><span style="font-size:.78rem;font-weight:700;">Costo total real</span>
+        <span style="font-weight:800;">{_m(r_tot_adj)}</span></div>
+      <div style="padding:8px;border-radius:6px;background:#fafafe;border:1px solid #e0e7ff;margin-top:6px;">
+        <div style="font-size:.7rem;color:#6b7280;">Resultado (PV − Costo Real)</div>
+        <div style="font-weight:800;font-size:1rem;color:{mc};">{_m(p['pv']-r_tot_adj)} <span style="font-size:.8rem;">({_pct(mg)})</span></div>
       </div>
-      <button type="submit" class="btn" style="background:#6366f1;color:#fff;margin-top:12px;">💾 Guardar presupuesto</button>
-    </form>
-  </div></div>
+    </div></div>
+  </div>
   <div class="card"><div class="ct">📉 Desvíos por Rubro</div>
     <div style="overflow-x:auto;"><table>
       <thead><tr><th>Rubro</th><th style="text-align:right;">Previsto</th><th style="text-align:right;">Real</th>
