@@ -508,144 +508,148 @@ def economico_dashboard():
 def economico_obra(obra_nombre):
     db = get_db(); _ensure_schema(db)
     mensaje = error = ""
+    try:
+        if request.method == "POST" and (request.form.get("accion") or "") == "config_obra":
+            try:
+                _save_config_obra(db, obra_nombre,
+                    float(request.form.get("precio_hora_mo") or 0),
+                    float(request.form.get("precio_hora_cons") or 0),
+                    float(request.form.get("pct_impuestos") or 3))
+                mensaje = "Tasas actualizadas."
+            except Exception as exc:
+                error = str(exc)
 
-    if request.method == "POST" and (request.form.get("accion") or "") == "config_obra":
-        try:
-            _save_config_obra(db, obra_nombre,
-                float(request.form.get("precio_hora_mo") or 0),
-                float(request.form.get("precio_hora_cons") or 0),
-                float(request.form.get("pct_impuestos") or 3))
-            mensaje = "Tasas actualizadas."
-        except Exception as exc: error = str(exc)
+        cfg = _get_config_obra(db, obra_nombre)
+        ots_rows = db.execute(
+            "SELECT id,cliente,titulo,tipo_estructura,estado,fecha_cierre_economico FROM ordenes_trabajo WHERE obra=? ORDER BY id",
+            (obra_nombre,),
+        ).fetchall()
+        if not ots_rows:
+            return f"<p>Sin OTs para <b>{_E(obra_nombre)}</b>.</p><a href='/modulo/economico'>← Volver</a>", 404
 
-    cfg = _get_config_obra(db, obra_nombre)
-    ots_rows = db.execute("SELECT id,cliente,titulo,tipo_estructura,estado,fecha_cierre_economico FROM ordenes_trabajo WHERE obra=? ORDER BY id", (obra_nombre,)).fetchall()
-    if not ots_rows:
-        return f"<p>Sin OTs para <b>{_E(obra_nombre)}</b>.</p><a href='/modulo/economico'>← Volver</a>", 404
+        cliente = ots_rows[0][1] or ""
+        ots_data = []
+        for ot_id, _, titulo, tipo, estado, fce in ots_rows:
+            d = _calc_economico(db, ot_id, cfg)
+            d.update({"ot_id": ot_id, "titulo": titulo or "", "tipo": tipo or "", "estado": estado or "", "fce": fce})
+            ots_data.append(d)
 
-    cliente = ots_rows[0][1] or ""
-    ots_data = []
-    for ot_id, _, titulo, tipo, estado, fce in ots_rows:
-        d = _calc_economico(db, ot_id, cfg)
-        d.update({"ot_id":ot_id,"titulo":titulo or "","tipo":tipo or "","estado":estado or "","fce":fce})
-        ots_data.append(d)
+        agg = _aggregate_obra(ots_data)
+        ots_all = db.execute(
+            "SELECT id, obra, COALESCE(es_mantenimiento,0) FROM ordenes_trabajo ORDER BY obra, id"
+        ).fetchall()
+        obras_all = {}
+        mant_all = {}
+        for _ot_id, _obra_key, _es_mant in ots_all:
+            _obra_key = str(_obra_key or "Sin obra").strip()
+            _dest = mant_all if _es_mant else obras_all
+            if _obra_key not in _dest:
+                _dest[_obra_key] = {"ots": []}
+            _dest[_obra_key]["ots"].append(_ot_id)
 
-    agg = _aggregate_obra(ots_data)
-    # Distribuir overhead real de toda la cartera a esta obra según costo directo real.
-    ots_all = db.execute(
-      "SELECT id, obra, COALESCE(es_mantenimiento,0) FROM ordenes_trabajo ORDER BY obra, id"
-    ).fetchall()
-    obras_all = {}
-    mant_all = {}
-    for _ot_id, _obra_key, _es_mant in ots_all:
-      _obra_key = str(_obra_key or "Sin obra").strip()
-      _dest = mant_all if _es_mant else obras_all
-      if _obra_key not in _dest:
-        _dest[_obra_key] = {"ots": []}
-      _dest[_obra_key]["ots"].append(_ot_id)
+        total_prod_cd = 0.0
+        for _obra_key, _info in obras_all.items():
+            _cfg_obra = _get_config_obra(db, _obra_key)
+            _ots_d = []
+            for _prod_ot_id in _info["ots"]:
+                _d = _calc_economico(db, _prod_ot_id, _cfg_obra)
+                _ots_d.append(_d)
+            _agg_obra = _aggregate_obra(_ots_d)
+            total_prod_cd += _agg_obra["r_cd"]
 
-    total_prod_cd = 0.0
-    for _obra_key, _info in obras_all.items():
-      _cfg_obra = _get_config_obra(db, _obra_key)
-      _ots_d = []
-      for _prod_ot_id in _info["ots"]:
-        _d = _calc_economico(db, _prod_ot_id, _cfg_obra)
-        _ots_d.append(_d)
-      _agg_obra = _aggregate_obra(_ots_d)
-      total_prod_cd += _agg_obra["r_cd"]
+        total_mant_real = 0.0
+        for _obra_key, _info in mant_all.items():
+            _cfg_obra = _get_config_obra(db, _obra_key)
+            _ots_d = []
+            for _mant_ot_id in _info["ots"]:
+                _d = _calc_economico(db, _mant_ot_id, _cfg_obra)
+                _ots_d.append(_d)
+            _agg_obra = _aggregate_obra(_ots_d)
+            total_mant_real += _agg_obra["r_tot"]
 
-    total_mant_real = 0.0
-    for _obra_key, _info in mant_all.items():
-      _cfg_obra = _get_config_obra(db, _obra_key)
-      _ots_d = []
-      for _mant_ot_id in _info["ots"]:
-        _d = _calc_economico(db, _mant_ot_id, _cfg_obra)
-        _ots_d.append(_d)
-      _agg_obra = _aggregate_obra(_ots_d)
-      total_mant_real += _agg_obra["r_tot"]
+        total_gf_real = db.execute("SELECT COALESCE(SUM(monto),0) FROM economico_gastos_fijos").fetchone()[0] or 0.0
+        total_estructura_real = float(total_mant_real or 0.0) + float(total_gf_real or 0.0)
+        gg_asig_obra = (total_estructura_real * (agg["r_cd"] / total_prod_cd)) if total_prod_cd > 0 else 0.0
+        r_tot_adj = agg["r_tot"] + gg_asig_obra
+        mg = ((agg["p_pv"] - r_tot_adj) / agg["p_pv"] * 100.0) if agg["p_pv"] > 0 else 0.0
+        mc = _cm(mg)
+        af = agg["avf"]
+        ae = agg["ave"]
+        ae_adj = min((r_tot_adj / agg["p_tc"] * 100.0) if agg["p_tc"] > 0 else 0.0, 999.9)
+        ac = "#991b1b" if ae_adj > af + 5 else ("#166534" if ae_adj <= af else "#92400e")
 
-    total_gf_real = db.execute("SELECT COALESCE(SUM(monto),0) FROM economico_gastos_fijos").fetchone()[0] or 0.0
-    total_estructura_real = float(total_mant_real or 0.0) + float(total_gf_real or 0.0)
-    gg_asig_obra = (total_estructura_real * (agg["r_cd"] / total_prod_cd)) if total_prod_cd > 0 else 0.0
-    r_tot_adj = agg["r_tot"] + gg_asig_obra
-    mg  = ((agg["p_pv"]-r_tot_adj)/agg["p_pv"]*100.0) if agg["p_pv"]>0 else 0.0
-    mc  = _cm(mg)
-    af  = agg["avf"]; ae = agg["ave"]
-    ae_adj = min((r_tot_adj / agg["p_tc"] * 100.0) if agg["p_tc"] > 0 else 0.0, 999.9)
-    ac  = "#991b1b" if ae_adj>af+5 else ("#166534" if ae_adj<=af else "#92400e")
-
-    ots_filas = ""
-    for d in ots_data:
-        pv = d["p"]["pv"]; rt = d["r"]["tot"]
-        mg_ot = ((pv-rt)/pv*100.0) if pv>0 else 0.0
-        ac_ot = "#991b1b" if d["ave"]>d["avf"]+5 else "#166534"
-        _fce_badge_obra = ('<span style="font-size:.65rem;background:#fee2e2;color:#991b1b;padding:1px 5px;border-radius:999px;margin-left:4px;">🔒</span>'
-                          if d.get("fce") else '')
-        _eco_btn = (
-            f'<form method="post" action="/modulo/economico/ot/{d["ot_id"]}/reabrir-economico" style="margin:0;display:inline;">'
-            f'<button type="submit" style="font-size:.7rem;padding:2px 7px;background:#fef3c7;color:#92400e;border:none;border-radius:4px;cursor:pointer;">🔓 Reabrir</button></form>'
-        ) if d.get("fce") else (
-            f'<form method="post" action="/modulo/economico/ot/{d["ot_id"]}/cerrar-economico" style="margin:0;display:inline;">'
-            f'<button type="submit" style="font-size:.7rem;padding:2px 7px;background:#fee2e2;color:#991b1b;border:none;border-radius:4px;cursor:pointer;">🔒 Cerrar</button></form>'
-        )
-        ots_filas += f"""<tr>
-          <td><a href="/modulo/economico/ot/{d['ot_id']}" style="font-weight:700;color:#6366f1;text-decoration:none;">OT {d['ot_id']}</a>{_fce_badge_obra}</td>
-          <td style="font-size:.78rem;">{_E(d['titulo'])}</td>
-          <td><span style="font-size:.7rem;background:#ede9fe;color:#5b21b6;padding:1px 6px;border-radius:999px;">{_E(d['tipo'])}</span></td>
-          <td style="text-align:right;">{d['kg']:,.1f}</td>
-          <td style="text-align:right;">{d['hh']:,.1f}</td>
-          <td style="text-align:right;color:#6366f1;font-weight:600;">{_m(pv)}</td>
-          <td style="text-align:right;">{_m(rt)}</td>
-          <td style="text-align:right;font-weight:700;color:{_cm(mg_ot)};">{_pct(mg_ot)}</td>
-          <td>{_pb(d['avf'],'#3b82f6',7)}</td>
-          <td style="color:{ac_ot};font-size:.8rem;">{_pct(d['ave'])}</td>
-          <td style="white-space:nowrap;"><a href="/modulo/economico/ot/{d['ot_id']}" style="font-size:.75rem;padding:3px 8px;background:#6366f1;color:#fff;border-radius:5px;text-decoration:none;">Editar</a> {_eco_btn}</td>
-        </tr>"""
-    ots_filas += f"""<tr style="background:#f1f5f9;font-weight:700;">
-      <td colspan="3">TOTAL OBRA</td>
-      <td style="text-align:right;">{agg['kg']:,.1f}</td><td style="text-align:right;">{agg['hh']:,.1f}</td>
-      <td style="text-align:right;color:#6366f1;">{_m(agg['p_pv'])}</td>
-      <td style="text-align:right;">{_m(r_tot_adj)}</td>
-      <td style="text-align:right;color:{mc};">{_pct(mg)}</td>
-      <td>{_pb(af,'#3b82f6',7)}</td><td style="color:{ac};">{_pct(ae)}</td><td></td>
-    </tr>"""
-
-    def _desv_group(title, rows):
-        if not rows:
-            return ""
-        body = "".join(
-            f"""<tr>
-              <td style="font-weight:600;">{_E(nombre)}</td>
-              <td style="text-align:right;">{_m(prev)}</td><td style="text-align:right;">{_m(real)}</td>
-              <td style="text-align:right;font-weight:700;color:{_cd(real-prev)};">{'▲' if real>prev else ('▼' if real<prev else '–')} {_m(abs(real-prev))}</td>
-              <td style="text-align:right;font-weight:700;color:{_cd(real-prev)};">{'▲' if real>prev else ('▼' if real<prev else '–')} {_pct(abs((real-prev)/(prev)*100.0) if prev != 0 else (0.0 if real == 0 else 100.0))}</td>
+        ots_filas = ""
+        for d in ots_data:
+            pv = d["p"]["pv"]
+            rt = d["r"]["tot"]
+            mg_ot = ((pv - rt) / pv * 100.0) if pv > 0 else 0.0
+            ac_ot = "#991b1b" if d["ave"] > d["avf"] + 5 else "#166534"
+            _fce_badge_obra = ('<span style="font-size:.65rem;background:#fee2e2;color:#991b1b;padding:1px 5px;border-radius:999px;margin-left:4px;">🔒</span>' if d.get("fce") else '')
+            _eco_btn = (
+                f'<form method="post" action="/modulo/economico/ot/{d["ot_id"]}/reabrir-economico" style="margin:0;display:inline;">'
+                f'<button type="submit" style="font-size:.7rem;padding:2px 7px;background:#fef3c7;color:#92400e;border:none;border-radius:4px;cursor:pointer;">🔓 Reabrir</button></form>'
+            ) if d.get("fce") else (
+                f'<form method="post" action="/modulo/economico/ot/{d["ot_id"]}/cerrar-economico" style="margin:0;display:inline;">'
+                f'<button type="submit" style="font-size:.7rem;padding:2px 7px;background:#fee2e2;color:#991b1b;border:none;border-radius:4px;cursor:pointer;">🔒 Cerrar</button></form>'
+            )
+            ots_filas += f"""<tr>
+              <td><a href="/modulo/economico/ot/{d['ot_id']}" style="font-weight:700;color:#6366f1;text-decoration:none;">OT {d['ot_id']}</a>{_fce_badge_obra}</td>
+              <td style="font-size:.78rem;">{_E(d['titulo'])}</td>
+              <td><span style="font-size:.7rem;background:#ede9fe;color:#5b21b6;padding:1px 6px;border-radius:999px;">{_E(d['tipo'])}</span></td>
+              <td style="text-align:right;">{d['kg']:,.1f}</td>
+              <td style="text-align:right;">{d['hh']:,.1f}</td>
+              <td style="text-align:right;color:#6366f1;font-weight:600;">{_m(pv)}</td>
+              <td style="text-align:right;">{_m(rt)}</td>
+              <td style="text-align:right;font-weight:700;color:{_cm(mg_ot)};">{_pct(mg_ot)}</td>
+              <td>{_pb(d['avf'], '#3b82f6', 7)}</td>
+              <td style="color:{ac_ot};font-size:.8rem;">{_pct(d['ave'])}</td>
+              <td style="white-space:nowrap;"><a href="/modulo/economico/ot/{d['ot_id']}" style="font-size:.75rem;padding:3px 8px;background:#6366f1;color:#fff;border-radius:5px;text-decoration:none;">Editar</a> {_eco_btn}</td>
             </tr>"""
-            for nombre, prev, real in rows
-        )
-        return f"""<tr style="background:#f8fafc;"><td colspan="5" style="font-size:.7rem;font-weight:800;color:#374151;letter-spacing:.04em;padding-top:10px;padding-bottom:6px;">{title}</td></tr>{body}"""
+        ots_filas += f"""<tr style="background:#f1f5f9;font-weight:700;">
+          <td colspan="3">TOTAL OBRA</td>
+          <td style="text-align:right;">{agg['kg']:,.1f}</td><td style="text-align:right;">{agg['hh']:,.1f}</td>
+          <td style="text-align:right;color:#6366f1;">{_m(agg['p_pv'])}</td>
+          <td style="text-align:right;">{_m(r_tot_adj)}</td>
+          <td style="text-align:right;color:{mc};">{_pct(mg)}</td>
+          <td>{_pb(af,'#3b82f6',7)}</td><td style="color:{ac};">{_pct(ae)}</td><td></td>
+        </tr>"""
 
-    desv_filas = ""
-    desv_filas += _desv_group("1.1 Costos directos", [
-        ("Materiales", agg["p_mat"], agg["r_mat"]), ("Pintura", agg["p_pint"], agg["r_pint"]),
-        ("Fletes", agg["p_fletes"], agg["r_fletes"]), ("Subcontratos", agg["p_sub"], agg["r_sub"]),
-        ("Mano de Obra", agg["p_mo"], agg["r_mo"]), ("Consumibles", agg["p_cons"], agg["r_cons"]),
-        ("Ingeniería", agg["p_ing"], agg["r_ing"])
-    ])
-    desv_filas += _desv_group("1.2 Gastos generales", [("Gastos generales", agg["p_gg"], gg_asig_obra)])
-    desv_filas += _desv_group("1.3 Impuestos", [("Impuestos", agg["p_imp"], agg["r_imp"])])
-    desv_filas += _desv_group("1.4 Beneficio", [("Beneficio", agg["p_ben"], agg["r_ben"])])
-    desv_filas += _desv_group("2.1 Costo directo real", [
-        ("Materiales", agg["r_mat"], agg["r_mat"]), ("Pintura", agg["r_pint"], agg["r_pint"]),
-        ("Fletes", agg["r_fletes"], agg["r_fletes"]), ("Subcontratos", agg["r_sub"], agg["r_sub"]),
-        ("Mano de Obra", agg["r_mo"], agg["r_mo"]), ("Consumibles", agg["r_cons"], agg["r_cons"]),
-        ("Ingeniería", agg["r_ing"], agg["r_ing"])
-    ])
-    desv_filas += _desv_group("2.2 Gastos generales", [("Gastos generales", gg_asig_obra, gg_asig_obra)])
-    desv_filas += _desv_group("2.3 Impuestos", [("Impuestos", agg["r_imp"], agg["r_imp"])])
+        def _desv_group(title, rows):
+            if not rows:
+                return ""
+            body = "".join(
+                f"""<tr>
+                  <td style="font-weight:600;">{_E(nombre)}</td>
+                  <td style="text-align:right;">{_m(prev)}</td><td style="text-align:right;">{_m(real)}</td>
+                  <td style="text-align:right;font-weight:700;color:{_cd(real-prev)};">{'▲' if real>prev else ('▼' if real<prev else '–')} {_m(abs(real-prev))}</td>
+                  <td style="text-align:right;font-weight:700;color:{_cd(real-prev)};">{'▲' if real>prev else ('▼' if real<prev else '–')} {_pct(abs((real-prev)/(prev)*100.0) if prev != 0 else (0.0 if real == 0 else 100.0))}</td>
+                </tr>"""
+                for nombre, prev, real in rows
+            )
+            return f"""<tr style="background:#f8fafc;"><td colspan="5" style="font-size:.7rem;font-weight:800;color:#374151;letter-spacing:.04em;padding-top:10px;padding-bottom:6px;">{title}</td></tr>{body}"""
 
-    msg = (f'<div class="ok" style="margin-bottom:12px;">{_E(mensaje)}</div>' if mensaje else "")
+        desv_filas = ""
+        desv_filas += _desv_group("1.1 Costos directos", [
+            ("Materiales", agg["p_mat"], agg["r_mat"]), ("Pintura", agg["p_pint"], agg["r_pint"]),
+            ("Fletes", agg["p_fletes"], agg["r_fletes"]), ("Subcontratos", agg["p_sub"], agg["r_sub"]),
+            ("Mano de Obra", agg["p_mo"], agg["r_mo"]), ("Consumibles", agg["p_cons"], agg["r_cons"]),
+            ("Ingeniería", agg["p_ing"], agg["r_ing"])
+        ])
+        desv_filas += _desv_group("1.2 Gastos generales", [("Gastos generales", agg["p_gg"], gg_asig_obra)])
+        desv_filas += _desv_group("1.3 Impuestos", [("Impuestos", agg["p_imp"], agg["r_imp"])])
+        desv_filas += _desv_group("1.4 Beneficio", [("Beneficio", agg["p_ben"], agg["r_ben"])])
+        desv_filas += _desv_group("2.1 Costo directo real", [
+            ("Materiales", agg["r_mat"], agg["r_mat"]), ("Pintura", agg["r_pint"], agg["r_pint"]),
+            ("Fletes", agg["r_fletes"], agg["r_fletes"]), ("Subcontratos", agg["r_sub"], agg["r_sub"]),
+            ("Mano de Obra", agg["r_mo"], agg["r_mo"]), ("Consumibles", agg["r_cons"], agg["r_cons"]),
+            ("Ingeniería", agg["r_ing"], agg["r_ing"])
+        ])
+        desv_filas += _desv_group("2.2 Gastos generales", [("Gastos generales", gg_asig_obra, gg_asig_obra)])
+        desv_filas += _desv_group("2.3 Impuestos", [("Impuestos", agg["r_imp"], agg["r_imp"])])
 
-    return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+        msg = (f'<div class="ok" style="margin-bottom:12px;">{_E(mensaje)}</div>' if mensaje else "")
+
+        return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Económico {_E(obra_nombre)}</title>
 <style>{_CSS_COMMON}</style></head><body>
 <div class="hdr">
@@ -716,7 +720,22 @@ def economico_obra(obra_nombre):
     </table></div>
   </div>
 </div></body></html>"""
+    except Exception:
+        app.logger.exception("Error en economico_obra para %s", obra_nombre)
+        return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Error Económico</title>
+<style>{{body {{font-family: Arial, sans-serif; background:#f8fafc; margin:0; padding:24px;}} .box {{max-width:720px; margin:0 auto; background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:24px 20px;}} h1 {{font-size:2rem; margin:0 0 12px; color:#1f2937;}} p {{color:#4b5563; line-height:1.5;}} a {{display:inline-block; margin-top:12px; padding:10px 14px; background:#2563eb; color:#fff; text-decoration:none; border-radius:8px;}}}}</style></head><body>
+<div class="box">
+  <h1>Ocurrió un error en la vista económica</h1>
+  <p>No se pudo completar la pantalla de la obra <b>{_E(obra_nombre)}</b> por un dato incompleto o inconsistente.</p>
+  <p>Se registró el error interno para corregirlo. Podés volver al módulo económico.</p>
+  <a href="/modulo/economico">← Volver al módulo</a>
+</div>
+</body></html>""", 500
 
+# ─────────────────────────────────────────────────────────────────────────────
+# RUTA: DETALLE OT
+# ─────────────────────────────────────────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RUTA: DETALLE OT
@@ -1873,14 +1892,8 @@ def economico_dashboard_ejecutivo():
           </div>
         </div>
 
-        <div class="two" style="margin-bottom:0;">
-          <div>
-            {"<table style='font-size:.85rem;'><thead><tr><th>Obra mantenimiento</th><th style='text-align:right;'>Costo Real</th><th style='text-align:right;'>HH</th></tr></thead><tbody>" + mant_filas + "</tbody></table>" if mant_filas else ""}
-          </div>
-          <div style="position:relative;min-height:180px;">
-            <div style="font-size:.82rem;font-weight:700;color:#374151;margin-bottom:6px;">Evolución mensual — mantenimiento</div>
-            <div style="position:relative;height:160px;"><canvas id="chartMant"></canvas></div>
-          </div>
+        <div style="margin-bottom:0;">
+          {"<table style='font-size:.85rem;'><thead><tr><th>Obra mantenimiento</th><th style='text-align:right;'>Costo Real</th><th style='text-align:right;'>HH</th></tr></thead><tbody>" + mant_filas + "</tbody></table>" if mant_filas else ""}
         </div>
       </div>
     </div>"""
@@ -2316,47 +2329,6 @@ def economico_dashboard_ejecutivo():
       }}
     }});
 
-    // Chart 3: Mantenimiento — evolución mensual (apilado: HH + gastos fijos)
-    const ctxMant = document.getElementById('chartMant');
-    if (ctxMant) {{
-      new Chart(ctxMant.getContext('2d'), {{
-        type: 'bar',
-        data: {{
-          labels: {mant_mes_js},
-          datasets: [
-            {{
-              label: 'Obras mant. (HH)',
-              data: {mant_costs_js},
-              backgroundColor: 'rgba(245,158,11,0.75)',
-              borderColor: 'rgba(245,158,11,1)',
-              borderWidth: 1, borderRadius: 2,
-              stack: 'estructura',
-            }},
-            {{
-              label: 'Gastos fijos',
-              data: {gf_costs_js},
-              backgroundColor: 'rgba(239,68,68,0.7)',
-              borderColor: 'rgba(239,68,68,1)',
-              borderWidth: 1, borderRadius: 2,
-              stack: 'estructura',
-            }}
-          ]
-        }},
-        options: {{
-          responsive: true, maintainAspectRatio: false,
-          plugins: {{
-            legend: {{ position: 'top', labels: {{ font: {{ size: 9 }}, boxWidth: 10 }} }},
-            tooltip: {{ callbacks: {{ label: c => ` ${{c.dataset.label}}: ${{(c.parsed.y/1000).toFixed(0)}}k` }} }}
-          }},
-          scales: {{
-            y: {{ beginAtZero: true, stacked: true,
-                  ticks: {{ callback: v => '$' + (v/1000).toFixed(0) + 'k', font: {{ size: 9 }} }},
-                  grid: {{ color: '#f1f5f9' }} }},
-            x: {{ stacked: true, ticks: {{ font: {{ size: 9 }}, maxRotation: 45 }} }}
-          }}
-        }}
-      }});
-    }}
   }})();
   </script>
 </body>
