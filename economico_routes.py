@@ -637,7 +637,7 @@ def economico_obra(obra_nombre):
         ])
         desv_filas += _desv_group("1.2 Gastos generales", [("Gastos generales", agg["p_gg"], gg_asig_obra)])
         desv_filas += _desv_group("1.3 Impuestos", [("Impuestos", agg["p_imp"], agg["r_imp"])])
-        desv_filas += _desv_group("1.4 Beneficio", [("Beneficio", agg["p_ben"], agg["r_ben"])])
+        desv_filas += _desv_group("1.4 Beneficio", [("Beneficio", agg["p_ben"], 0.0)])
         desv_filas += _desv_group("2.1 Costo directo real", [
             ("Materiales", agg["r_mat"], agg["r_mat"]), ("Pintura", agg["r_pint"], agg["r_pint"]),
             ("Fletes", agg["r_fletes"], agg["r_fletes"]), ("Subcontratos", agg["r_sub"], agg["r_sub"]),
