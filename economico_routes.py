@@ -21,6 +21,8 @@ def _ensure_schema(db):
         ot_id INTEGER NOT NULL UNIQUE,
         mat_previsto         REAL DEFAULT 0,
         pintura_previsto     REAL DEFAULT 0,
+        fletes_previsto      REAL DEFAULT 0,
+        subcontratos_previsto REAL DEFAULT 0,
         mo_previsto          REAL DEFAULT 0,
         consumibles_previsto REAL DEFAULT 0,
         ingenieria_previsto  REAL DEFAULT 0,
@@ -29,6 +31,14 @@ def _ensure_schema(db):
         beneficio_previsto   REAL DEFAULT 0,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )""")
+    try:
+        db.execute("ALTER TABLE economico_presupuesto ADD COLUMN fletes_previsto REAL DEFAULT 0")
+    except Exception:
+        pass
+    try:
+        db.execute("ALTER TABLE economico_presupuesto ADD COLUMN subcontratos_previsto REAL DEFAULT 0")
+    except Exception:
+        pass
     db.execute("""
     CREATE TABLE IF NOT EXISTS economico_costos_reales (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,18 +167,20 @@ def _save_config_obra(db, obra, pmo, pcons, pimp):
 
 def _calc_economico(db, ot_id, cfg):
     pres = db.execute(
-        """SELECT mat_previsto,pintura_previsto,mo_previsto,consumibles_previsto,
+        """SELECT mat_previsto,pintura_previsto,fletes_previsto,subcontratos_previsto,mo_previsto,consumibles_previsto,
                   ingenieria_previsto,gastos_gen_previsto,impuestos_previsto,beneficio_previsto
            FROM economico_presupuesto WHERE ot_id=?""", (ot_id,)).fetchone()
-    p_mat  = float(pres[0] or 0) if pres else 0.0
-    p_pint = float(pres[1] or 0) if pres else 0.0
-    p_mo   = float(pres[2] or 0) if pres else 0.0
-    p_cons = float(pres[3] or 0) if pres else 0.0
-    p_ing  = float(pres[4] or 0) if pres else 0.0
-    p_gg   = float(pres[5] or 0) if pres else 0.0
-    p_imp  = float(pres[6] or 0) if pres else 0.0
-    p_ben  = float(pres[7] or 0) if pres else 0.0
-    p_cd = p_mat + p_pint + p_mo + p_cons + p_ing
+    p_mat         = float(pres[0] or 0) if pres else 0.0
+    p_pint        = float(pres[1] or 0) if pres else 0.0
+    p_fletes      = float(pres[2] or 0) if pres else 0.0
+    p_sub         = float(pres[3] or 0) if pres else 0.0
+    p_mo          = float(pres[4] or 0) if pres else 0.0
+    p_cons        = float(pres[5] or 0) if pres else 0.0
+    p_ing         = float(pres[6] or 0) if pres else 0.0
+    p_gg          = float(pres[7] or 0) if pres else 0.0
+    p_imp         = float(pres[8] or 0) if pres else 0.0
+    p_ben         = float(pres[9] or 0) if pres else 0.0
+    p_cd = p_mat + p_pint + p_fletes + p_sub + p_mo + p_cons + p_ing
     p_tc = p_cd + p_gg + p_imp
     p_pv = p_tc + p_ben
 
@@ -176,6 +188,7 @@ def _calc_economico(db, ot_id, cfg):
         "SELECT concepto, COALESCE(SUM(monto),0) FROM economico_costos_reales_mensual "
         "WHERE ot_id=? GROUP BY concepto", (ot_id,)).fetchall()
     _rm = {row[0]: float(row[1] or 0) for row in _rm_rows}
+    r_fletes   = _rm.get("Fletes", 0.0)
     r_mat      = _rm.get("Materiales",   0.0)
     r_pint     = _rm.get("Pintura",      0.0)
     r_sub      = _rm.get("Subcontratos", 0.0)
@@ -186,7 +199,7 @@ def _calc_economico(db, ot_id, cfg):
 
     r_mo   = hh_total * cfg["precio_hora_mo"]
     r_cons = hh_total * cfg["precio_hora_cons"]
-    r_cd   = r_mat + r_pint + r_sub + r_mo + r_cons + r_ing_real
+    r_cd   = r_mat + r_pint + r_fletes + r_sub + r_mo + r_cons + r_ing_real
     r_imp  = r_cd * cfg["pct_impuestos"] / 100.0
     r_tot  = r_cd + r_imp
 
@@ -201,9 +214,9 @@ def _calc_economico(db, ot_id, cfg):
     avf = float(av[0] or 0) if av else 0.0
 
     return {
-        "p":  {"mat":p_mat,"pintura":p_pint,"mo":p_mo,"cons":p_cons,
+        "p":  {"mat":p_mat,"pintura":p_pint,"fletes":p_fletes,"subcontratos":p_sub,"mo":p_mo,"cons":p_cons,
                "ing":p_ing,"gg":p_gg,"imp":p_imp,"ben":p_ben,"cd":p_cd,"tc":p_tc,"pv":p_pv},
-        "rm": {"mat":r_mat,"pintura":r_pint,"sub":r_sub,"ing":r_ing_real},
+        "rm": {"mat":r_mat,"pintura":r_pint,"fletes":r_fletes,"sub":r_sub,"ing":r_ing_real},
         "ra": {"mo":r_mo,"cons":r_cons,"imp":r_imp},
         "r":  {"cd":r_cd,"tot":r_tot},
         "hh": hh_total, "kg": kg, "avf": avf,
@@ -212,16 +225,16 @@ def _calc_economico(db, ot_id, cfg):
 
 
 def _aggregate_obra(ots_data):
-    agg = {k:0.0 for k in ["p_mat","p_pint","p_mo","p_cons","p_ing","p_gg","p_imp","p_ben",
-                            "p_cd","p_tc","p_pv","r_mat","r_pint","r_sub","r_ing","r_mo","r_cons",
+    agg = {k:0.0 for k in ["p_mat","p_pint","p_fletes","p_sub","p_mo","p_cons","p_ing","p_gg","p_imp","p_ben",
+                            "p_cd","p_tc","p_pv","r_mat","r_pint","r_fletes","r_sub","r_ing","r_mo","r_cons",
                             "r_imp","r_cd","r_tot","hh","kg"]}
     avf_list = []
     for d in ots_data:
-        for k,v in [("p_mat",d["p"]["mat"]),("p_pint",d["p"]["pintura"]),("p_mo",d["p"]["mo"]),
+        for k,v in [("p_mat",d["p"]["mat"]),("p_pint",d["p"]["pintura"]),("p_fletes",d["p"]["fletes"]),("p_sub",d["p"]["subcontratos"]),("p_mo",d["p"]["mo"]),
                     ("p_cons",d["p"]["cons"]),("p_ing",d["p"]["ing"]),("p_gg",d["p"]["gg"]),
                     ("p_imp",d["p"]["imp"]),("p_ben",d["p"]["ben"]),("p_cd",d["p"]["cd"]),
                     ("p_tc",d["p"]["tc"]),("p_pv",d["p"]["pv"]),
-                    ("r_mat",d["rm"]["mat"]),("r_pint",d["rm"]["pintura"]),("r_sub",d["rm"]["sub"]),("r_ing",d["rm"]["ing"]),
+                    ("r_mat",d["rm"]["mat"]),("r_pint",d["rm"]["pintura"]),("r_fletes",d["rm"]["fletes"]),("r_sub",d["rm"]["sub"]),("r_ing",d["rm"]["ing"]),
                     ("r_mo",d["ra"]["mo"]),("r_cons",d["ra"]["cons"]),
                     ("r_imp",d["ra"]["imp"]),("r_cd",d["r"]["cd"]),("r_tot",d["r"]["tot"]),
                     ("hh",d["hh"]),("kg",d["kg"])]:
@@ -600,9 +613,9 @@ def economico_obra(obra_nombre):
     desv_filas = ""
     for nombre, prev, real in [
         ("Materiales",agg["p_mat"],agg["r_mat"]),("Pintura",agg["p_pint"],agg["r_pint"]),
+        ("Fletes",agg["p_fletes"],agg["r_fletes"]),("Subcontratos",agg["p_sub"],agg["r_sub"]),
         ("Mano de Obra",agg["p_mo"],agg["r_mo"]),("Consumibles",agg["p_cons"],agg["r_cons"]),
-        ("Ingeniería",agg["p_ing"],agg["r_ing"]),("Subcontratos",0.0,agg["r_sub"]),
-        ("Gastos Generales",agg["p_gg"],gg_asig_obra),("Impuestos",agg["p_imp"],agg["r_imp"])]:
+        ("Ingeniería",agg["p_ing"],agg["r_ing"]),("Gastos Generales",agg["p_gg"],gg_asig_obra),("Impuestos",agg["p_imp"],agg["r_imp"])]:
         da = real-prev; dp = (da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c = _cd(da); ic = "▲" if da>0 else ("▼" if da<0 else "–")
         desv_filas += f"""<tr>
@@ -708,19 +721,19 @@ def economico_ot(ot_id):
         try:
             if accion == "guardar_presupuesto":
                 vals = [float(request.form.get(c) or 0) for c in
-                        ["mat_previsto","pintura_previsto","mo_previsto","consumibles_previsto",
+                        ["mat_previsto","pintura_previsto","fletes_previsto","subcontratos_previsto","mo_previsto","consumibles_previsto",
                          "ingenieria_previsto","gastos_gen_previsto","impuestos_previsto","beneficio_previsto"]]
                 ex = db.execute("SELECT id FROM economico_presupuesto WHERE ot_id=?", (ot_id,)).fetchone()
                 if ex:
                     db.execute("""UPDATE economico_presupuesto SET
-                        mat_previsto=?,pintura_previsto=?,mo_previsto=?,consumibles_previsto=?,
+                        mat_previsto=?,pintura_previsto=?,fletes_previsto=?,subcontratos_previsto=?,mo_previsto=?,consumibles_previsto=?,
                         ingenieria_previsto=?,gastos_gen_previsto=?,impuestos_previsto=?,beneficio_previsto=?,
                         updated_at=CURRENT_TIMESTAMP WHERE ot_id=?""", (*vals, ot_id))
                 else:
                     db.execute("""INSERT INTO economico_presupuesto
-                        (ot_id,mat_previsto,pintura_previsto,mo_previsto,consumibles_previsto,
+                        (ot_id,mat_previsto,pintura_previsto,fletes_previsto,subcontratos_previsto,mo_previsto,consumibles_previsto,
                          ingenieria_previsto,gastos_gen_previsto,impuestos_previsto,beneficio_previsto)
-                        VALUES(?,?,?,?,?,?,?,?,?)""", (ot_id, *vals))
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (ot_id, *vals))
                 db.commit(); mensaje = "Presupuesto guardado."
             elif accion == "agregar_costo_mensual":
                 mes_c    = (request.form.get("mes") or "").strip()
@@ -804,9 +817,9 @@ def economico_ot(ot_id):
     desv_rows = ""
     for nombre, prev, real in [
         ("Materiales",p["mat"],rm["mat"]),("Pintura",p["pintura"],rm["pintura"]),
+        ("Fletes",p["fletes"],rm["fletes"]),("Subcontratos",p["subcontratos"],rm["sub"]),
         ("Mano de Obra",p["mo"],ra["mo"]),("Consumibles",p["cons"],ra["cons"]),
-        ("Ingeniería",p["ing"],rm["ing"]),("Subcontratos",0.0,rm["sub"]),
-      ("Gastos Generales",p["gg"],gg_real_ot),("Impuestos",p["imp"],ra["imp"])]:
+        ("Ingeniería",p["ing"],rm["ing"]),("Gastos Generales",p["gg"],gg_real_ot),("Impuestos",p["imp"],ra["imp"])]:
         da=real-prev; dp=(da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
         c=_cd(da); ic="▲" if da>0 else ("▼" if da<0 else "–")
         desv_rows += f"""<tr>
@@ -892,28 +905,55 @@ def economico_ot(ot_id):
     <div class="card"><div class="ct">📋 Costos Previstos</div><div class="cb">
       <form method="post">
         <input type="hidden" name="accion" value="guardar_presupuesto">
-        <div class="fg"><label>Materiales ($)</label><input type="number" name="mat_previsto" step="0.01" min="0" value="{_fv(p['mat'])}"></div>
-        <div class="fg"><label>Pintura ($)</label><input type="number" name="pintura_previsto" step="0.01" min="0" value="{_fv(p['pintura'])}"></div>
-        <div class="fg"><label>Mano de Obra ($)</label><input type="number" name="mo_previsto" step="0.01" min="0" value="{_fv(p['mo'])}"></div>
-        <div class="fg"><label>Consumibles ($)</label><input type="number" name="consumibles_previsto" step="0.01" min="0" value="{_fv(p['cons'])}"></div>
-        <div class="fg"><label>Ingeniería ($)</label><input type="number" name="ingenieria_previsto" step="0.01" min="0" value="{_fv(p['ing'])}"></div>
-        <div class="fg"><label>Gastos Generales ($)</label><input type="number" name="gastos_gen_previsto" step="0.01" min="0" value="{_fv(p['gg'])}"></div>
-        <div class="fg"><label>Impuestos ($)</label><input type="number" name="impuestos_previsto" step="0.01" min="0" value="{_fv(p['imp'])}"></div>
-        <div class="fg" style="margin-top:8px;"><label>Beneficio ($)</label><input type="number" name="beneficio_previsto" step="0.01" min="0" value="{_fv(p['ben'])}"></div>
+        <div style="font-size:.72rem;font-weight:700;color:#374151;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #e5e7eb;">1 - PRESUPUESTO / PREVISTO</div>
+        <div style="font-size:.72rem;color:#6b7280;margin-bottom:10px;">Valores de entrada. Precio de venta = costo directo + gastos generales + impuestos + beneficio.</div>
+
+        <div style="margin-bottom:12px;">
+          <div style="font-size:.72rem;font-weight:700;color:#1f2937;margin-bottom:6px;">1.1 Costos directos</div>
+          <div class="fg"><label>Materiales ($)</label><input type="number" name="mat_previsto" step="0.01" min="0" value="{_fv(p['mat'])}"></div>
+          <div class="fg"><label>Pintura ($)</label><input type="number" name="pintura_previsto" step="0.01" min="0" value="{_fv(p['pintura'])}"></div>
+          <div class="fg"><label>Fletes ($)</label><input type="number" name="fletes_previsto" step="0.01" min="0" value="{_fv(p['fletes'])}"></div>
+          <div class="fg"><label>Subcontratos ($)</label><input type="number" name="subcontratos_previsto" step="0.01" min="0" value="{_fv(p['subcontratos'])}"></div>
+          <div class="fg"><label>Mano de obra ($)</label><input type="number" name="mo_previsto" step="0.01" min="0" value="{_fv(p['mo'])}"></div>
+          <div class="fg"><label>Consumibles ($)</label><input type="number" name="consumibles_previsto" step="0.01" min="0" value="{_fv(p['cons'])}"></div>
+          <div class="fg"><label>Ingeniería ($)</label><input type="number" name="ingenieria_previsto" step="0.01" min="0" value="{_fv(p['ing'])}"></div>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <div style="font-size:.72rem;font-weight:700;color:#1f2937;margin-bottom:6px;">1.2 Gastos generales</div>
+          <div class="fg"><label>Gastos generales ($) <span class="auto">sobre costo directo</span></label><input type="number" name="gastos_gen_previsto" step="0.01" min="0" value="{_fv(p['gg'])}"></div>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <div style="font-size:.72rem;font-weight:700;color:#1f2937;margin-bottom:6px;">1.3 Impuestos</div>
+          <div class="fg"><label>Impuestos ($)</label><input type="number" name="impuestos_previsto" step="0.01" min="0" value="{_fv(p['imp'])}"></div>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <div style="font-size:.72rem;font-weight:700;color:#1f2937;margin-bottom:6px;">1.4 Beneficio</div>
+          <div class="fg"><label>Beneficio ($) <span class="auto">15-20% aprox.</span></label><input type="number" name="beneficio_previsto" step="0.01" min="0" value="{_fv(p['ben'])}"></div>
+        </div>
+
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">
         <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
           <span style="font-size:.78rem;color:#6b7280;">Costo directo</span>
-          <span style="font-weight:700;color:#6366f1;">{_m(p['cd'])}</span></div>
+          <span style="font-weight:700;color:#6366f1;">{_m(p['cd'])}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+          <span style="font-size:.78rem;color:#6b7280;">Total presupuesto</span>
+          <span style="font-weight:700;color:#111827;">{_m(p['tc'])}</span>
+        </div>
         <div style="display:flex;justify-content:space-between;">
-          <span style="font-size:.78rem;font-weight:700;">Precio de Venta</span>
-          <span style="font-weight:800;color:#6366f1;font-size:.98rem;">{_m(p['pv'])}</span></div>
+          <span style="font-size:.78rem;font-weight:700;">Precio de venta</span>
+          <span style="font-weight:800;color:#6366f1;font-size:.98rem;">{_m(p['pv'])}</span>
+        </div>
         <button type="submit" class="btn" style="background:#6366f1;color:#fff;width:100%;margin-top:8px;">💾 Guardar presupuesto</button>
       </form>
     </div></div>
-    <div class="card"><div class="ct">💸 Costos Reales — Carga Mensual</div><div class="cb">
+    <div class="card"><div class="ct">💸 Costos Reales</div><div class="cb">
       <form method="post" style="margin-bottom:16px;">
         <input type="hidden" name="accion" value="agregar_costo_mensual">
-        <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">Agregar entrada</div>
+        <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">2 - COSTOS REALES · Carga mensual</div>
         <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
           <div><label style="font-size:.75rem;">Mes</label><br>
             <input type="month" name="mes" required style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;"
@@ -921,7 +961,7 @@ def economico_ot(ot_id):
           <div><label style="font-size:.75rem;">Concepto</label><br>
             <select name="concepto" required style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">
               <option>Materiales</option><option>Pintura</option>
-              <option>Ingeniería</option><option>Subcontratos</option>
+              <option>Ingeniería</option><option>Subcontratos</option><option>Fletes</option>
             </select></div>
           <div><label style="font-size:.75rem;">Monto ($)</label><br>
             <input type="number" name="monto" step="0.01" min="0.01" required
@@ -930,13 +970,26 @@ def economico_ot(ot_id):
         </div>
       </form>
       {_historial_html}
-      <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">Calculados automáticamente <span class="auto">AUTO</span></div>
-      <div class="fg"><label>Mano de Obra <span class="auto">{data['hh']:,.1f} HH × ${cfg['precio_hora_mo']:,.2f}</span></label><div class="rv">{_m(ra['mo'])}</div></div>
+      <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">2.1 Costo directo real</div>
+      <div class="fg"><label>Materiales <span class="auto">mes a mes</span></label><div class="rv">{_m(rm['mat'])}</div></div>
+      <div class="fg"><label>Pintura <span class="auto">si aplica</span></label><div class="rv">{_m(rm['pintura'])}</div></div>
+      <div class="fg"><label>Fletes <span class="auto">mes a mes</span></label><div class="rv">{_m(rm['fletes'])}</div></div>
+      <div class="fg"><label>Ingeniería <span class="auto">mes a mes</span></label><div class="rv">{_m(rm['ing'])}</div></div>
+      <div class="fg"><label>Mano de obra <span class="auto">{data['hh']:,.1f} HH × ${cfg['precio_hora_mo']:,.2f}</span></label><div class="rv">{_m(ra['mo'])}</div></div>
       <div class="fg"><label>Consumibles <span class="auto">{data['hh']:,.1f} HH × ${cfg['precio_hora_cons']:,.2f}</span></label><div class="rv">{_m(ra['cons'])}</div></div>
-      <div class="fg"><label>Gastos Generales <span class="auto">distribución overhead real</span></label><div class="rv">{_m(gg_real_ot)}</div></div>
-      <div class="fg"><label>Impuestos <span class="auto">{cfg['pct_impuestos']:.1f}% costo directo</span></label><div class="rv">{_m(ra['imp'])}</div></div>
+      <div style="display:flex;justify-content:space-between;margin:10px 0 3px;">
+        <span style="font-size:.78rem;color:#6b7280;">Subtotal costo directo real</span>
+        <span style="font-weight:700;color:#111827;">{_m(r['cd'])}</span>
+      </div>
+
+      <div style="font-size:.76rem;font-weight:700;color:#374151;margin:12px 0 8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">2.2 Gastos generales</div>
+      <div class="fg"><label>Gastos generales <span class="auto">proporcional al costo directo real</span></label><div class="rv">{_m(gg_real_ot)}</div></div>
+
+      <div style="font-size:.76rem;font-weight:700;color:#374151;margin:12px 0 8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">2.3 Impuestos</div>
+      <div class="fg"><label>Impuestos <span class="auto">{cfg['pct_impuestos']:.1f}% sobre costo directo real</span></label><div class="rv">{_m(ra['imp'])}</div></div>
+
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">
-      <div style="display:flex;justify-content:space-between;"><span style="font-size:.78rem;font-weight:700;">Total Costo Real</span>
+      <div style="display:flex;justify-content:space-between;"><span style="font-size:.78rem;font-weight:700;">Costo total real</span>
         <span style="font-weight:800;">{_m(r_tot_adj)}</span></div>
       <div style="padding:8px;border-radius:6px;background:#fafafe;border:1px solid #e0e7ff;margin-top:6px;">
         <div style="font-size:.7rem;color:#6b7280;">Resultado (PV − Costo Real)</div>
@@ -1388,8 +1441,8 @@ def economico_dashboard_ejecutivo():
     # ── Acumular datos por obra ───────────────────────────────────────────────
     obras_data = []   # lista de dicts por obra
     rubros_global = {r: {"prev": 0.0, "real": 0.0} for r in
-                     ["Materiales","Pintura","Mano de Obra","Consumibles",
-                      "Ingeniería","Subcontratos","Gastos Generales","Impuestos"]}
+                     ["Materiales","Pintura","Fletes","Subcontratos","Mano de Obra","Consumibles",
+                      "Ingeniería","Gastos Generales","Impuestos"]}
 
     for obra_key in sorted(obras_dict.keys()):
         info = obras_dict[obra_key]
@@ -1422,13 +1475,14 @@ def economico_dashboard_ejecutivo():
 
         # Acumular rubros globales
         for nm, prev, real in [
-            ("Materiales",      agg["p_mat"],  agg["r_mat"]),
-            ("Pintura",         agg["p_pint"], agg["r_pint"]),
-            ("Mano de Obra",    agg["p_mo"],   agg["r_mo"]),
-            ("Consumibles",     agg["p_cons"], agg["r_cons"]),
-            ("Ingeniería",      agg["p_ing"],  agg["r_ing"]),
-            ("Subcontratos",    0.0,           agg["r_sub"]),
-            ("Impuestos",       agg["p_imp"],  agg["r_imp"]),
+            ("Materiales",      agg["p_mat"],   agg["r_mat"]),
+            ("Pintura",         agg["p_pint"],  agg["r_pint"]),
+            ("Fletes",          agg["p_fletes"], agg["r_fletes"]),
+            ("Subcontratos",    agg["p_sub"],   agg["r_sub"]),
+            ("Mano de Obra",    agg["p_mo"],    agg["r_mo"]),
+            ("Consumibles",     agg["p_cons"],  agg["r_cons"]),
+            ("Ingeniería",      agg["p_ing"],   agg["r_ing"]),
+            ("Impuestos",       agg["p_imp"],   agg["r_imp"]),
         ]:
             rubros_global[nm]["prev"] += prev
             rubros_global[nm]["real"] += real
@@ -1544,7 +1598,7 @@ def economico_dashboard_ejecutivo():
 
     # ── Ranking de desvíos ────────────────────────────────────────────────────
     # Rubros que siempre aparecen aunque prev=0 y real=0
-    RUBROS_SIEMPRE = {"Subcontratos", "Materiales", "Pintura", "Mano de Obra", "Consumibles"}
+    RUBROS_SIEMPRE = {"Subcontratos", "Fletes", "Materiales", "Pintura", "Mano de Obra", "Consumibles"}
     ranking = []
     for nm, vals in rubros_global.items():
         prev = vals["prev"]; real = vals["real"]
@@ -1567,6 +1621,10 @@ def economico_dashboard_ejecutivo():
         resumen_items.append(f"{n_atencion} obra{'s' if n_atencion!=1 else ''} con margen ajustado o desvío de avance.")
     if obras_mo:
         resumen_items.append(f"{', '.join(obras_mo)} presenta{'n' if len(obras_mo)>1 else ''} consumo de mano de obra superior al previsto.")
+    if mant_data:
+        mant_names = ", ".join(d["obra"] for d in mant_data if "adm" in d["obra"].lower() or "eemm" in d["obra"].lower())
+        if mant_names:
+            resumen_items.append(f"Obras de mantenimiento ({mant_names}) se reportan por separado y no se incluyen en Gastos Generales.")
     resumen_items.append(f"El margen promedio proyectado es del {mg_prom:.1f} %.")
     if n_criticos == 0:
         resumen_items.append("No se detectan riesgos críticos de rentabilidad.")
@@ -1731,6 +1789,20 @@ def economico_dashboard_ejecutivo():
               <td style="text-align:right;">{_m(d['r_tot'])}</td>
               <td style="text-align:right;font-size:.78rem;color:#6b7280;">{d['hh']:,.1f} HH</td>
             </tr>"""
+        mant_destacadas = [d for d in mant_data if "adm" in d["obra"].lower() or "eemm" in d["obra"].lower()]
+        mant_otros = [d for d in mant_data if d not in mant_destacadas]
+        mant_destacadas_html = "".join(
+            f"<div style='padding:8px 10px;border:1px solid #e5e7eb;border-radius:8px;background:#fff7ed;margin-bottom:6px;'>"
+            f"<div style='font-weight:700;color:#92400e;'>{_E(d['obra'])}</div>"
+            f"<div style='font-size:.76rem;color:#6b7280;'>Costo real { _m(d['r_tot']) } · {d['hh']:,.1f} HH</div>"
+            f"</div>" for d in mant_destacadas
+        ) or "<div style='color:#9ca3af;font-size:.8rem;'>Sin obras de mantenimiento destacadas.</div>"
+        mant_otros_html = "".join(
+            f"<div style='padding:8px 10px;border:1px solid #e5e7eb;border-radius:8px;background:#f8fafc;margin-bottom:6px;'>"
+            f"<div style='font-weight:700;color:#1f2937;'>{_E(d['obra'])}</div>"
+            f"<div style='font-size:.76rem;color:#6b7280;'>Costo real { _m(d['r_tot']) } · {d['hh']:,.1f} HH</div>"
+            f"</div>" for d in mant_otros
+        )
         gf_link = '<a href="/modulo/economico/gastos-fijos" style="font-size:.76rem;background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:5px;text-decoration:none;font-weight:700;margin-left:10px;">+ Cargar gastos fijos</a>'
         pct_total_overhead = (total_estructura_real / total_prod_real * 100.0) if total_prod_real > 0 else 0.0
         pct_total_c = "#991b1b" if pct_total_overhead > 25 else ("#92400e" if pct_total_overhead > 15 else "#166534")
@@ -1792,19 +1864,30 @@ def economico_dashboard_ejecutivo():
             <div style="font-size:.76rem;color:#9ca3af;margin-top:4px;">sueldos · alquiler · servicios</div>
           </div>
         </div>
-        <!-- Barra de cobertura -->
-        <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:16px;">
-          <div style="font-size:.84rem;font-weight:700;color:#374151;margin-bottom:10px;">
-            📊 Cobertura del overhead: <span style="color:{saldo_real_c};">{pct_cob_prev:.0f}%</span>
-            <span style="font-weight:400;color:#6b7280;font-size:.78rem;margin-left:6px;">GG presupuestados vs estructura real</span>
+
+        <div class="two" style="margin-bottom:16px;">
+          <div style="background:#fff7ed;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;">
+            <div style="font-size:.78rem;font-weight:700;color:#92400e;margin-bottom:8px;">🧱 Obras de mantenimiento (separadas)</div>
+            <div style="display:flex;flex-direction:column;gap:6px;">{mant_destacadas_html}</div>
+            {f'<div style="margin-top:8px;font-size:.76rem;color:#6b7280;font-weight:700;">Otras obras de mantenimiento</div><div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">{mant_otros_html}</div>' if mant_otros else ''}
           </div>
-          <div style="background:#e5e7eb;border-radius:6px;height:16px;margin-bottom:8px;position:relative;">
-            <div style="background:{bar_real_c};border-radius:6px;height:16px;width:{bar_real_w:.1f}%;transition:width .3s;"></div>
-            <div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:700;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4);">{pct_cob_prev:.0f}%</div>
+          <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;">
+            <div style="font-size:.78rem;font-weight:700;color:#374151;margin-bottom:8px;">📌 Gastos generales</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #e5e7eb;">
+              <span style="font-size:.78rem;color:#6b7280;">Presupuestados</span>
+              <span style="font-weight:700;color:#6366f1;">{_m(total_gg_prev)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #e5e7eb;">
+              <span style="font-size:.78rem;color:#6b7280;">Estructura real</span>
+              <span style="font-weight:700;color:#92400e;">{_m(total_estructura_real)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;">
+              <span style="font-size:.78rem;color:#6b7280;">Cobertura</span>
+              <span style="font-weight:800;color:{saldo_real_c};">{pct_cob_prev:.0f}%</span>
+            </div>
           </div>
-          <div style="display:flex;justify-content:space-between;font-size:.82rem;">
-            <span style="color:#6366f1;font-weight:700;">GG Prev: {_m(total_gg_prev)}</span>
-            <span style="color:#92400e;font-weight:700;">Estructura: {_m(total_estructura_real)}</span>
+        </div>
+
           </div>
         </div>
         <!-- Tabla OTs + Gráfico -->
