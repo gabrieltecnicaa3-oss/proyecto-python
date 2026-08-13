@@ -628,6 +628,20 @@ def economico_obra(obra_nombre):
             )
             return f"""<tr style="background:#f8fafc;"><td colspan="5" style="font-size:.7rem;font-weight:800;color:#374151;letter-spacing:.04em;padding-top:10px;padding-bottom:6px;">{title}</td></tr>{body}"""
 
+        def _subtotal_obra(label, prev, real):
+            dev = real - prev
+            ic = "▲" if dev > 0 else ("▼" if dev < 0 else "–")
+            pct_dev = abs(dev / prev * 100) if prev else 0
+            return (
+                f'<tr style="background:#e0e7ff;font-weight:700;border-top:2px solid #c7d2fe;">'
+                f'<td style="padding:6px 10px;color:#3730a3;font-size:.8rem;">{label}</td>'
+                f'<td style="text-align:right;color:#4f46e5;">{_m(prev)}</td>'
+                f'<td style="text-align:right;color:#0891b2;">{_m(real)}</td>'
+                f'<td style="text-align:right;color:{_cd(dev)};">{ic} {_m(abs(dev))}</td>'
+                f'<td style="text-align:right;color:{_cd(dev)};">{ic} {_pct(pct_dev)}</td>'
+                f'</tr>'
+            )
+
         desv_filas = ""
         desv_filas += _desv_group("1.1 Costos directos", [
             ("Materiales", agg["p_mat"], agg["r_mat"]), ("Pintura", agg["p_pint"], agg["r_pint"]),
@@ -635,9 +649,13 @@ def economico_obra(obra_nombre):
             ("Mano de Obra", agg["p_mo"], agg["r_mo"]), ("Consumibles", agg["p_cons"], agg["r_cons"]),
             ("Ingeniería", agg["p_ing"], agg["r_ing"])
         ])
+        desv_filas += _subtotal_obra("Subtotal Costos directos", agg["p_cd"], agg["r_cd"])
         desv_filas += _desv_group("1.2 Gastos generales", [("Gastos generales", agg["p_gg"], gg_asig_obra)])
+        desv_filas += _subtotal_obra("Subtotal CD + Gastos generales", agg["p_cd"] + agg["p_gg"], agg["r_cd"] + gg_asig_obra)
         desv_filas += _desv_group("1.3 Impuestos", [("Impuestos", agg["p_imp"], agg["r_imp"])])
+        desv_filas += _subtotal_obra("Subtotal CD + GG + Impuestos", agg["p_tc"], r_tot_adj)
         desv_filas += _desv_group("1.4 Beneficio", [("Beneficio", agg["p_ben"], 0.0)])
+        desv_filas += _subtotal_obra("Subtotal CD + GG + Impuestos + Beneficio", agg["p_pv"], r_tot_adj)
 
         msg = (f'<div class="ok" style="margin-bottom:12px;">{_E(mensaje)}</div>' if mensaje else "")
 
@@ -869,22 +887,33 @@ def economico_ot(ot_id):
         )
         return f"""<tr style=\"background:#f8fafc;\"><td colspan=\"5\" style=\"font-size:.7rem;font-weight:800;color:#374151;letter-spacing:.04em;padding-top:10px;padding-bottom:6px;\">{title}</td></tr>{body}"""
 
+    def _subtotal(label, prev, real):
+        dev = real - prev
+        ic = "\u25b2" if dev > 0 else ("\u25bc" if dev < 0 else "\u2013")
+        pct_dev = abs(dev / prev * 100) if prev else 0
+        return (
+            f'<tr style="background:#e0e7ff;font-weight:700;border-top:2px solid #c7d2fe;">'
+            f'<td style="padding:6px 10px;color:#3730a3;font-size:.8rem;">{label}</td>'
+            f'<td style="text-align:right;color:#4f46e5;">{_m(prev)}</td>'
+            f'<td style="text-align:right;color:#0891b2;">{_m(real)}</td>'
+            f'<td style="text-align:right;color:{_cd(dev)};">{ic} {_m(abs(dev))}</td>'
+            f'<td style="text-align:right;color:{_cd(dev)};">{ic} {_pct(pct_dev)}</td>'
+            f'</tr>'
+        )
+
     desv_rows = ""
     desv_rows += _desv_group("1.1 Costos directos", [
         ("Materiales", p["mat"], rm["mat"]), ("Pintura", p["pintura"], rm["pintura"]),
         ("Fletes", p["fletes"], rm["fletes"]), ("Subcontratos", p["subcontratos"], rm["sub"]),
         ("Mano de Obra", p["mo"], ra["mo"]), ("Consumibles", p["cons"], ra["cons"]),
         ("Ingeniería", p["ing"], rm["ing"])])
+    desv_rows += _subtotal("Subtotal Costos directos", p["cd"], r["cd"])
     desv_rows += _desv_group("1.2 Gastos generales", [("Gastos generales", p["gg"], gg_real_ot)])
+    desv_rows += _subtotal("Subtotal CD + Gastos generales", p["cd"] + p["gg"], r["cd"] + gg_real_ot)
     desv_rows += _desv_group("1.3 Impuestos", [("Impuestos", p["imp"], ra["imp"])])
-    desv_rows += _desv_group("1.4 Beneficio", [("Beneficio", p["ben"], p["ben"])])
-    desv_rows += _desv_group("2.1 Costo directo real", [
-        ("Materiales", rm["mat"], rm["mat"]), ("Pintura", rm["pintura"], rm["pintura"]),
-        ("Fletes", rm["fletes"], rm["fletes"]), ("Subcontratos", rm["sub"], rm["sub"]),
-        ("Mano de Obra", ra["mo"], ra["mo"]), ("Consumibles", ra["cons"], ra["cons"]),
-        ("Ingeniería", rm["ing"], rm["ing"])])
-    desv_rows += _desv_group("2.2 Gastos generales", [("Gastos generales", gg_real_ot, gg_real_ot)])
-    desv_rows += _desv_group("2.3 Impuestos", [("Impuestos", ra["imp"], ra["imp"])])
+    desv_rows += _subtotal("Subtotal CD + GG + Impuestos", p["tc"], r_tot_adj)
+    desv_rows += _desv_group("1.4 Beneficio", [("Beneficio", p["ben"], 0.0)])
+    desv_rows += _subtotal("Subtotal CD + GG + Impuestos + Beneficio", p["pv"], r_tot_adj)
 
     msg = (f'<div class="ok" style="margin-bottom:12px;">{_E(mensaje)}</div>' if mensaje else "")
     err = (f'<div class="er" style="margin-bottom:12px;">{_E(error)}</div>' if error else "")
@@ -1056,8 +1085,20 @@ def economico_ot(ot_id):
   </div>
   <div class="card"><div class="ct">📉 Desvíos por Rubro</div>
     <div style="overflow-x:auto;"><table>
-      <thead><tr><th>Rubro</th><th style="text-align:right;">Previsto</th><th style="text-align:right;">Real</th>
-        <th style="text-align:right;">Desvío $</th><th style="text-align:right;">Desvío %</th></tr></thead>
+      <thead>
+        <tr>
+          <th rowspan="2" style="text-align:left;">Rubro</th>
+          <th colspan="1" style="text-align:center;background:#6366f1;color:#fff;border-bottom:1px solid #4f46e5;">💜 Previsto</th>
+          <th colspan="1" style="text-align:center;background:#0891b2;color:#fff;border-bottom:1px solid #0e7490;">🔵 Real</th>
+          <th colspan="2" style="text-align:center;background:#374151;color:#fff;border-bottom:1px solid #1f2937;">Desvío</th>
+        </tr>
+        <tr>
+          <th style="text-align:right;background:#ede9fe;color:#5b21b6;">$</th>
+          <th style="text-align:right;background:#e0f2fe;color:#075985;">$</th>
+          <th style="text-align:right;background:#f1f5f9;color:#374151;">$</th>
+          <th style="text-align:right;background:#f1f5f9;color:#374151;">%</th>
+        </tr>
+      </thead>
       <tbody>{desv_rows}
         <tr style="background:#f1f5f9;font-weight:700;">
           <td>TOTAL COSTOS</td>
