@@ -2951,10 +2951,6 @@ def _curva_s_impl():
                         f"WHERE ot_id IN ({ph}) GROUP BY mes", ot_ids).fetchall():
         m = str(r[0] or "")
         ac_mes[m] = ac_mes.get(m, 0.0) + float(r[1] or 0)
-    if not obra_fil:  # GF solo para vista global
-        for r in db.execute("SELECT mes, SUM(monto) FROM economico_gastos_fijos GROUP BY mes").fetchall():
-            m = str(r[0] or "")
-            ac_mes[m] = ac_mes.get(m, 0.0) + float(r[1] or 0)
 
     # ── Serie de meses (chart) ────────────────────────────────────────────────
     # Solo mostramos la serie hasta hoy para no forzar una curva que se dispare
