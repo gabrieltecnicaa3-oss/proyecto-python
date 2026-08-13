@@ -2830,10 +2830,10 @@ def _curva_s_impl():
             pv_mes[m] = pv_mes.get(m, 0.0) + v
 
     # ── EV mensual ────────────────────────────────────────────────────────────
-    # El EV de la tabla se calcula como avance real (%) × BAC. Si el gráfico usa
-    # horas del mes para derivar EV, se desincroniza con la tabla. Para alinear la
-    # curva con la vista EVM, escalamos el PV acumulado por el ratio real de avance
-    # actual (EV / PV_hoy) y dejamos que el último punto coincida con el EV del snapshot.
+    # La gráfica debe reflejar el EV del proyecto al día de hoy, sin duplicar ni
+    # sobreacumularlo. El EV de la tabla es el valor ganado real (avance % × BAC),
+    # así que en la serie mensual lo escalamos como cuota del PV vigente hasta hoy,
+    # y luego se acumula una sola vez en el gráfico.
     hh_rows = db.execute(
         f"SELECT {_fmt_pt} AS mes, ot_id, SUM(horas) FROM partes_trabajo "
         f"WHERE ot_id IN ({ph}) AND fecha IS NOT NULL AND fecha!='' GROUP BY {_fmt_pt}, ot_id",
@@ -2848,15 +2848,20 @@ def _curva_s_impl():
         c = _cfg_cs[obra_h]
         ac_mo_mes[mes_h] = ac_mo_mes.get(mes_h, 0.0) + hh_h * (c["precio_hora_mo"] + c["precio_hora_cons"])
 
-    # EV histórico para la curva, alineado con el cálculo del snapshot de la tabla.
+    ev_total_hoy = sum(ot_map[oid]["avance"] / 100.0 * bac_map.get(str(oid), 0) for oid in ot_ids)
+    pv_hoy = sum(v for m, v in pv_mes.items() if m <= mes_hoy)
     ev_mes: dict = {}
-    if pv_mes:
-        pv_hoy = sum(v for m, v in pv_mes.items() if m <= mes_hoy)
-        if pv_hoy > 0:
-            ev_scale = (sum(ot_map[oid]["avance"] / 100.0 * bac_map.get(str(oid), 0) for oid in ot_ids) / pv_hoy)
-            for m, pv_val in pv_mes.items():
-                pv_acum = sum(v for mm, v in pv_mes.items() if mm <= m)
-                ev_mes[m] = pv_acum * ev_scale
+    if pv_hoy > 0:
+        pv_acum = 0.0
+        for m in sorted(pv_mes):
+            if m > mes_hoy:
+                continue
+            pv_acum += pv_mes.get(m, 0.0)
+            ev_mes[m] = (pv_acum / pv_hoy) * ev_total_hoy
+    else:
+        for m in sorted(pv_mes):
+            if m <= mes_hoy:
+                ev_mes[m] = 0.0
 
     # ── AC mensual (costos variables + MO) ───────────────────────────────────
     ac_mes: dict = dict(ac_mo_mes)
@@ -2870,16 +2875,22 @@ def _curva_s_impl():
             ac_mes[m] = ac_mes.get(m, 0.0) + float(r[1] or 0)
 
     # ── Serie de meses (chart) ────────────────────────────────────────────────
-    all_m = sorted(set(list(pv_mes) + list(ev_mes) + list(ac_mes)))
+    # Solo mostramos la serie hasta hoy para no forzar una curva que se dispare
+    # por meses futuros. La proyección EAC se mantiene separada en la línea punteada.
+    all_m = sorted({m for m in set(pv_mes) | set(ev_mes) | set(ac_mes) if m <= mes_hoy})
     if not all_m: all_m = [mes_hoy]
 
     pv_cum, ev_cum, ac_cum = 0.0, 0.0, 0.0
     pv_ser, ev_ser, ac_ser = [], [], []
     for m in all_m:
-        pv_cum += pv_mes.get(m, 0); ev_cum += ev_mes.get(m, 0); ac_cum += ac_mes.get(m, 0)
-        pv_ser.append(round(pv_cum)); ev_ser.append(round(ev_cum)); ac_ser.append(round(ac_cum))
+        pv_cum += pv_mes.get(m, 0)
+        ev_cum = ev_mes.get(m, ev_cum)
+        ac_cum += ac_mes.get(m, 0)
+        pv_ser.append(round(pv_cum))
+        ev_ser.append(round(ev_cum))
+        ac_ser.append(round(ac_cum))
 
-    today_idx = next((i for i, m in enumerate(all_m) if m >= mes_hoy), len(all_m) - 1)
+    today_idx = max(0, len(all_m) - 1)
 
     # ── EVM snapshot a hoy ───────────────────────────────────────────────────
     BAC = sum(bac_map.get(str(oid), 0) for oid in ot_ids)
