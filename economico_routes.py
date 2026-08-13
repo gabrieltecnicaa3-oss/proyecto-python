@@ -610,20 +610,38 @@ def economico_obra(obra_nombre):
       <td>{_pb(af,'#3b82f6',7)}</td><td style="color:{ac};">{_pct(ae)}</td><td></td>
     </tr>"""
 
+    def _desv_group(title, rows):
+        if not rows:
+            return ""
+        body = "".join(
+            f"""<tr>
+              <td style="font-weight:600;">{_E(nombre)}</td>
+              <td style="text-align:right;">{_m(prev)}</td><td style="text-align:right;">{_m(real)}</td>
+              <td style="text-align:right;font-weight:700;color:{_cd(real-prev)};">{'▲' if real>prev else ('▼' if real<prev else '–')} {_m(abs(real-prev))}</td>
+              <td style="text-align:right;font-weight:700;color:{_cd(real-prev)};">{'▲' if real>prev else ('▼' if real<prev else '–')} {_pct(abs((real-prev)/(prev)*100.0) if prev != 0 else (0.0 if real == 0 else 100.0))}</td>
+            </tr>"""
+            for nombre, prev, real in rows
+        )
+        return f"""<tr style="background:#f8fafc;"><td colspan="5" style="font-size:.7rem;font-weight:800;color:#374151;letter-spacing:.04em;padding-top:10px;padding-bottom:6px;">{title}</td></tr>{body}"""
+
     desv_filas = ""
-    for nombre, prev, real in [
-        ("Materiales",agg["p_mat"],agg["r_mat"]),("Pintura",agg["p_pint"],agg["r_pint"]),
-        ("Fletes",agg["p_fletes"],agg["r_fletes"]),("Subcontratos",agg["p_sub"],agg["r_sub"]),
-        ("Mano de Obra",agg["p_mo"],agg["r_mo"]),("Consumibles",agg["p_cons"],agg["r_cons"]),
-        ("Ingeniería",agg["p_ing"],agg["r_ing"]),("Gastos Generales",agg["p_gg"],gg_asig_obra),("Impuestos",agg["p_imp"],agg["r_imp"])]:
-        da = real-prev; dp = (da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
-        c = _cd(da); ic = "▲" if da>0 else ("▼" if da<0 else "–")
-        desv_filas += f"""<tr>
-          <td style="font-weight:600;">{_E(nombre)}</td>
-          <td style="text-align:right;">{_m(prev)}</td><td style="text-align:right;">{_m(real)}</td>
-          <td style="text-align:right;font-weight:700;color:{c};">{ic} {_m(abs(da))}</td>
-          <td style="text-align:right;font-weight:700;color:{c};">{ic} {_pct(abs(dp))}</td>
-        </tr>"""
+    desv_filas += _desv_group("1.1 Costos directos", [
+        ("Materiales", agg["p_mat"], agg["r_mat"]), ("Pintura", agg["p_pint"], agg["r_pint"]),
+        ("Fletes", agg["p_fletes"], agg["r_fletes"]), ("Subcontratos", agg["p_sub"], agg["r_sub"]),
+        ("Mano de Obra", agg["p_mo"], agg["r_mo"]), ("Consumibles", agg["p_cons"], agg["r_cons"]),
+        ("Ingeniería", agg["p_ing"], agg["r_ing"])
+    ])
+    desv_filas += _desv_group("1.2 Gastos generales", [("Gastos generales", agg["p_gg"], gg_asig_obra)])
+    desv_filas += _desv_group("1.3 Impuestos", [("Impuestos", agg["p_imp"], agg["r_imp"])])
+    desv_filas += _desv_group("1.4 Beneficio", [("Beneficio", agg["p_ben"], agg["r_ben"])])
+    desv_filas += _desv_group("2.1 Costo directo real", [
+        ("Materiales", agg["r_mat"], agg["r_mat"]), ("Pintura", agg["r_pint"], agg["r_pint"]),
+        ("Fletes", agg["r_fletes"], agg["r_fletes"]), ("Subcontratos", agg["r_sub"], agg["r_sub"]),
+        ("Mano de Obra", agg["r_mo"], agg["r_mo"]), ("Consumibles", agg["r_cons"], agg["r_cons"]),
+        ("Ingeniería", agg["r_ing"], agg["r_ing"])
+    ])
+    desv_filas += _desv_group("2.2 Gastos generales", [("Gastos generales", gg_asig_obra, gg_asig_obra)])
+    desv_filas += _desv_group("2.3 Impuestos", [("Impuestos", agg["r_imp"], agg["r_imp"])])
 
     msg = (f'<div class="ok" style="margin-bottom:12px;">{_E(mensaje)}</div>' if mensaje else "")
 
@@ -814,20 +832,36 @@ def economico_ot(ot_id):
         _kc("Av.Físico", _pct(avf), "estado OT", "#10b981") +
         _kc("Av.Econ.", _pct(ave), "gasto/presup.", ac))
 
+    def _desv_group(title, rows):
+        if not rows:
+            return ""
+        body = "".join(
+            f"""<tr>
+              <td style=\"font-weight:600;\">{_E(nombre)}</td>
+              <td style=\"text-align:right;\">{_m(prev)}</td><td style=\"text-align:right;\">{_m(real)}</td>
+              <td style=\"text-align:right;font-weight:700;color:{_cd(real-prev)};\">{'▲' if real>prev else ('▼' if real<prev else '–')} {_m(abs(real-prev))}</td>
+              <td style=\"text-align:right;font-weight:700;color:{_cd(real-prev)};\">{'▲' if real>prev else ('▼' if real<prev else '–')} {_pct(abs((real-prev)/(prev)*100.0) if prev != 0 else (0.0 if real == 0 else 100.0))}</td>
+            </tr>"""
+            for nombre, prev, real in rows
+        )
+        return f"""<tr style=\"background:#f8fafc;\"><td colspan=\"5\" style=\"font-size:.7rem;font-weight:800;color:#374151;letter-spacing:.04em;padding-top:10px;padding-bottom:6px;\">{title}</td></tr>{body}"""
+
     desv_rows = ""
-    for nombre, prev, real in [
-        ("Materiales",p["mat"],rm["mat"]),("Pintura",p["pintura"],rm["pintura"]),
-        ("Fletes",p["fletes"],rm["fletes"]),("Subcontratos",p["subcontratos"],rm["sub"]),
-        ("Mano de Obra",p["mo"],ra["mo"]),("Consumibles",p["cons"],ra["cons"]),
-        ("Ingeniería",p["ing"],rm["ing"]),("Gastos Generales",p["gg"],gg_real_ot),("Impuestos",p["imp"],ra["imp"])]:
-        da=real-prev; dp=(da/prev*100.0) if prev!=0 else (0.0 if real==0 else 100.0)
-        c=_cd(da); ic="▲" if da>0 else ("▼" if da<0 else "–")
-        desv_rows += f"""<tr>
-          <td style="font-weight:600;">{_E(nombre)}</td>
-          <td style="text-align:right;">{_m(prev)}</td><td style="text-align:right;">{_m(real)}</td>
-          <td style="text-align:right;font-weight:700;color:{c};">{ic} {_m(abs(da))}</td>
-          <td style="text-align:right;font-weight:700;color:{c};">{ic} {_pct(abs(dp))}</td>
-        </tr>"""
+    desv_rows += _desv_group("1.1 Costos directos", [
+        ("Materiales", p["mat"], rm["mat"]), ("Pintura", p["pintura"], rm["pintura"]),
+        ("Fletes", p["fletes"], rm["fletes"]), ("Subcontratos", p["subcontratos"], rm["sub"]),
+        ("Mano de Obra", p["mo"], ra["mo"]), ("Consumibles", p["cons"], ra["cons"]),
+        ("Ingeniería", p["ing"], rm["ing"])])
+    desv_rows += _desv_group("1.2 Gastos generales", [("Gastos generales", p["gg"], gg_real_ot)])
+    desv_rows += _desv_group("1.3 Impuestos", [("Impuestos", p["imp"], ra["imp"])])
+    desv_rows += _desv_group("1.4 Beneficio", [("Beneficio", p["ben"], p["ben"])])
+    desv_rows += _desv_group("2.1 Costo directo real", [
+        ("Materiales", rm["mat"], rm["mat"]), ("Pintura", rm["pintura"], rm["pintura"]),
+        ("Fletes", rm["fletes"], rm["fletes"]), ("Subcontratos", rm["sub"], rm["sub"]),
+        ("Mano de Obra", ra["mo"], ra["mo"]), ("Consumibles", ra["cons"], ra["cons"]),
+        ("Ingeniería", rm["ing"], rm["ing"])])
+    desv_rows += _desv_group("2.2 Gastos generales", [("Gastos generales", gg_real_ot, gg_real_ot)])
+    desv_rows += _desv_group("2.3 Impuestos", [("Impuestos", ra["imp"], ra["imp"])])
 
     msg = (f'<div class="ok" style="margin-bottom:12px;">{_E(mensaje)}</div>' if mensaje else "")
     err = (f'<div class="er" style="margin-bottom:12px;">{_E(error)}</div>' if error else "")
@@ -921,7 +955,7 @@ def economico_ot(ot_id):
 
         <div style="margin-bottom:12px;">
           <div style="font-size:.72rem;font-weight:700;color:#1f2937;margin-bottom:6px;">1.2 Gastos generales</div>
-          <div class="fg"><label>Gastos generales ($) <span class="auto">sobre costo directo</span></label><input type="number" name="gastos_gen_previsto" step="0.01" min="0" value="{_fv(p['gg'])}"></div>
+          <div class="fg"><label>Gastos generales ($)</label><input type="number" name="gastos_gen_previsto" step="0.01" min="0" value="{_fv(p['gg'])}"></div>
         </div>
 
         <div style="margin-bottom:12px;">
@@ -931,7 +965,7 @@ def economico_ot(ot_id):
 
         <div style="margin-bottom:12px;">
           <div style="font-size:.72rem;font-weight:700;color:#1f2937;margin-bottom:6px;">1.4 Beneficio</div>
-          <div class="fg"><label>Beneficio ($) <span class="auto">15-20% aprox.</span></label><input type="number" name="beneficio_previsto" step="0.01" min="0" value="{_fv(p['ben'])}"></div>
+          <div class="fg"><label>Beneficio ($)</label><input type="number" name="beneficio_previsto" step="0.01" min="0" value="{_fv(p['ben'])}"></div>
         </div>
 
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">
@@ -971,22 +1005,22 @@ def economico_ot(ot_id):
       </form>
       {_historial_html}
       <div style="font-size:.76rem;font-weight:700;color:#374151;margin-bottom:8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">2.1 Costo directo real</div>
-      <div class="fg"><label>Materiales <span class="auto">mes a mes</span></label><div class="rv">{_m(rm['mat'])}</div></div>
-      <div class="fg"><label>Pintura <span class="auto">si aplica</span></label><div class="rv">{_m(rm['pintura'])}</div></div>
-      <div class="fg"><label>Fletes <span class="auto">mes a mes</span></label><div class="rv">{_m(rm['fletes'])}</div></div>
-      <div class="fg"><label>Ingeniería <span class="auto">mes a mes</span></label><div class="rv">{_m(rm['ing'])}</div></div>
-      <div class="fg"><label>Mano de obra <span class="auto">{data['hh']:,.1f} HH × ${cfg['precio_hora_mo']:,.2f}</span></label><div class="rv">{_m(ra['mo'])}</div></div>
-      <div class="fg"><label>Consumibles <span class="auto">{data['hh']:,.1f} HH × ${cfg['precio_hora_cons']:,.2f}</span></label><div class="rv">{_m(ra['cons'])}</div></div>
+      <div class="fg"><label>Materiales</label><div class="rv">{_m(rm['mat'])}</div></div>
+      <div class="fg"><label>Pintura</label><div class="rv">{_m(rm['pintura'])}</div></div>
+      <div class="fg"><label>Fletes</label><div class="rv">{_m(rm['fletes'])}</div></div>
+      <div class="fg"><label>Ingeniería</label><div class="rv">{_m(rm['ing'])}</div></div>
+      <div class="fg"><label>Mano de obra</label><div class="rv">{_m(ra['mo'])}</div></div>
+      <div class="fg"><label>Consumibles</label><div class="rv">{_m(ra['cons'])}</div></div>
       <div style="display:flex;justify-content:space-between;margin:10px 0 3px;">
         <span style="font-size:.78rem;color:#6b7280;">Subtotal costo directo real</span>
         <span style="font-weight:700;color:#111827;">{_m(r['cd'])}</span>
       </div>
 
       <div style="font-size:.76rem;font-weight:700;color:#374151;margin:12px 0 8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">2.2 Gastos generales</div>
-      <div class="fg"><label>Gastos generales <span class="auto">proporcional al costo directo real</span></label><div class="rv">{_m(gg_real_ot)}</div></div>
+      <div class="fg"><label>Gastos generales</label><div class="rv">{_m(gg_real_ot)}</div></div>
 
-      <div style="font-size:.76rem;font-weight:700;color:#374151;margin:12px 0 8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">2.3 Impuestos</div>
-      <div class="fg"><label>Impuestos <span class="auto">{cfg['pct_impuestos']:.1f}% sobre costo directo real</span></label><div class="rv">{_m(ra['imp'])}</div></div>
+      <div style="font-size:.76rem;font-weight:700;color:#374151;margin:12px 0 8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">2.3 Impuestos (sobre costo directo real)</div>
+      <div class="fg"><label>Impuestos</label><div class="rv">{_m(ra['imp'])}</div></div>
 
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">
       <div style="display:flex;justify-content:space-between;"><span style="font-size:.78rem;font-weight:700;">Costo total real</span>
@@ -1807,96 +1841,44 @@ def economico_dashboard_ejecutivo():
         pct_total_overhead = (total_estructura_real / total_prod_real * 100.0) if total_prod_real > 0 else 0.0
         pct_total_c = "#991b1b" if pct_total_overhead > 25 else ("#92400e" if pct_total_overhead > 15 else "#166534")
         mant_panel_html = f"""
-    <!-- Costos de Estructura / Mantenimiento -->
+    <!-- Costos de mantenimiento -->
     <div class="card" style="border-top:3px solid #f59e0b;">
       <div class="ct" style="background:#fefce8;color:#92400e;font-size:.95rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
-        <span>🏭 Costos de Estructura &amp; Mantenimiento
-          <span style="font-size:.78rem;font-weight:400;color:#a16207;margin-left:8px;">Overhead — sin ingreso directo</span>
-        </span>
-        {gf_link}
+        <span>🏭 Costos de Mantenimiento</span>
       </div>
       <div class="cb">
-        <!-- KPIs fila 1: presupuesto vs realidad -->
         <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:16px;">
-          <div style="background:#f0fdf4;border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid #6366f1;">
-            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">GG Previstos en proyectos</div>
-            <div style="font-size:1.6rem;font-weight:900;color:#6366f1;line-height:1;">{_m(total_gg_prev)}</div>
-            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">presupuestados para cubrir overhead</div>
+          <div style="background:#fff7ed;border-radius:10px;padding:16px 20px;flex:1;min-width:180px;border-left:5px solid #f59e0b;">
+            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">Previsto total</div>
+            <div style="font-size:1.6rem;font-weight:900;color:#92400e;line-height:1;">{_m(total_mant_prev)}</div>
+            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">presupuesto de mantenimientos</div>
           </div>
-          <div style="background:#fff7ed;border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid #f59e0b;">
-            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">Total Estructura Real</div>
-            <div style="font-size:1.6rem;font-weight:900;color:#92400e;line-height:1;">{_m(total_estructura_real)}</div>
-            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">mant. {_m(total_mant_real)} + gastos fijos {_m(total_gf_real)}</div>
+          <div style="background:#f0fdf4;border-radius:10px;padding:16px 20px;flex:1;min-width:180px;border-left:5px solid #16a34a;">
+            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">Real total</div>
+            <div style="font-size:1.6rem;font-weight:900;color:#166534;line-height:1;">{_m(total_mant_real)}</div>
+            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">costo ejecutado en mantenimiento</div>
           </div>
-          <div style="background:{'#f0fdf4' if saldo_prev>=0 else '#fef2f2'};border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid {saldo_real_c};">
-            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">{'✅ Saldo positivo' if saldo_prev>=0 else '❌ Déficit'}</div>
-            <div style="font-size:1.6rem;font-weight:900;color:{saldo_real_c};line-height:1;">{saldo_real_ic} {_m(abs(saldo_prev))}</div>
-            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">{pct_cob_prev:.0f}% del overhead cubierto por GG presupuestados</div>
-          </div>
-          <div style="background:#fff;border-radius:10px;padding:16px 20px;flex:1;min-width:160px;border-left:5px solid {pct_total_c};">
-            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">Overhead / Obras productivas</div>
-            <div style="font-size:1.6rem;font-weight:900;color:{pct_total_c};line-height:1;">{pct_total_overhead:.1f}%</div>
-            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">de {_m(total_prod_real)} en costos reales</div>
-          </div>
-        </div>
-        <!-- KPIs fila 2: breakdown mantenimiento vs gastos fijos -->
-        <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:16px;">
-          <div style="background:#fff;border-radius:10px;padding:14px 18px;flex:1;min-width:180px;border:1px solid #fde68a;">
-            <div style="font-size:.8rem;color:#92400e;font-weight:700;margin-bottom:8px;">⚒️ Obras de Mantenimiento</div>
-            <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:4px;">
-              <span style="color:#6b7280;">Previsto</span>
-              <span style="font-weight:700;">{_m(total_mant_prev)}</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:6px;">
-              <span style="color:#6b7280;">Real</span>
-              <span style="font-weight:700;">{_m(total_mant_real)}</span>
-            </div>
-            {(lambda d,p: f'<div style="font-size:.82rem;font-weight:700;color:{"#991b1b" if d>0 else "#166534"};">{"▲" if d>0 else "▼"} {_m(abs(d))} ({"+" if d>0 else ""}{(d/p*100):.1f}%)</div>' if p>0 else ''
-              )(total_mant_real-total_mant_prev, total_mant_prev)}
-            <div style="font-size:.76rem;color:#9ca3af;margin-top:4px;">{sum(d['hh'] for d in mant_data):,.0f} HH acumuladas</div>
-          </div>
-          <div style="background:#fff;border-radius:10px;padding:14px 18px;flex:1;min-width:180px;border:1px solid #fca5a5;">
-            <div style="font-size:.8rem;color:#dc2626;font-weight:700;margin-bottom:8px;">🏢 Gastos Fijos de Estructura</div>
-            <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:4px;">
-              <span style="color:#6b7280;">Acumulado real</span>
-              <span style="font-weight:700;">{_m(total_gf_real)}</span>
-            </div>
-            <div style="font-size:.76rem;color:#9ca3af;margin-top:4px;">sueldos · alquiler · servicios</div>
+          <div style="background:#fff;border-radius:10px;padding:16px 20px;flex:1;min-width:180px;border-left:5px solid {'#991b1b' if total_mant_real > total_mant_prev else '#166534'};">
+            <div style="font-size:.8rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:6px;">Desvío</div>
+            <div style="font-size:1.6rem;font-weight:900;color:{'#991b1b' if total_mant_real > total_mant_prev else '#166534'};line-height:1;">{(lambda d: f'▲ {_m(abs(d))}' if d>0 else (f'▼ {_m(abs(d))}' if d<0 else '– 0'))(total_mant_real-total_mant_prev)}</div>
+            <div style="font-size:.78rem;color:#6b7280;margin-top:4px;">{(lambda d,p: f'{((d/p)*100):.1f}%' if p>0 else '0.0%')(total_mant_real-total_mant_prev,total_mant_prev)}</div>
           </div>
         </div>
 
         <div class="two" style="margin-bottom:16px;">
           <div style="background:#fff7ed;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;">
-            <div style="font-size:.78rem;font-weight:700;color:#92400e;margin-bottom:8px;">🧱 Obras de mantenimiento (separadas)</div>
+            <div style="font-size:.78rem;font-weight:700;color:#92400e;margin-bottom:8px;">🧱 Obras de mantenimiento</div>
             <div style="display:flex;flex-direction:column;gap:6px;">{mant_destacadas_html}</div>
             {f'<div style="margin-top:8px;font-size:.76rem;color:#6b7280;font-weight:700;">Otras obras de mantenimiento</div><div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">{mant_otros_html}</div>' if mant_otros else ''}
           </div>
-          <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;">
-            <div style="font-size:.78rem;font-weight:700;color:#374151;margin-bottom:8px;">📌 Gastos generales</div>
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #e5e7eb;">
-              <span style="font-size:.78rem;color:#6b7280;">Presupuestados</span>
-              <span style="font-weight:700;color:#6366f1;">{_m(total_gg_prev)}</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #e5e7eb;">
-              <span style="font-size:.78rem;color:#6b7280;">Estructura real</span>
-              <span style="font-weight:700;color:#92400e;">{_m(total_estructura_real)}</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;">
-              <span style="font-size:.78rem;color:#6b7280;">Cobertura</span>
-              <span style="font-weight:800;color:{saldo_real_c};">{pct_cob_prev:.0f}%</span>
-            </div>
-          </div>
         </div>
 
-          </div>
-        </div>
-        <!-- Tabla OTs + Gráfico -->
         <div class="two" style="margin-bottom:0;">
           <div>
             {"<table style='font-size:.85rem;'><thead><tr><th>Obra mantenimiento</th><th style='text-align:right;'>Costo Real</th><th style='text-align:right;'>HH</th></tr></thead><tbody>" + mant_filas + "</tbody></table>" if mant_filas else ""}
           </div>
           <div style="position:relative;min-height:180px;">
-            <div style="font-size:.82rem;font-weight:700;color:#374151;margin-bottom:6px;">Evolución mensual — estructura total</div>
+            <div style="font-size:.82rem;font-weight:700;color:#374151;margin-bottom:6px;">Evolución mensual — mantenimiento</div>
             <div style="position:relative;height:160px;"><canvas id="chartMant"></canvas></div>
           </div>
         </div>
