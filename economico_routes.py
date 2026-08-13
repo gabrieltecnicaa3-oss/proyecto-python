@@ -2020,7 +2020,7 @@ def economico_dashboard_ejecutivo():
                  "✅ positivo" if _saldo_s >= 0 else "⚠ negativo",
                  "#16a34a" if _saldo_s >= 0 else "#dc2626", "",
                  "CD Previsto − CD Ejecutado (costos directos). Coherente con indicadores acumulados.") +
-        _kpi_per("Estructura / GF", _m(_gf_s), "gastos fijos + mantenimiento","#f59e0b",
+        _kpi_per("Mantenimiento / GF", _m(_gf_s), "mantenimiento + gastos fijos","#f59e0b",
                  _delta_de(_gf_s, _gf_p),  "Gastos fijos del mes + costos de obras de mantenimiento")
     )
 
@@ -2141,16 +2141,16 @@ def economico_dashboard_ejecutivo():
     </div>
 
     <div class="card">
-      <div class="ct">🏭 Gastos Generales — Previsto vs Real</div>
+      <div class="ct">🏭 Costos de mantenimiento / estructura — Previsto vs Real</div>
       <div class="cb">
         <div style="display:flex;flex-wrap:wrap;gap:12px;">
           <div style="flex:1;min-width:160px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 16px;">
-            <div style="font-size:.72rem;color:#166534;font-weight:700;text-transform:uppercase;">GG previstos</div>
+            <div style="font-size:.72rem;color:#166534;font-weight:700;text-transform:uppercase;">Previsto</div>
             <div style="font-size:1.35rem;font-weight:900;color:#166534;">{_m(total_gg_prev)}</div>
-            <div style="font-size:.72rem;color:#6b7280;">presupuestados en obras</div>
+            <div style="font-size:.72rem;color:#6b7280;">estructura presupuestada</div>
           </div>
           <div style="flex:1;min-width:160px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 16px;">
-            <div style="font-size:.72rem;color:#92400e;font-weight:700;text-transform:uppercase;">GG reales</div>
+            <div style="font-size:.72rem;color:#92400e;font-weight:700;text-transform:uppercase;">Real</div>
             <div style="font-size:1.35rem;font-weight:900;color:#92400e;">{_m(total_estructura_real)}</div>
             <div style="font-size:.72rem;color:#6b7280;">mantenimiento + gastos fijos</div>
           </div>
