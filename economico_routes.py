@@ -638,14 +638,6 @@ def economico_obra(obra_nombre):
         desv_filas += _desv_group("1.2 Gastos generales", [("Gastos generales", agg["p_gg"], gg_asig_obra)])
         desv_filas += _desv_group("1.3 Impuestos", [("Impuestos", agg["p_imp"], agg["r_imp"])])
         desv_filas += _desv_group("1.4 Beneficio", [("Beneficio", agg["p_ben"], 0.0)])
-        desv_filas += _desv_group("2.1 Costo directo real", [
-            ("Materiales", agg["r_mat"], agg["r_mat"]), ("Pintura", agg["r_pint"], agg["r_pint"]),
-            ("Fletes", agg["r_fletes"], agg["r_fletes"]), ("Subcontratos", agg["r_sub"], agg["r_sub"]),
-            ("Mano de Obra", agg["r_mo"], agg["r_mo"]), ("Consumibles", agg["r_cons"], agg["r_cons"]),
-            ("Ingeniería", agg["r_ing"], agg["r_ing"])
-        ])
-        desv_filas += _desv_group("2.2 Gastos generales", [("Gastos generales", gg_asig_obra, gg_asig_obra)])
-        desv_filas += _desv_group("2.3 Impuestos", [("Impuestos", agg["r_imp"], agg["r_imp"])])
 
         msg = (f'<div class="ok" style="margin-bottom:12px;">{_E(mensaje)}</div>' if mensaje else "")
 
@@ -704,8 +696,20 @@ def economico_obra(obra_nombre):
   </div>
   <div class="card"><div class="ct">📉 Desvíos por rubro — Consolidado obra</div>
     <div style="overflow-x:auto;"><table>
-      <thead><tr><th>Rubro</th><th style="text-align:right;">Previsto</th><th style="text-align:right;">Real</th>
-        <th style="text-align:right;">Desvío $</th><th style="text-align:right;">Desvío %</th></tr></thead>
+      <thead>
+        <tr>
+          <th rowspan="2" style="text-align:left;">Rubro</th>
+          <th colspan="1" style="text-align:center;background:#6366f1;color:#fff;border-bottom:1px solid #4f46e5;">💜 Previsto</th>
+          <th colspan="1" style="text-align:center;background:#0891b2;color:#fff;border-bottom:1px solid #0e7490;">🔵 Real</th>
+          <th colspan="2" style="text-align:center;background:#374151;color:#fff;border-bottom:1px solid #1f2937;">Desvío</th>
+        </tr>
+        <tr>
+          <th style="text-align:right;background:#ede9fe;color:#5b21b6;">$</th>
+          <th style="text-align:right;background:#e0f2fe;color:#075985;">$</th>
+          <th style="text-align:right;background:#f1f5f9;color:#374151;">$</th>
+          <th style="text-align:right;background:#f1f5f9;color:#374151;">%</th>
+        </tr>
+      </thead>
       <tbody>{desv_filas}
         <tr style="background:#f1f5f9;font-weight:700;">
           <td>TOTAL COSTOS</td>
