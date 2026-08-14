@@ -4052,7 +4052,7 @@ tr:last-child td{{border-bottom:none;}}
 <div class="body">
 
   <!-- Filtro de obra -->
-  <div class="card"><div class="cb" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+  <div class="card filter-card"><div class="cb" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
     <div style="font-weight:700;font-size:.85rem;color:#374151;">🏗 Obra:</div>
     <form method="get" style="display:flex;align-items:center;gap:8px;">
       <select name="obra" onchange="this.form.submit()"
@@ -4065,8 +4065,11 @@ tr:last-child td{{border-bottom:none;}}
 
   <!-- Q&A cards -->
   <div class="card"><div class="ct">🎯 Indicadores de situación</div>
-    <div class="cb"><div style="display:flex;flex-wrap:wrap;gap:12px;">{qa_html}</div></div>
+    <div class="cb"><div class="qa-card-wrap" style="display:flex;flex-wrap:wrap;gap:12px;">{qa_html}</div></div>
   </div>
+
+  <!-- Gráfico + Tabla lado a lado en print -->
+  <div class="evm-layout" style="display:contents;">
 
   <!-- Curva S chart -->
   <div class="card chart-card"><div class="ct">📈 Curva S — PV · EV · AC</div>
@@ -4086,11 +4089,13 @@ tr:last-child td{{border-bottom:none;}}
   <div class="card"><div class="ct">📊 Indicadores EVM detallados</div>
     <div class="cb" style="overflow-x:auto;">
       <table>
-        <thead><tr><th style="width:40%;">Indicador</th><th style="text-align:right;width:20%;">Valor</th><th>Interpretación</th></tr></thead>
+        <thead><tr><th style="width:45%;">Indicador</th><th style="text-align:right;width:20%;">Valor</th><th>Interpretación</th></tr></thead>
         <tbody>{evm_rows}</tbody>
       </table>
     </div>
   </div>
+
+  </div><!-- /evm-layout -->
 
 </div>
 <script>
