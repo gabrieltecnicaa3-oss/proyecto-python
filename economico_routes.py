@@ -2972,15 +2972,20 @@ tr:last-child td{{border-bottom:none;}}tr:hover td{{background:#f8fafc;}}
 .resumen li{{padding:7px 11px;background:#f8fafc;border-left:3px solid #e36c09;border-radius:0 5px 5px 0;font-size:.82rem;}}
 .semafs{{display:flex;flex-direction:column;gap:8px;}}
 @media print{{
-  html,body{{background:#fff;font-size:11px;}}
+  html,body{{background:#fff;font-size:10.5px;}}
   .no-print{{display:none!important;}}
   .report-wrap{{max-width:100%;padding:0;}}
-  .card{{box-shadow:none;border:1px solid #e5e7eb;}}
+  .card{{box-shadow:none;border:1px solid #e5e7eb;break-inside:avoid;page-break-inside:avoid;}}
   .rpt-header{{border-radius:0;background:transparent!important;color:#111!important;border-top:3px solid #e36c09;border-bottom:2px solid #e2e8f0;padding:10px 0 8px;}}
   .rpt-title,.rpt-subtitle,.rpt-header-right{{color:#111!important;text-shadow:none!important;}}
   .rpt-badge{{background:#fff7ed!important;color:#9a3412!important;border:1px solid #fdba74!important;}}
   th{{background:#e5e7eb!important;color:#111!important;}}
-  .kpi-box{{box-shadow:none;border:1px solid #e5e7eb;}}
+  .kpi-box{{box-shadow:none;border:1px solid #e5e7eb;break-inside:avoid;}}
+  .kpi-row,.sec-lbl+div{{break-inside:avoid;page-break-inside:avoid;}}
+  .sec-lbl{{break-before:page;page-break-before:always;margin-top:0;}}
+  .rpt-header+div{{break-before:avoid;page-break-before:avoid;}}
+  .semafs{{break-inside:avoid;}}
+  .resumen{{break-inside:avoid;}}
   @page{{size:A4;margin:12mm 12mm 14mm 12mm;}}
   *{{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}}
 }}
