@@ -2890,6 +2890,47 @@ def _reporte_economico_impl():
       </div>
     </div>"""
 
+    # ── KPIs de rentabilidad (N3) ───────────────────────────────────────────────
+    cd_prev_total_rpt = sum(o["agg"]["p_cd"] for o in obras_data_rpt)
+    beneficio_prev_rpt = _pv_tot - cd_prev_total_rpt
+    beneficio_proy_rpt = _pv_tot - _cproy_tot
+
+    _rubros_rpt = {r: {"prev": 0.0, "real": 0.0} for r in
+                   ["Materiales","Pintura","Fletes","Subcontratos","Mano de Obra",
+                    "Consumibles","Ingeniería","Impuestos"]}
+    for o in obras_data_rpt:
+        for nm, prev, real in [
+            ("Materiales", o["agg"]["p_mat"], o["agg"]["r_mat"]),
+            ("Pintura",    o["agg"]["p_pint"], o["agg"]["r_pint"]),
+            ("Fletes",     o["agg"]["p_fletes"], o["agg"]["r_fletes"]),
+            ("Subcontratos", o["agg"]["p_sub"], o["agg"]["r_sub"]),
+            ("Mano de Obra", o["agg"]["p_mo"], o["agg"]["r_mo"]),
+            ("Consumibles", o["agg"]["p_cons"], o["agg"]["r_cons"]),
+            ("Ingeniería",  o["agg"]["p_ing"], o["agg"]["r_ing"]),
+            ("Impuestos",   o["agg"]["p_imp"], o["agg"]["r_imp"]),
+        ]:
+            _rubros_rpt[nm]["prev"] += prev
+            _rubros_rpt[nm]["real"] += real
+    _ranking_list_rpt = []
+    for nm, vals in _rubros_rpt.items():
+        p, r = vals["prev"], vals["real"]
+        if p == 0 and r == 0: continue
+        desv = ((r - p) / p * 100) if p > 0 else (100.0 if r > 0 else 0.0)
+        _ranking_list_rpt.append({"nombre": nm, "prev": p, "real": r, "desv": desv})
+    _ranking_list_rpt.sort(key=lambda x: (-abs(x["desv"]), x["nombre"]))
+    _ranking_html_rpt = ""
+    for r in _ranking_list_rpt:
+        c = "#991b1b" if r["desv"] > 0 else "#166534"; ic = "▲" if r["desv"] > 0 else "▼"
+        bw = min(abs(r["desv"]), 50); bc = "#fca5a5" if r["desv"] > 0 else "#86efac"
+        _ranking_html_rpt += (f'<tr><td style="font-weight:600;font-size:.82rem;">{_E(r["nombre"])}</td>'
+                               f'<td style="text-align:right;font-size:.78rem;color:#6b7280;">{_m(r["prev"])}</td>'
+                               f'<td style="text-align:right;font-size:.78rem;">{_m(r["real"])}</td>'
+                               f'<td><div style="display:flex;align-items:center;gap:5px;">'
+                               f'<div style="background:#f1f5f9;border-radius:3px;height:8px;flex:1;max-width:60px;">'
+                               f'<div style="background:{bc};border-radius:3px;height:8px;width:{bw*2:.0f}%;"></div></div>'
+                               f'<span style="font-weight:700;color:{c};font-size:.8rem;white-space:nowrap;">{ic} {abs(r["desv"]):.1f}%</span>'
+                               f'</div></td></tr>')
+
     # ── chart data ────────────────────────────────────────────────────────────
     _chart_meses_fc = _all_meses_rpt[-18:]
     _acum_fc = 0.0; _acum_fc_ser = []
@@ -3058,8 +3099,50 @@ tr:last-child td{{border-bottom:none;}}tr:hover td{{background:#f8fafc;}}
     </table></div>
   </div>
 
-  <!-- SECCIÓN 3 -->
-  <div class="sec-lbl n3"><span class="nb">N3</span>FLUJO DE CAJA · EGRESOS MENSUALES</div>
+  <!-- SECCIÓN 3: RENTABILIDAD -->
+  <div class="sec-lbl n3"><span class="nb">N3</span>RESULTADO ECONÓMICO · RENTABILIDAD</div>
+  <div class="kpi-row">
+    <div class="kpi-box" style="border-left-color:#0ea5e9;">
+      <div class="kpi-lbl">Precio de venta</div>
+      <div class="kpi-val" style="color:#0369a1;">{_m(_pv_tot)}</div>
+      <div class="kpi-sub">total del portfolio</div>
+    </div>
+    <div class="kpi-box" style="border-left-color:#10b981;">
+      <div class="kpi-lbl">Costo directo previsto</div>
+      <div class="kpi-val" style="color:#047857;">{_m(cd_prev_total_rpt)}</div>
+      <div class="kpi-sub">base de presupuesto</div>
+    </div>
+    <div class="kpi-box" style="border-left-color:#8b5cf6;">
+      <div class="kpi-lbl">Beneficio previsto</div>
+      <div class="kpi-val" style="color:#6d28d9;">{_m(beneficio_prev_rpt)}</div>
+      <div class="kpi-sub">PV − CD previsto</div>
+    </div>
+    <div class="kpi-box" style="border-left-color:#f59e0b;">
+      <div class="kpi-lbl">Costo directo proyectado</div>
+      <div class="kpi-val" style="color:#b45309;">{_m(_cproy_tot)}</div>
+      <div class="kpi-sub">estimado al cierre</div>
+    </div>
+    <div class="kpi-box" style="border-left-color:#14b8a6;">
+      <div class="kpi-lbl">Beneficio proyectado</div>
+      <div class="kpi-val" style="color:#0f766e;">{_m(beneficio_proy_rpt)}</div>
+      <div class="kpi-sub">PV − CD proyectado</div>
+    </div>
+    <div class="kpi-box" style="border-left-color:{_mc_r(mg_prom_rpt)};">
+      <div class="kpi-lbl">Margen proyectado</div>
+      <div class="kpi-val" style="color:{_mc_r(mg_prom_rpt)};">{mg_prom_rpt:.1f}%</div>
+      <div class="kpi-sub">promedio del portfolio</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="ct">📊 Ranking de desvíos por rubro</div>
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th>Concepto</th><th style="text-align:right;">Previsto</th><th style="text-align:right;">Real</th><th>Desvío</th></tr></thead>
+      <tbody>{_ranking_html_rpt}</tbody>
+    </table></div>
+  </div>
+
+  <!-- SECCIÓN 4: FLUJO DE CAJA -->
+  <div class="sec-lbl" style="background:linear-gradient(90deg,#f0f9ff,#f8fafc);border-left:5px solid #0891b2;color:#0c4a6e;"><span class="nb" style="background:#0891b2;color:#fff;">N4</span>FLUJO DE CAJA · EGRESOS MENSUALES</div>
   <div class="card">
     <div class="ct">📈 Evolución de egresos mensuales</div>
     <div class="cb" style="position:relative;height:260px;"><canvas id="chartFC_rpt"></canvas></div>
@@ -3076,6 +3159,17 @@ tr:last-child td{{border-bottom:none;}}tr:hover td{{background:#f8fafc;}}
       <thead><tr><th>Mes</th><th style="text-align:right;">Total egresos</th><th style="text-align:right;">Mano de Obra</th><th style="text-align:right;">Costos variables</th><th style="text-align:right;">Estructura / GF</th><th style="text-align:right;">Acumulado</th></tr></thead>
       <tbody>{_fc_rows_html}</tbody>
     </table></div>
+  </div>
+
+  <!-- Firma coordinador -->
+  <div style="margin-top:32px;padding:20px 0 0;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;">
+    <div style="text-align:center;min-width:220px;">
+      <img src="/firma-supervisor/003-Gabi.png" alt="Firma Gabriel Ibarra"
+           style="height:50px;object-fit:contain;margin-bottom:8px;display:block;margin-left:auto;margin-right:auto;">
+      <div style="border-top:1px solid #374151;margin:0 10%;padding-top:6px;"></div>
+      <div style="font-size:11px;color:#6b7280;margin-top:4px;">Coordinador de Proyectos</div>
+      <div style="font-size:12px;font-weight:600;color:#1f2937;margin-top:2px;">Gabriel Ibarra</div>
+    </div>
   </div>
 
 </div>
@@ -3906,6 +4000,22 @@ td{{padding:7px 10px;border-bottom:1px solid #f1f5f9;vertical-align:middle;}}
 tr:last-child td{{border-bottom:none;}}
 .leg{{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:.76rem;color:#6b7280;}}
 .leg span{{display:flex;align-items:center;gap:5px;}}
+.print-hdr{{display:none;}}
+@media print{{
+  html,body{{background:#fff;font-size:11px;}}
+  .no-print,.hdr{{display:none!important;}}
+  .print-hdr{{display:flex!important;align-items:center;justify-content:space-between;padding:10px 0 8px;margin-bottom:12px;
+    border-top:3px solid #e36c09;border-bottom:2px solid #e2e8f0;gap:14px;flex-wrap:wrap;}}
+  .print-hdr-logo{{height:36px;object-fit:contain;}}
+  .print-hdr-title{{font-size:13px;font-weight:700;color:#111;}}
+  .print-hdr-sub{{font-size:11px;color:#6b7280;margin-top:2px;}}
+  .body{{padding:4px 0;}}
+  .card{{box-shadow:none;border:1px solid #e5e7eb;break-inside:avoid;page-break-inside:avoid;}}
+  .ct{{background:#f1f5f9!important;}}
+  th{{background:#e5e7eb!important;color:#111!important;}}
+  @page{{size:A4;margin:12mm 12mm 14mm 12mm;}}
+  *{{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}}
+}}
 </style></head><body>
 <div class="hdr">
   <div>
@@ -3913,9 +4023,26 @@ tr:last-child td{{border-bottom:none;}}
     <div style="font-size:.73rem;opacity:.7;margin-top:2px;">{titulo} · {len(ot_ids)} OTs · BAC {_m(BAC)}</div>
   </div>
   <div style="display:flex;gap:7px;flex-wrap:wrap;">
+    <button onclick="window.print()" class="no-print"
+      style="background:#e36c09;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:.8rem;font-weight:700;cursor:pointer;">
+      🖨 Imprimir / PDF
+    </button>
     <a href="/modulo/economico/dashboard-ejecutivo">📊 Dashboard</a>
     <a href="/modulo/economico">← Módulo</a>
     <a href="/">Inicio</a>
+  </div>
+</div>
+<div class="print-hdr">
+  <div style="display:flex;align-items:center;gap:12px;">
+    <img src="/logo-a3" alt="A3" class="print-hdr-logo">
+    <div>
+      <div class="print-hdr-title">CURVA S — ANÁLISIS DE VALOR GANADO (EVM)</div>
+      <div class="print-hdr-sub">{titulo} · {len(ot_ids)} OTs · Emitido {hoy.strftime('%d/%m/%Y')}</div>
+    </div>
+  </div>
+  <div style="text-align:right;font-size:11px;color:#6b7280;">
+    <div style="font-weight:700;color:#111;">BAC {_m(BAC)}</div>
+    <div>{hoy.strftime('%d %b %Y')}</div>
   </div>
 </div>
 <div class="body">
