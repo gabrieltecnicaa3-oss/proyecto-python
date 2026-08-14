@@ -1859,6 +1859,21 @@ def economico_dashboard_ejecutivo():
     chart_af_js     = _json.dumps(chart_af)
     chart_ae_js     = _json.dumps(chart_ae)
 
+    gg_evo_labels_js = _json.dumps(_all_meses)
+    gg_evo_data_js   = _json.dumps([
+        round(mant_mes_costs.get(m, 0) + gf_mes_costs.get(m, 0), 0) for m in _all_meses
+    ])
+
+    gg_prev_total = total_gg_prev
+    gg_real_total = total_estructura_real
+    gg_saldo_total = saldo_prev
+    gg_pct_real_cd = (gg_real_total / costo_cd * 100.0) if costo_cd > 0 else 0.0
+    pv_total = _pv_total
+    cd_prev_total = sum(o["agg"]["p_cd"] for o in obras_data)
+    beneficio_previsto = pv_total - cd_prev_total
+    cd_proyectado_total = _cproy_total
+    beneficio_proyectado = pv_total - cd_proyectado_total
+
     # ── Chart Precio de Venta vs Costo Real por obra ────────────────────────
     import json as _json2
     chart2_labels_js = _json2.dumps([o["obra"] for o in obras_data])
@@ -2096,14 +2111,15 @@ def economico_dashboard_ejecutivo():
     .hdr h1{{margin:0;font-size:1.1rem;letter-spacing:-.01em;}}
     .hdr a{{color:#fff;text-decoration:none;font-size:.8rem;background:rgba(255,255,255,.15);padding:5px 11px;border-radius:6px;}}
     .hdr a:hover{{background:rgba(255,255,255,.28);}}
-    .body{{padding:18px;display:flex;flex-direction:column;gap:16px;}}
+    .body{{padding:18px;display:flex;flex-direction:column;gap:18px;}}
+    .section-title{{font-size:.82rem;letter-spacing:.12em;text-transform:uppercase;font-weight:800;color:#475569;padding:10px 14px;background:linear-gradient(90deg,#e2e8f0,#f8fafc);border-left:5px solid #1d4ed8;border-radius:8px;box-shadow:0 1px 3px rgba(15,23,42,.06);}}
     .kpi-row{{display:flex;flex-wrap:wrap;gap:12px;}}
-    .card{{background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);overflow:hidden;}}
-    .ct{{background:#f8fafc;border-bottom:1px solid #e5e7eb;padding:11px 16px;font-weight:700;font-size:.88rem;color:#1e293b;}}
+    .card{{background:#fff;border-radius:12px;box-shadow:0 2px 10px rgba(15,23,42,.06);overflow:hidden;border:1px solid rgba(148,163,184,.18);}}
+    .ct{{background:linear-gradient(180deg,#f8fafc,#f1f5f9);border-bottom:1px solid #e5e7eb;padding:11px 16px;font-weight:800;font-size:.86rem;color:#1e293b;letter-spacing:.02em;}}
     .cb{{padding:16px;}}
     .two{{display:grid;grid-template-columns:3fr 2fr;gap:16px;}}
     @media(max-width:800px){{.two{{grid-template-columns:1fr;}}}}
-    .three{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;}}
+    .three{{display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:16px;}}
     @media(max-width:800px){{.three{{grid-template-columns:1fr;}}}}
     table{{width:100%;border-collapse:collapse;font-size:.83rem;}}
     th{{background:#1e293b;color:#fff;padding:8px 10px;text-align:left;font-size:.76rem;white-space:nowrap;}}
@@ -2129,13 +2145,13 @@ def economico_dashboard_ejecutivo():
 
   <div class="body">
 
-    <!-- KPI superiores (acumulados) -->
+    <div class="section-title">NIVEL 1: CONTROL DE PRODUCCION-COSTOS DIRECTOS</div>
+
     <div class="kpi-row">{kpi_html}</div>
 
-    <!-- KPIs de período mensual -->
     <div class="card" style="border-top:3px solid #dc2626;">
       <div class="ct" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-        <span>📅 Balance del período</span>
+        <span>📅 Balance por períodos</span>
         <form method="get" style="margin:0;display:flex;align-items:center;gap:8px;">
           <label style="font-size:.78rem;color:#6b7280;font-weight:600;">Mes:</label>
           <select name="mes" onchange="this.form.submit()"
@@ -2152,7 +2168,6 @@ def economico_dashboard_ejecutivo():
       <div class="cb"><div style="display:flex;flex-wrap:wrap;gap:12px;">{_kpi_per_html}</div></div>
     </div>
 
-    <!-- Tabla de obras + Semáforos -->
     <div class="two">
       <div class="card">
         <div class="ct">📋 Estado de cada obra</div>
@@ -2172,14 +2187,13 @@ def economico_dashboard_ejecutivo():
         </div>
       </div>
       <div class="card">
-        <div class="ct">🚦 Semáforo de obras</div>
+        <div class="ct">🚦 Semáforos de obra</div>
         <div class="cb" style="display:flex;flex-direction:column;gap:8px;">
           {semaforos_html}
         </div>
       </div>
     </div>
 
-    <!-- Gráfico avance -->
     <div class="card">
       <div class="ct">📈 Avance físico vs Avance económico — Todas las obras</div>
       <div class="cb" style="position:relative;height:220px;">
@@ -2187,7 +2201,6 @@ def economico_dashboard_ejecutivo():
       </div>
     </div>
 
-    <!-- Gráfico Precio de Venta vs Costo Real por Obra -->
     <div class="card">
       <div class="ct">💵 Precio de Venta vs Costo Real — por obra</div>
       <div style="padding:6px 16px 0;font-size:.75rem;color:#6b7280;">
@@ -2198,31 +2211,100 @@ def economico_dashboard_ejecutivo():
       </div>
     </div>
 
-    <div class="card">
-      <div class="ct">🏭 Costos de mantenimiento / estructura — Previsto vs Real</div>
-      <div class="cb">
-        <div style="display:flex;flex-wrap:wrap;gap:12px;">
-          <div style="flex:1;min-width:160px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 16px;">
-            <div style="font-size:.72rem;color:#166534;font-weight:700;text-transform:uppercase;">Previsto</div>
-            <div style="font-size:1.35rem;font-weight:900;color:#166534;">{_m(total_gg_prev)}</div>
-            <div style="font-size:.72rem;color:#6b7280;">estructura presupuestada</div>
-          </div>
-          <div style="flex:1;min-width:160px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 16px;">
-            <div style="font-size:.72rem;color:#92400e;font-weight:700;text-transform:uppercase;">Real</div>
-            <div style="font-size:1.35rem;font-weight:900;color:#92400e;">{_m(total_estructura_real)}</div>
-            <div style="font-size:.72rem;color:#6b7280;">mantenimiento + gastos fijos</div>
-          </div>
-          <div style="flex:1;min-width:160px;background:{'#f0fdf4' if saldo_prev >= 0 else '#fef2f2'};border:1px solid {'#bbf7d0' if saldo_prev >= 0 else '#fecaca'};border-radius:10px;padding:14px 16px;">
-            <div style="font-size:.72rem;color:{'#166534' if saldo_prev >= 0 else '#991b1b'};font-weight:700;text-transform:uppercase;">Saldo / cobertura</div>
-            <div style="font-size:1.35rem;font-weight:900;color:{saldo_real_c};">{saldo_real_ic} {_m(abs(saldo_prev))}</div>
-            <div style="font-size:.72rem;color:#6b7280;">{pct_cob_prev:.0f}% de cobertura</div>
-          </div>
+    <div class="section-title">NIVEL 2: CONTROL DE ESTRUCTURA-GASTOS GENERALES</div>
+
+    <div class="three">
+      <div class="card" style="border-top:4px solid #2563eb;">
+        <div class="ct">GG previstos</div>
+        <div class="cb">
+          <div style="font-size:1.9rem;font-weight:900;color:#2563eb;">{_m(gg_prev_total)}</div>
+          <div style="font-size:.76rem;color:#64748b;margin-top:6px;">presupuesto de estructura</div>
+        </div>
+      </div>
+      <div class="card" style="border-top:4px solid #f59e0b;">
+        <div class="ct">GG real</div>
+        <div class="cb">
+          <div style="font-size:1.9rem;font-weight:900;color:#b45309;">{_m(gg_real_total)}</div>
+          <div style="font-size:.76rem;color:#64748b;margin-top:6px;">mantenimiento + gastos fijos</div>
+        </div>
+      </div>
+      <div class="card" style="border-top:4px solid {'#16a34a' if gg_saldo_total >= 0 else '#dc2626'};">
+        <div class="ct">Saldo</div>
+        <div class="cb">
+          <div style="font-size:1.9rem;font-weight:900;color:{'#166534' if gg_saldo_total >= 0 else '#991b1b'};">{_m(abs(gg_saldo_total))}</div>
+          <div style="font-size:.76rem;color:#64748b;margin-top:6px;">{('positivo' if gg_saldo_total >= 0 else 'negativo')} respecto a presupuesto</div>
         </div>
       </div>
     </div>
 
-    <!-- Ranking desvíos + Resumen ejecutivo -->
-    <div class="two">
+    <div class="card" style="margin-top:16px;">
+      <div class="ct">📊 % GG real sobre costo directo real</div>
+      <div class="cb" style="display:flex;justify-content:space-between;align-items:end;gap:16px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:2rem;font-weight:900;color:#0f172a;">{gg_pct_real_cd:.1f}%</div>
+          <div style="font-size:.76rem;color:#64748b;">relación sobre costo directo real total</div>
+        </div>
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px;font-size:.82rem;color:#475569;">
+          Costo directo real: <b>{_m(costo_cd)}</b>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="ct">📉 Evolución de GG por mes</div>
+      <div class="cb" style="position:relative;height:260px;">
+        <canvas id="chartGGMensual"></canvas>
+      </div>
+    </div>
+
+    <div class="section-title">NIVEL 3: RESULTADO ECONOMICO-RENTABILIDAD DE OBRA</div>
+
+    <div class="three">
+      <div class="card" style="border-top:4px solid #0ea5e9;">
+        <div class="ct">Precio de venta</div>
+        <div class="cb">
+          <div style="font-size:1.8rem;font-weight:900;color:#0369a1;">{_m(pv_total)}</div>
+          <div style="font-size:.76rem;color:#64748b;margin-top:6px;">total del portafolio</div>
+        </div>
+      </div>
+      <div class="card" style="border-top:4px solid #10b981;">
+        <div class="ct">Costo directo previsto</div>
+        <div class="cb">
+          <div style="font-size:1.8rem;font-weight:900;color:#047857;">{_m(cd_prev_total)}</div>
+          <div style="font-size:.76rem;color:#64748b;margin-top:6px;">base de presupuesto</div>
+        </div>
+      </div>
+      <div class="card" style="border-top:4px solid #8b5cf6;">
+        <div class="ct">Beneficio previsto</div>
+        <div class="cb">
+          <div style="font-size:1.8rem;font-weight:900;color:#6d28d9;">{_m(beneficio_previsto)}</div>
+          <div style="font-size:.76rem;color:#64748b;margin-top:6px;">PV - CD previsto</div>
+        </div>
+      </div>
+      <div class="card" style="border-top:4px solid #f59e0b;">
+        <div class="ct">Costo directo proyectado</div>
+        <div class="cb">
+          <div style="font-size:1.8rem;font-weight:900;color:#b45309;">{_m(cd_proyectado_total)}</div>
+          <div style="font-size:.76rem;color:#64748b;margin-top:6px;">estimado a cierre</div>
+        </div>
+      </div>
+      <div class="card" style="border-top:4px solid #14b8a6;">
+        <div class="ct">Beneficio proyectado</div>
+        <div class="cb">
+          <div style="font-size:1.8rem;font-weight:900;color:#0f766e;">{_m(beneficio_proyectado)}</div>
+          <div style="font-size:.76rem;color:#64748b;margin-top:6px;">PV - CD proyectado</div>
+        </div>
+      </div>
+      <div class="card" style="border-top:4px solid #64748b;">
+        <div class="ct">Margen proyectado</div>
+        <div class="cb">
+          <div style="font-size:1.8rem;font-weight:900;color:#475569;">{mg_prom:.1f}%</div>
+          <div style="font-size:.76rem;color:#64748b;margin-top:6px;">promedio del portafolio</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="two" style="margin-top:16px;">
       <div class="card">
         <div class="ct">📉 Ranking de desvíos por rubro</div>
         <div style="overflow-x:auto;">
@@ -2246,10 +2328,10 @@ def economico_dashboard_ejecutivo():
       </div>
     </div>
 
+    <div class="section-title">NIVEL 4: COSTOS DE MANTENIMIENTO</div>
     {mant_panel_html}
 
-    <!-- Distribución de Gastos de Estructura por Obra -->
-    <div class="card" style="border-top:3px solid #f59e0b;">
+    <div class="card" style="border-top:3px solid #f59e0b; margin-top:16px;">
       <div class="ct" style="background:#fefce8;color:#92400e;">
         ⚖️ Distribución de Gastos de Estructura por Obra
         <span style="font-size:.72rem;font-weight:400;color:#a16207;margin-left:8px;">
@@ -2370,6 +2452,39 @@ def economico_dashboard_ejecutivo():
             grid: {{ color: '#f1f5f9' }}
           }},
           x: {{ ticks: {{ font: {{ size: 10 }}, maxRotation: 45 }} }}
+        }}
+      }}
+    }});
+
+    // Chart 3: Evolución de GG por mes
+    const ctx3 = document.getElementById('chartGGMensual').getContext('2d');
+    new Chart(ctx3, {{
+      type: 'bar',
+      data: {{
+        labels: {gg_evo_labels_js},
+        datasets: [{{
+          label: 'Gastos Generales',
+          data: {gg_evo_data_js},
+          backgroundColor: 'rgba(245, 158, 11, 0.7)',
+          borderColor: 'rgba(217, 119, 6, 1)',
+          borderWidth: 1,
+          borderRadius: 4
+        }}]
+      }},
+      options: {{
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {{
+          legend: {{ display: false }},
+          tooltip: {{ callbacks: {{ label: c => ` GG: ${{(c.parsed.y/1000000).toFixed(2)}} M` }} }}
+        }},
+        scales: {{
+          y: {{
+            beginAtZero: true,
+            ticks: {{ callback: v => '$' + (v/1000000).toFixed(1) + 'M', font: {{ size: 10 }} }},
+            grid: {{ color: '#f1f5f9' }}
+          }},
+          x: {{ ticks: {{ font: {{ size: 10 }}, maxRotation: 35 }} }}
         }}
       }}
     }});
