@@ -3139,10 +3139,24 @@ def _curva_s_impl():
         sv_tiempo_desc = "No aplicable"
         sv_tiempo_detail = "El desvío de cronograma no se calcula desde un SV monetario sin tasa de PV válida"
     else:
-        _c4 = "#16a34a" if abs(sv_months) <= 0.5 else ("#f59e0b" if abs(sv_months) <= 2 else "#dc2626")
-        sv_tiempo_txt = f"{abs(sv_months):.1f} mes{'es' if abs(sv_months)!=1 else ''} {'adelante' if sv_months >= 0 else 'atrás'}"
-        sv_tiempo_desc = "En término" if abs(sv_months) <= 0.5 else ("Retraso leve" if abs(sv_months) <= 2 else "Retraso importante")
-        sv_tiempo_detail = f"SV = {_m(SV)} | plazo {'se mantiene' if abs(sv_months) <= 2 else 'en riesgo'}"
+        sv_days = sv_months * 30  # conversión aproximada a días
+        _adelante = sv_days >= 0
+        _c4 = "#16a34a" if _adelante else ("#f59e0b" if abs(sv_days) <= 15 else "#dc2626")
+        sv_tiempo_txt = f"{abs(sv_days):.0f} día{'s' if abs(sv_days) != 1 else ''} {'adelante' if _adelante else 'atrás'}"
+        if abs(sv_days) <= 5:
+            sv_tiempo_desc = "En término"
+        elif _adelante:
+            sv_tiempo_desc = "A favor del cronograma"
+        elif abs(sv_days) <= 15:
+            sv_tiempo_desc = "Retraso leve"
+        else:
+            sv_tiempo_desc = "Retraso importante"
+        if _adelante:
+            sv_tiempo_detail = f"SV = {_m(SV)} | cronograma favorable"
+        elif abs(sv_days) <= 15:
+            sv_tiempo_detail = f"SV = {_m(SV)} | plazo se mantiene"
+        else:
+            sv_tiempo_detail = f"SV = {_m(SV)} | plazo en riesgo"
 
     qa_html = (
         _qa_card("¿Vamos según lo previsto?",
