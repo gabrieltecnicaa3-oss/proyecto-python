@@ -3101,7 +3101,7 @@ tr:last-child td{{border-bottom:none;}}tr:hover td{{background:#f8fafc;}}
 
   <!-- SECCIÓN 3: RENTABILIDAD -->
   <div class="sec-lbl n3"><span class="nb">N3</span>RESULTADO ECONÓMICO · RENTABILIDAD</div>
-  <div class="kpi-row">
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px;">
     <div class="kpi-box" style="border-left-color:#0ea5e9;">
       <div class="kpi-lbl">Precio de venta</div>
       <div class="kpi-val" style="color:#0369a1;">{_m(_pv_tot)}</div>
@@ -4017,7 +4017,7 @@ tr:last-child td{{border-bottom:none;}}
   td,th{{padding:5px 7px!important;font-size:10px!important;}}
   .leg{{font-size:9px!important;gap:8px!important;}}
   .cb{{padding:10px!important;}}
-  @page{{size:A4 landscape;margin:10mm 10mm 12mm 10mm;}}
+  @page{{size:A3 landscape;margin:10mm 12mm 12mm 12mm;}}
   *{{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}}
 }}
 </style></head><body>
