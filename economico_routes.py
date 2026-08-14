@@ -2112,7 +2112,12 @@ def economico_dashboard_ejecutivo():
     .hdr a{{color:#fff;text-decoration:none;font-size:.8rem;background:rgba(255,255,255,.15);padding:5px 11px;border-radius:6px;}}
     .hdr a:hover{{background:rgba(255,255,255,.28);}}
     .body{{padding:18px;display:flex;flex-direction:column;gap:18px;}}
-    .section-title{{font-size:.82rem;letter-spacing:.12em;text-transform:uppercase;font-weight:800;color:#475569;padding:10px 14px;background:linear-gradient(90deg,#e2e8f0,#f8fafc);border-left:5px solid #1d4ed8;border-radius:8px;box-shadow:0 1px 3px rgba(15,23,42,.06);}}
+    .section-title{{font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;font-weight:800;padding:11px 16px;border-radius:8px;box-shadow:0 1px 4px rgba(15,23,42,.08);display:flex;align-items:center;gap:10px;margin-top:6px;}}
+    .section-title .nivel-badge{{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;border-radius:6px;font-size:.72rem;font-weight:900;padding:0 7px;flex-shrink:0;letter-spacing:.04em;}}
+    .n1{{background:linear-gradient(90deg,#dbeafe 0%,#f0f7ff 100%);border-left:5px solid #1d4ed8;color:#1e3a5f;}}.n1 .nivel-badge{{background:#1d4ed8;color:#fff;}}
+    .n2{{background:linear-gradient(90deg,#fef3c7 0%,#fffbeb 100%);border-left:5px solid #d97706;color:#78350f;}}.n2 .nivel-badge{{background:#d97706;color:#fff;}}
+    .n3{{background:linear-gradient(90deg,#dcfce7 0%,#f0fdf4 100%);border-left:5px solid #16a34a;color:#14532d;}}.n3 .nivel-badge{{background:#16a34a;color:#fff;}}
+    .n4{{background:linear-gradient(90deg,#ffedd5 0%,#fff7ed 100%);border-left:5px solid #ea580c;color:#7c2d12;}}.n4 .nivel-badge{{background:#ea580c;color:#fff;}}
     .kpi-row{{display:flex;flex-wrap:wrap;gap:12px;}}
     .card{{background:#fff;border-radius:12px;box-shadow:0 2px 10px rgba(15,23,42,.06);overflow:hidden;border:1px solid rgba(148,163,184,.18);}}
     .ct{{background:linear-gradient(180deg,#f8fafc,#f1f5f9);border-bottom:1px solid #e5e7eb;padding:11px 16px;font-weight:800;font-size:.86rem;color:#1e293b;letter-spacing:.02em;}}
@@ -2137,6 +2142,7 @@ def economico_dashboard_ejecutivo():
       <div style="font-size:.74rem;opacity:.7;margin-top:2px;">Visión consolidada · {n_obras} obras activas</div>
     </div>
     <div style="display:flex;gap:7px;flex-wrap:wrap;">
+      <a href="/modulo/economico/reporte-economico" style="background:rgba(234,88,12,.85);font-weight:700;">🖨 Reporte Económico</a>
       <a href="/modulo/economico/curva-s" style="background:rgba(99,102,241,.3);font-weight:700;">📉 Curva S / EVM</a>
       <a href="/modulo/economico">← Módulo Económico</a>
       <a href="/">Inicio</a>
@@ -2145,7 +2151,7 @@ def economico_dashboard_ejecutivo():
 
   <div class="body">
 
-    <div class="section-title">NIVEL 1: CONTROL DE PRODUCCION-COSTOS DIRECTOS</div>
+    <div class="section-title n1"><span class="nivel-badge">N1</span>CONTROL DE PRODUCCIÓN · COSTOS DIRECTOS</div>
 
     <div class="kpi-row">{kpi_html}</div>
 
@@ -2211,7 +2217,7 @@ def economico_dashboard_ejecutivo():
       </div>
     </div>
 
-    <div class="section-title">NIVEL 2: CONTROL DE ESTRUCTURA-GASTOS GENERALES</div>
+    <div class="section-title n2"><span class="nivel-badge">N2</span>CONTROL DE ESTRUCTURA · GASTOS GENERALES</div>
 
     <div class="three">
       <div class="card" style="border-top:4px solid #2563eb;">
@@ -2257,7 +2263,7 @@ def economico_dashboard_ejecutivo():
       </div>
     </div>
 
-    <div class="section-title">NIVEL 3: RESULTADO ECONOMICO-RENTABILIDAD DE OBRA</div>
+    <div class="section-title n3"><span class="nivel-badge">N3</span>RESULTADO ECONÓMICO · RENTABILIDAD DE OBRA</div>
 
     <div class="three">
       <div class="card" style="border-top:4px solid #0ea5e9;">
@@ -2328,7 +2334,7 @@ def economico_dashboard_ejecutivo():
       </div>
     </div>
 
-    <div class="section-title">NIVEL 4: COSTOS DE MANTENIMIENTO</div>
+    <div class="section-title n4"><span class="nivel-badge">N4</span>COSTOS DE MANTENIMIENTO</div>
     {mant_panel_html}
 
     <div class="card" style="border-top:3px solid #f59e0b; margin-top:16px;">
@@ -2493,6 +2499,620 @@ def economico_dashboard_ejecutivo():
   </script>
 </body>
 </html>"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REPORTE ECONÓMICO — PDF gerencial (dashboard + curva S + flujo de caja)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@economico_bp.route("/modulo/economico/reporte-economico")
+def economico_reporte_economico():
+    try:
+        return _reporte_economico_impl()
+    except Exception as _exc:
+        import traceback as _tb; _err = _tb.format_exc(); print(_err)
+        return (f'<h2 style="font-family:sans-serif;color:#dc2626">Error en Reporte Económico</h2>'
+                f'<pre style="background:#fef2f2;padding:16px;font-size:.78rem;border-radius:8px;'
+                f'overflow:auto;max-width:960px;margin:20px auto;">{html_lib.escape(_err)}</pre>'
+                f'<a href="/modulo/economico/dashboard-ejecutivo" style="margin:20px;display:inline-block;">← Volver</a>'), 500
+
+
+def _reporte_economico_impl():
+    db = get_db(); _ensure_schema(db)
+    import datetime as _dtrpt, json as _jrpt
+    from calendar import monthrange as _mrrpt
+    from db_utils import DB_ENGINE as _DB_RPT
+
+    _today = _dtrpt.date.today()
+    obra_fil = (request.args.get("obra") or "").strip()
+    _mysql_rpt = (_DB_RPT == "mysql")
+    _fmt_pt_rpt = "DATE_FORMAT(fecha,'%Y-%m')" if _mysql_rpt else "strftime('%Y-%m',fecha)"
+    _mes_hoy = _today.strftime("%Y-%m")
+    _MESES = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
+    def _lbl_m(m):
+        try: return f"{_MESES[int(m[5:7])-1]} {m[:4]}"
+        except Exception: return m
+
+    # ── obras disponibles ─────────────────────────────────────────────────────
+    all_obras_rpt = [r[0] for r in db.execute(
+        "SELECT DISTINCT TRIM(COALESCE(obra,'')) FROM ordenes_trabajo "
+        "WHERE COALESCE(es_mantenimiento,0)=0 AND TRIM(COALESCE(obra,''))!='' ORDER BY 1"
+    ).fetchall()]
+
+    obra_opts_rpt = '<option value="">📊 Todas las obras (Portfolio)</option>' + "".join(
+        f'<option value="{_E(o)}" {"selected" if o == obra_fil else ""} >{_E(o)}</option>'
+        for o in all_obras_rpt
+    )
+    subtitulo_rpt = f"Obra: {obra_fil}" if obra_fil else f"{len(all_obras_rpt)} obras activas"
+
+    # ── obras a analizar ──────────────────────────────────────────────────────
+    if obra_fil and obra_fil in all_obras_rpt:
+        obras_keys = [obra_fil]
+    else:
+        obra_fil = ""
+        obras_keys = all_obras_rpt
+
+    ots_all = db.execute(
+        "SELECT id, COALESCE(obra,''), COALESCE(cliente,'') "
+        "FROM ordenes_trabajo WHERE COALESCE(es_mantenimiento,0)=0 ORDER BY obra, id"
+    ).fetchall()
+    obra_groups: dict = {}
+    for oid, ob, cl in ots_all:
+        k = str(ob).strip()
+        if k not in obras_keys: continue
+        if k not in obra_groups: obra_groups[k] = {"cliente": cl, "ots": []}
+        obra_groups[k]["ots"].append({"id": oid})
+
+    obras_data_rpt = []
+    for obra_key in sorted(obra_groups.keys()):
+        info = obra_groups[obra_key]
+        cfg = _get_config_obra(db, obra_key)
+        ots_d = []
+        for oi in info["ots"]:
+            d = _calc_economico(db, oi["id"], cfg); d["ot_id"] = oi["id"]; ots_d.append(d)
+        agg = _aggregate_obra(ots_d)
+        mg = ((agg["p_pv"] - agg["r_tot"]) / agg["p_pv"] * 100) if agg["p_pv"] > 0 else 0.0
+        af = agg["avf"]
+        costo_proy = (agg["r_tot"] / (af / 100)) if af > 0 else agg["r_tot"]
+        mg_proy = ((agg["p_pv"] - costo_proy) / agg["p_pv"] * 100) if agg["p_pv"] > 0 else 0.0
+        sem_em, sem_bg, sem_tc, sem_lbl, sem_det = _semaforo(mg, agg["ave"], af)
+        obras_data_rpt.append({
+            "obra": obra_key, "cliente": info["cliente"],
+            "af": af, "ae": agg["ave"],
+            "pv": agg["p_pv"], "r_tot": agg["r_tot"],
+            "mg": mg, "mg_proy": mg_proy,
+            "sem_em": sem_em, "sem_bg": sem_bg, "sem_tc": sem_tc,
+            "sem_lbl": sem_lbl, "sem_det": sem_det, "agg": agg,
+        })
+
+    n_obras_rpt = len(obras_data_rpt)
+    if n_obras_rpt == 0:
+        return "<p>Sin datos para generar el reporte.</p><a href='/modulo/economico/dashboard-ejecutivo'>← Volver</a>"
+
+    _pv_tot = sum(o["pv"] for o in obras_data_rpt)
+    _cproy_tot = sum(
+        o["r_tot"] / (o["af"] / 100) if o["af"] > 0 else o["r_tot"]
+        for o in obras_data_rpt
+    )
+    mg_prom_rpt = ((_pv_tot - _cproy_tot) / _pv_tot * 100) if _pv_tot > 0 else 0.0
+    costo_cd_rpt = sum(o["agg"]["r_cd"] for o in obras_data_rpt)
+    n_riesgo_rpt = sum(1 for o in obras_data_rpt if o["sem_lbl"] in ("Crítico", "Atención"))
+    n_ok_rpt = sum(1 for o in obras_data_rpt if o["sem_lbl"] == "En control")
+
+    # ── tabla obras ───────────────────────────────────────────────────────────
+    def _mc_r(pct):
+        return "#166534" if pct >= 15 else ("#92400e" if pct >= 8 else "#991b1b")
+
+    tabla_rpt = ""
+    for o in obras_data_rpt:
+        mc = _mc_r(o["mg_proy"])
+        tabla_rpt += f"""<tr>
+          <td style="font-weight:700;color:#e36c09;">{_E(o['obra'])}</td>
+          <td style="font-size:.78rem;color:#6b7280;">{_E(o['cliente'])}</td>
+          <td style="text-align:center;">{o['af']:.1f}%</td>
+          <td style="text-align:center;">{o['ae']:.1f}%</td>
+          <td style="text-align:right;font-weight:700;color:{mc};">{o['mg_proy']:.1f}%</td>
+          <td style="text-align:right;">{_m(o['pv'])}</td>
+          <td style="text-align:right;">{_m(o['r_tot'])}</td>
+          <td style="text-align:center;font-size:1.2rem;">{o['sem_em']}</td>
+        </tr>"""
+    mc_tot = _mc_r(mg_prom_rpt)
+    tabla_rpt += f"""<tr style="background:#f1f5f9;font-weight:700;border-top:2px solid #cbd5e1;">
+      <td colspan="2">TOTAL ({n_obras_rpt} obras)</td><td></td><td></td>
+      <td style="text-align:right;color:{mc_tot};">{mg_prom_rpt:.1f}%</td>
+      <td style="text-align:right;">{_m(_pv_tot)}</td>
+      <td style="text-align:right;">{_m(sum(o['r_tot'] for o in obras_data_rpt))}</td>
+      <td></td>
+    </tr>"""
+
+    # ── semáforos ─────────────────────────────────────────────────────────────
+    semafs_rpt = ""
+    for o in obras_data_rpt:
+        semafs_rpt += (f'<div style="background:{o["sem_bg"]};border:1px solid {o["sem_tc"]}33;'
+                       f'border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:10px;">'
+                       f'<span style="font-size:1.5rem;">{o["sem_em"]}</span>'
+                       f'<div><div style="font-weight:700;color:{o["sem_tc"]};font-size:.88rem;">{_E(o["obra"])}</div>'
+                       f'<div style="font-size:.73rem;color:{o["sem_tc"]};">{_E(o["sem_det"])}</div></div>'
+                       f'<div style="margin-left:auto;text-align:right;">'
+                       f'<div style="font-size:.68rem;color:#6b7280;">Mg proy.</div>'
+                       f'<div style="font-weight:800;color:{o["sem_tc"]};">{o["mg_proy"]:.1f}%</div>'
+                       f'</div></div>')
+
+    # ── EVM snapshot ──────────────────────────────────────────────────────────
+    _evm_ot_ids = [oi["id"] for info in obra_groups.values() for oi in info["ots"]]
+    _ph_evm = ",".join("?" * len(_evm_ot_ids)) if _evm_ot_ids else "0"
+    _bac_cols = ("COALESCE(mat_previsto,0)+COALESCE(pintura_previsto,0)+COALESCE(mo_previsto,0)"
+                 "+COALESCE(consumibles_previsto,0)+COALESCE(ingenieria_previsto,0)")
+    _bac_map_evm = {}
+    if _evm_ot_ids:
+        try:
+            _bac_map_evm = {str(r[0]): float(r[1] or 0) for r in db.execute(
+                f"SELECT ot_id, {_bac_cols}+COALESCE(subcontratos_previsto,0)+COALESCE(fletes_previsto,0) "
+                f"FROM economico_presupuesto WHERE ot_id IN ({_ph_evm})", _evm_ot_ids
+            ).fetchall()}
+        except Exception:
+            _bac_map_evm = {str(r[0]): float(r[1] or 0) for r in db.execute(
+                f"SELECT ot_id, {_bac_cols} FROM economico_presupuesto WHERE ot_id IN ({_ph_evm})",
+                _evm_ot_ids
+            ).fetchall()}
+
+    _ot_map_evm = {r[0]: {"avance": float(r[1] or 0), "fe": str(r[2] or "")[:10]}
+                   for r in db.execute(
+                     f"SELECT id, COALESCE(estado_avance,0), COALESCE(fecha_entrega,'') "
+                     f"FROM ordenes_trabajo WHERE id IN ({_ph_evm})", _evm_ot_ids
+                   ).fetchall()} if _evm_ot_ids else {}
+
+    _prog_evm = {str(r[0]): (str(r[1] or "")[:10], str(r[2] or "")[:10]) for r in db.execute(
+        f"SELECT ot_id, MIN(fecha_inicio), MAX(fecha_fin) FROM programacion "
+        f"WHERE ot_id IN ({_ph_evm}) GROUP BY ot_id", _evm_ot_ids
+    ).fetchall()} if _evm_ot_ids else {}
+
+    def _pv_dist_evm(bac, fi_s, ff_s):
+        try: fi = _dtrpt.date.fromisoformat(fi_s[:10]); ff = _dtrpt.date.fromisoformat(ff_s[:10])
+        except Exception: return {}
+        if ff <= fi or bac <= 0: return {}
+        td = max((ff - fi).days, 1); res = {}
+        cur = _dtrpt.date(fi.year, fi.month, 1)
+        while _dtrpt.date(cur.year, cur.month, 1) <= _dtrpt.date(ff.year, ff.month, 1):
+            yr, mo = cur.year, cur.month; _, dim = _mrrpt(yr, mo)
+            ms = max(fi, _dtrpt.date(yr, mo, 1)); me = min(ff, _dtrpt.date(yr, mo, dim))
+            if me >= ms: res[f"{yr}-{mo:02d}"] = res.get(f"{yr}-{mo:02d}", 0) + bac * (me - ms).days / td
+            cur = _dtrpt.date(yr+1, 1, 1) if mo == 12 else _dtrpt.date(yr, mo+1, 1)
+        return res
+
+    _pv_mes_evm: dict = {}
+    for _oid_evm in _evm_ot_ids:
+        _fi_e, _ff_e = _prog_evm.get(str(_oid_evm), ("", ""))
+        if not _ff_e: _ff_e = _ot_map_evm.get(_oid_evm, {}).get("fe", "")
+        for _m_e, _v_e in _pv_dist_evm(_bac_map_evm.get(str(_oid_evm), 0), _fi_e, _ff_e).items():
+            _pv_mes_evm[_m_e] = _pv_mes_evm.get(_m_e, 0) + _v_e
+
+    _hh_evm = db.execute(
+        f"SELECT {_fmt_pt_rpt} AS mes, ot_id, SUM(horas) FROM partes_trabajo "
+        f"WHERE ot_id IN ({_ph_evm}) AND fecha IS NOT NULL AND fecha!='' GROUP BY {_fmt_pt_rpt}, ot_id",
+        _evm_ot_ids
+    ).fetchall() if _evm_ot_ids else []
+    _cfg_evm: dict = {}; _ac_mo_evm: dict = {}
+    for _r_e in _hh_evm:
+        _mes_e, _ot_e, _hh_e = str(_r_e[0] or ""), _r_e[1], float(_r_e[2] or 0)
+        _ob_e_row = db.execute("SELECT COALESCE(obra,'') FROM ordenes_trabajo WHERE id=?", (_ot_e,)).fetchone()
+        _ob_e = str(_ob_e_row[0] or "").strip() if _ob_e_row else ""
+        if _ob_e not in _cfg_evm: _cfg_evm[_ob_e] = _get_config_obra(db, _ob_e)
+        _c_e = _cfg_evm[_ob_e]
+        _ac_mo_evm[_mes_e] = _ac_mo_evm.get(_mes_e, 0) + _hh_e * (_c_e["precio_hora_mo"] + _c_e["precio_hora_cons"])
+    _ac_mes_evm = dict(_ac_mo_evm)
+    if _evm_ot_ids:
+        for _r_ac in db.execute(f"SELECT mes, COALESCE(SUM(monto),0) FROM economico_costos_reales_mensual "
+                                 f"WHERE ot_id IN ({_ph_evm}) GROUP BY mes", _evm_ot_ids).fetchall():
+            _m_ac = str(_r_ac[0] or "")
+            _ac_mes_evm[_m_ac] = _ac_mes_evm.get(_m_ac, 0) + float(_r_ac[1] or 0)
+
+    BAC_rpt = sum(_bac_map_evm.get(str(oid), 0) for oid in _evm_ot_ids)
+    EV_rpt  = sum(_ot_map_evm.get(oid, {}).get("avance", 0) / 100 * _bac_map_evm.get(str(oid), 0)
+                  for oid in _evm_ot_ids)
+    PV_rpt  = sum(v for m, v in _pv_mes_evm.items() if m <= _mes_hoy)
+    AC_rpt  = sum(v for m, v in _ac_mes_evm.items() if m <= _mes_hoy)
+    SV_rpt  = EV_rpt - PV_rpt
+    CV_rpt  = EV_rpt - AC_rpt
+    SPI_rpt = EV_rpt / PV_rpt if PV_rpt > 0 else 0.0
+    CPI_rpt = EV_rpt / AC_rpt if AC_rpt > 0 else 0.0
+    EAC_rpt = AC_rpt + (BAC_rpt - EV_rpt) / CPI_rpt if CPI_rpt > 0 else BAC_rpt
+    VAC_rpt = BAC_rpt - EAC_rpt
+    pct_cpl_rpt = EV_rpt / BAC_rpt * 100 if BAC_rpt > 0 else 0.0
+
+    # series curva S
+    _all_m_evm = sorted({m for m in set(_pv_mes_evm) | set(_ac_mes_evm) if m <= _mes_hoy})
+    if not _all_m_evm: _all_m_evm = [_mes_hoy]
+    _pv_hoy_evm = PV_rpt; _ev_mes_evm: dict = {}
+    if _pv_hoy_evm > 0:
+        _pv_ac = 0.0
+        for _m_s in _all_m_evm:
+            _pv_ac += _pv_mes_evm.get(_m_s, 0)
+            _ev_mes_evm[_m_s] = (_pv_ac / _pv_hoy_evm) * EV_rpt
+    _pv_cum = 0.0; _ev_cum = 0.0; _ac_cum = 0.0
+    _pv_ser_r = []; _ev_ser_r = []; _ac_ser_r = []
+    for _m_s in _all_m_evm:
+        _pv_cum += _pv_mes_evm.get(_m_s, 0)
+        _ev_cum = _ev_mes_evm.get(_m_s, _ev_cum)
+        _ac_cum += _ac_mes_evm.get(_m_s, 0)
+        _pv_ser_r.append(round(_pv_cum)); _ev_ser_r.append(round(_ev_cum)); _ac_ser_r.append(round(_ac_cum))
+
+    # tabla EVM por mes
+    _evm_tabla_rows = ""
+    for _m_s in _all_m_evm[-12:]:
+        _pv_m = sum(_pv_mes_evm.get(_k, 0) for _k in _all_m_evm if _k <= _m_s)
+        _ev_m = _ev_mes_evm.get(_m_s, 0)
+        _ac_m = sum(_ac_mes_evm.get(_k, 0) for _k in _all_m_evm if _k <= _m_s)
+        _sv_m = _ev_m - _pv_m; _sv_c = "#166534" if _sv_m >= 0 else "#991b1b"
+        _cv_m = _ev_m - _ac_m; _cv_c = "#166534" if _cv_m >= 0 else "#991b1b"
+        _sel_row = "font-weight:700;background:#f0f7ff;" if _m_s == _mes_hoy else ""
+        _evm_tabla_rows += f"""<tr style="{_sel_row}">
+          <td>{_lbl_m(_m_s)}</td>
+          <td style="text-align:right;color:#6366f1;">{_m(_pv_m)}</td>
+          <td style="text-align:right;color:#0891b2;">{_m(_ev_m)}</td>
+          <td style="text-align:right;color:#dc2626;">{_m(_ac_m)}</td>
+          <td style="text-align:right;font-weight:700;color:{_sv_c};">{_m(_sv_m)}</td>
+          <td style="text-align:right;font-weight:700;color:{_cv_c};">{_m(_cv_m)}</td>
+        </tr>"""
+
+    # ── flujo de caja mensual ─────────────────────────────────────────────────
+    _cv_mes_rpt = {str(r[0]): float(r[1] or 0) for r in db.execute(
+        "SELECT mes, COALESCE(SUM(monto),0) FROM economico_costos_reales_mensual GROUP BY mes"
+    ).fetchall()}
+    _gf_mes_rpt = {str(r[0]): float(r[1] or 0) for r in db.execute(
+        "SELECT mes, SUM(monto) FROM economico_gastos_fijos GROUP BY mes"
+    ).fetchall()}
+    _hh_rpt = db.execute(
+        f"SELECT {_fmt_pt_rpt} AS mes, ot_id, SUM(horas) FROM partes_trabajo "
+        f"WHERE fecha IS NOT NULL AND fecha!='' GROUP BY {_fmt_pt_rpt}, ot_id"
+    ).fetchall()
+    _ot_ob_rpt = {str(r[0]): str(r[1] or "").strip()
+                  for r in db.execute("SELECT id, COALESCE(obra,'') FROM ordenes_trabajo").fetchall()}
+    _cfg_rpt: dict = {}; _mo_mes_rpt: dict = {}
+    for _r_rpt in _hh_rpt:
+        _ob_r = _ot_ob_rpt.get(str(_r_rpt[1] or ""), "")
+        if _ob_r not in _cfg_rpt: _cfg_rpt[_ob_r] = _get_config_obra(db, _ob_r)
+        _c_r = _cfg_rpt[_ob_r]
+        _mo_mes_rpt[str(_r_rpt[0] or "")] = _mo_mes_rpt.get(str(_r_rpt[0] or ""), 0) + float(_r_rpt[2] or 0) * (_c_r["precio_hora_mo"] + _c_r["precio_hora_cons"])
+    _mant_ids_rpt = {str(r[0]) for r in db.execute(
+        "SELECT id FROM ordenes_trabajo WHERE COALESCE(es_mantenimiento,0)=1"
+    ).fetchall()}
+    _mant_mes_rpt: dict = {}
+    for _r_rpt in _hh_rpt:
+        if str(_r_rpt[1] or "") not in _mant_ids_rpt: continue
+        _ob_r = _ot_ob_rpt.get(str(_r_rpt[1] or ""), "")
+        if _ob_r not in _cfg_rpt: _cfg_rpt[_ob_r] = _get_config_obra(db, _ob_r)
+        _c_r = _cfg_rpt[_ob_r]
+        _mant_mes_rpt[str(_r_rpt[0] or "")] = _mant_mes_rpt.get(str(_r_rpt[0] or ""), 0) + float(_r_rpt[2] or 0) * (_c_r["precio_hora_mo"] + _c_r["precio_hora_cons"])
+    def _egr_rpt(m): return _cv_mes_rpt.get(m, 0) + _mo_mes_rpt.get(m, 0)
+    _all_meses_rpt = sorted(set(list(_cv_mes_rpt) + list(_mo_mes_rpt) + list(_gf_mes_rpt) + list(_mant_mes_rpt)))
+
+    _fc_rows_html = ""
+    _acum_e = 0.0
+    for _m_r in _all_meses_rpt:
+        _e = _egr_rpt(_m_r); _mo = _mo_mes_rpt.get(_m_r, 0)
+        _gf = _gf_mes_rpt.get(_m_r, 0) + _mant_mes_rpt.get(_m_r, 0)
+        _acum_e += _e
+        _sel = "font-weight:700;background:#fff7ed;" if _m_r == _mes_hoy else ""
+        _fc_rows_html += f"""<tr style="{_sel}">
+          <td>{_lbl_m(_m_r)}{" ←" if _m_r == _mes_hoy else ""}</td>
+          <td style="text-align:right;color:#dc2626;">{_m(_e)}</td>
+          <td style="text-align:right;">{_m(_mo)}</td>
+          <td style="text-align:right;">{_m(_cv_mes_rpt.get(_m_r,0))}</td>
+          <td style="text-align:right;color:#f59e0b;">{_m(_gf)}</td>
+          <td style="text-align:right;color:#374151;">{_m(_acum_e)}</td>
+        </tr>"""
+    _total_e = sum(_egr_rpt(m) for m in _all_meses_rpt)
+    _fc_rows_html += f"""<tr style="background:#1e293b;color:#fff;font-weight:700;">
+      <td>TOTAL ({len(_all_meses_rpt)} meses)</td>
+      <td style="text-align:right;">{_m(_total_e)}</td>
+      <td style="text-align:right;">{_m(sum(_mo_mes_rpt.get(m,0) for m in _all_meses_rpt))}</td>
+      <td style="text-align:right;">{_m(sum(_cv_mes_rpt.get(m,0) for m in _all_meses_rpt))}</td>
+      <td style="text-align:right;">{_m(sum(_gf_mes_rpt.get(m,0)+_mant_mes_rpt.get(m,0) for m in _all_meses_rpt))}</td>
+      <td style="text-align:right;">{_m(_total_e)}</td>
+    </tr>"""
+
+    # ── resumen ejecutivo ─────────────────────────────────────────────────────
+    _res_items = [
+        f"{n_obras_rpt} obra{'s' if n_obras_rpt!=1 else ''} activa{'s' if n_obras_rpt!=1 else ''} analizadas.",
+        f"{n_ok_rpt} obra{'s' if n_ok_rpt!=1 else ''} dentro del presupuesto · {n_riesgo_rpt} con desvío.",
+        f"Margen proyectado del portfolio: {mg_prom_rpt:.1f}%.",
+        f"Precio de venta total: {_m(_pv_tot)}.",
+        f"Costo directo ejecutado acumulado: {_m(costo_cd_rpt)}.",
+    ]
+    if BAC_rpt > 0:
+        _res_items += [
+            f"EVM — BAC: {_m(BAC_rpt)} · EV: {_m(EV_rpt)} · AC: {_m(AC_rpt)}.",
+            f"SPI = {SPI_rpt:.2f} · CPI = {CPI_rpt:.2f} · % Completitud = {pct_cpl_rpt:.1f}%.",
+        ]
+    _res_html = "".join(f"<li>{it}</li>" for it in _res_items)
+
+    # ── EVM semáforos Q&A ─────────────────────────────────────────────────────
+    def _qa_r(q, em, lbl, val, det, c):
+        return (f'<div style="background:#fff;border-radius:9px;box-shadow:0 1px 6px rgba(0,0,0,.07);'
+                f'padding:14px 16px;flex:1;min-width:200px;border-left:5px solid {c};">'
+                f'<div style="font-size:.68rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:3px;">{q}</div>'
+                f'<div style="font-size:1rem;font-weight:900;color:{c};margin-bottom:2px;">{em} {lbl}</div>'
+                f'<div style="font-size:.83rem;font-weight:700;color:{c};margin-bottom:3px;">{val}</div>'
+                f'<div style="font-size:.74rem;color:#6b7280;">{det}</div></div>')
+    _c1r = "#16a34a" if SPI_rpt >= 0.95 else ("#f59e0b" if SPI_rpt >= 0.8 else "#dc2626")
+    _c2r = "#16a34a" if CPI_rpt >= 0.95 else ("#f59e0b" if CPI_rpt >= 0.8 else "#dc2626")
+    _c3r = "#16a34a" if VAC_rpt >= 0 else ("#f59e0b" if VAC_rpt >= -BAC_rpt*0.05 else "#dc2626")
+    _qa_rpt = (
+        _qa_r("¿Vamos según lo previsto?",
+              "✅" if SPI_rpt >= 0.95 else ("⚠️" if SPI_rpt >= 0.8 else "🔴"),
+              f"SPI = {SPI_rpt:.2f}",
+              "En tiempo" if SPI_rpt >= 0.95 else ("Leve retraso" if SPI_rpt >= 0.8 else "Retraso significativo"),
+              f"EV {_m(EV_rpt)} vs PV {_m(PV_rpt)}", _c1r) +
+        _qa_r("¿Dentro del presupuesto?",
+              "✅" if CPI_rpt >= 0.95 else ("⚠️" if CPI_rpt >= 0.8 else "🔴"),
+              f"CPI = {CPI_rpt:.2f}",
+              "Costo controlado" if CPI_rpt >= 0.95 else ("Sobrecosto leve" if CPI_rpt >= 0.8 else "Sobrecosto importante"),
+              f"EV {_m(EV_rpt)} vs AC {_m(AC_rpt)}", _c2r) +
+        _qa_r("¿Se va a cumplir el presupuesto?",
+              "✅" if VAC_rpt >= 0 else ("⚠️" if VAC_rpt >= -BAC_rpt*0.05 else "🔴"),
+              f"VAC = {_m(VAC_rpt)}",
+              "Dentro del costo" if VAC_rpt >= 0 else ("Desvío leve" if VAC_rpt >= -BAC_rpt*0.05 else "Desvío significativo"),
+              f"EAC = {_m(EAC_rpt)} vs BAC = {_m(BAC_rpt)}", _c3r)
+    )
+
+    # ── ficha resumen superior ────────────────────────────────────────────────
+    _fecha_rpt = _today.strftime("%d de %B de %Y")
+    _ficha_rpt = f"""
+    <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;">
+        <div style="padding:10px 16px;border-right:1px solid #e5e7eb;">
+          <span style="display:block;font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Portfolio / Obra</span>
+          <span style="display:block;font-size:1rem;font-weight:700;color:#e36c09;">{_E(obra_fil) if obra_fil else f'Portfolio completo ({n_obras_rpt} obras)'}</span>
+        </div>
+        <div style="padding:10px 16px;border-right:1px solid #e5e7eb;">
+          <span style="display:block;font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Precio de Venta Total</span>
+          <span style="display:block;font-size:1rem;font-weight:700;color:#1e3a5f;">{_m(_pv_tot)}</span>
+        </div>
+        <div style="padding:10px 16px;">
+          <span style="display:block;font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Margen prom. proyectado</span>
+          <span style="display:block;font-size:1rem;font-weight:700;color:{_mc_r(mg_prom_rpt)};">{mg_prom_rpt:.1f}%</span>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;border-top:1px solid #e5e7eb;">
+        <div style="padding:10px 16px;border-right:1px solid #e5e7eb;">
+          <span style="display:block;font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Fecha de emisión</span>
+          <span style="display:block;font-size:.9rem;font-weight:700;">{_fecha_rpt}</span>
+        </div>
+        <div style="padding:10px 16px;border-right:1px solid #e5e7eb;">
+          <span style="display:block;font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Costo directo ejecutado</span>
+          <span style="display:block;font-size:.9rem;font-weight:700;">{_m(costo_cd_rpt)}</span>
+        </div>
+        <div style="padding:10px 16px;">
+          <span style="display:block;font-size:.72rem;color:#6b7280;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Obras con desvío</span>
+          <span style="display:block;font-size:.9rem;font-weight:700;color:{'#991b1b' if n_riesgo_rpt>0 else '#166534'};">{n_riesgo_rpt} de {n_obras_rpt}</span>
+        </div>
+      </div>
+    </div>"""
+
+    # ── chart data ────────────────────────────────────────────────────────────
+    _chart_meses_fc = _all_meses_rpt[-18:]
+    _acum_fc = 0.0; _acum_fc_ser = []
+    for _m_fc in _chart_meses_fc:
+        _acum_fc += _egr_rpt(_m_fc); _acum_fc_ser.append(round(_acum_fc))
+
+    return f"""<!DOCTYPE html><html lang="es"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reporte Económico — {_E(obra_fil) if obra_fil else 'Portfolio'}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+*{{box-sizing:border-box;}}body{{font-family:Arial,Helvetica,sans-serif;background:#f8f9fa;margin:0;padding:0;font-size:13px;color:#1f2937;}}
+.report-wrap{{max-width:980px;margin:0 auto;padding:16px 14px 40px;}}
+.rpt-header{{background:linear-gradient(135deg,#c95a06 0%,#e36c09 60%,#f59e0b 100%);color:#fff;border-radius:10px 10px 0 0;padding:16px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}}
+.rpt-header-left{{display:flex;align-items:center;gap:14px;}}
+.rpt-header-logo{{height:42px;background:#fff;border-radius:6px;padding:4px 8px;object-fit:contain;}}
+.rpt-title{{font-size:14px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.2);}}
+.rpt-subtitle{{font-size:11px;opacity:.88;margin-top:2px;}}
+.rpt-header-right{{text-align:right;font-size:11px;opacity:.85;}}
+.rpt-badge{{display:inline-block;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.4);margin-bottom:3px;}}
+.sec-lbl{{font-size:.76rem;letter-spacing:.1em;text-transform:uppercase;font-weight:800;padding:9px 14px;border-radius:7px;margin:16px 0 10px;display:flex;align-items:center;gap:9px;}}
+.sec-lbl .nb{{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;border-radius:5px;font-size:.7rem;font-weight:900;padding:0 6px;}}
+.n1{{background:linear-gradient(90deg,#dbeafe,#f0f7ff);border-left:5px solid #1d4ed8;color:#1e3a5f;}}.n1 .nb{{background:#1d4ed8;color:#fff;}}
+.n2{{background:linear-gradient(90deg,#fef3c7,#fffbeb);border-left:5px solid #d97706;color:#78350f;}}.n2 .nb{{background:#d97706;color:#fff;}}
+.n3{{background:linear-gradient(90deg,#dcfce7,#f0fdf4);border-left:5px solid #16a34a;color:#14532d;}}.n3 .nb{{background:#16a34a;color:#fff;}}
+.card{{background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.07);overflow:hidden;border:1px solid rgba(148,163,184,.18);margin-bottom:14px;}}
+.ct{{background:#f8fafc;border-bottom:1px solid #e5e7eb;padding:10px 14px;font-weight:800;font-size:.85rem;color:#1e293b;}}
+.cb{{padding:14px;}}
+.kpi-row{{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;}}
+.kpi-box{{background:#fff;border-radius:9px;box-shadow:0 1px 5px rgba(0,0,0,.06);padding:13px 16px;flex:1;min-width:140px;border-left:4px solid #e5e7eb;}}
+.kpi-val{{font-size:1.35rem;font-weight:900;line-height:1;margin:5px 0 2px;}}
+.kpi-lbl{{font-size:.7rem;color:#6b7280;text-transform:uppercase;font-weight:700;letter-spacing:.04em;}}
+.kpi-sub{{font-size:.7rem;color:#9ca3af;margin-top:1px;}}
+table{{width:100%;border-collapse:collapse;font-size:.82rem;}}
+th{{background:#1e293b;color:#fff;padding:7px 9px;text-align:left;font-size:.75rem;white-space:nowrap;}}
+td{{padding:6px 9px;border-bottom:1px solid #f1f5f9;vertical-align:middle;}}
+tr:last-child td{{border-bottom:none;}}tr:hover td{{background:#f8fafc;}}
+.resumen{{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;}}
+.resumen li{{padding:7px 11px;background:#f8fafc;border-left:3px solid #e36c09;border-radius:0 5px 5px 0;font-size:.82rem;}}
+.semafs{{display:flex;flex-direction:column;gap:8px;}}
+@media print{{
+  html,body{{background:#fff;font-size:11px;}}
+  .no-print{{display:none!important;}}
+  .report-wrap{{max-width:100%;padding:0;}}
+  .card{{box-shadow:none;border:1px solid #e5e7eb;}}
+  .rpt-header{{border-radius:0;background:transparent!important;color:#111!important;border-top:3px solid #e36c09;border-bottom:2px solid #e2e8f0;padding:10px 0 8px;}}
+  .rpt-title,.rpt-subtitle,.rpt-header-right{{color:#111!important;text-shadow:none!important;}}
+  .rpt-badge{{background:#fff7ed!important;color:#9a3412!important;border:1px solid #fdba74!important;}}
+  th{{background:#e5e7eb!important;color:#111!important;}}
+  .kpi-box{{box-shadow:none;border:1px solid #e5e7eb;}}
+  @page{{size:A4;margin:12mm 12mm 14mm 12mm;}}
+  *{{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}}
+}}
+</style></head><body>
+<div class="report-wrap">
+
+  <!-- Controles (no imprime) -->
+  <div class="no-print" style="display:flex;gap:10px;margin-bottom:12px;align-items:center;flex-wrap:wrap;">
+    <button onclick="window.print()" style="padding:8px 20px;background:#e36c09;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;">🖨 Imprimir / Guardar PDF</button>
+    <a href="/modulo/economico/dashboard-ejecutivo" style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#1e293b;color:#fff;border-radius:8px;font-size:13px;font-weight:700;text-decoration:none;">← Dashboard</a>
+    <form method="get" style="display:flex;align-items:center;gap:8px;">
+      <label style="font-size:.82rem;font-weight:700;color:#374151;">Obra:</label>
+      <select name="obra" onchange="this.form.submit()" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:.85rem;">{obra_opts_rpt}</select>
+    </form>
+  </div>
+
+  <!-- Encabezado -->
+  <div class="rpt-header">
+    <div class="rpt-header-left">
+      <img src="/logo-a3" alt="A3" class="rpt-header-logo">
+      <div>
+        <div class="rpt-title">REPORTE ECONÓMICO DE GESTIÓN DE OBRAS</div>
+        <div class="rpt-subtitle">{subtitulo_rpt} &nbsp;|&nbsp; Emitido el {_today.strftime('%d/%m/%Y')}</div>
+      </div>
+    </div>
+    <div class="rpt-header-right">
+      <div><span class="rpt-badge">USO INTERNO — GERENCIA</span></div>
+      <div>{_today.strftime('%d %b %Y')}</div>
+    </div>
+  </div>
+  {_ficha_rpt}
+
+  <!-- SECCIÓN 1 -->
+  <div class="sec-lbl n1"><span class="nb">N1</span>CONTROL DE PRODUCCIÓN · COSTOS DIRECTOS</div>
+  <div class="kpi-row">
+    <div class="kpi-box" style="border-left-color:{'#991b1b' if n_riesgo_rpt>0 else '#166534'};">
+      <div class="kpi-lbl">Obras con desvío</div>
+      <div class="kpi-val" style="color:{'#991b1b' if n_riesgo_rpt>0 else '#166534'};">{n_riesgo_rpt} <span style="font-size:.8rem;font-weight:400;">de {n_obras_rpt}</span></div>
+      <div class="kpi-sub">{n_ok_rpt} dentro del presupuesto</div>
+    </div>
+    <div class="kpi-box" style="border-left-color:{_mc_r(mg_prom_rpt)};">
+      <div class="kpi-lbl">Margen prom. proyectado</div>
+      <div class="kpi-val" style="color:{_mc_r(mg_prom_rpt)};">{mg_prom_rpt:.1f}%</div>
+      <div class="kpi-sub">a la finalización</div>
+    </div>
+    <div class="kpi-box" style="border-left-color:#1e293b;">
+      <div class="kpi-lbl">Precio de venta total</div>
+      <div class="kpi-val" style="color:#1e293b;">{_m(_pv_tot)}</div>
+      <div class="kpi-sub">portfolio seleccionado</div>
+    </div>
+    <div class="kpi-box" style="border-left-color:#3b82f6;">
+      <div class="kpi-lbl">Costo directo ejecutado</div>
+      <div class="kpi-val" style="color:#1d4ed8;">{_m(costo_cd_rpt)}</div>
+      <div class="kpi-sub">acumulado</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="ct">📋 Estado de cada obra</div>
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th>Obra</th><th>Cliente</th><th style="text-align:center;">Av. Físico</th><th style="text-align:center;">Av. Económico</th><th style="text-align:right;">Margen Proy.</th><th style="text-align:right;">Precio Venta</th><th style="text-align:right;">Costo Real</th><th style="text-align:center;">Estado</th></tr></thead>
+      <tbody>{tabla_rpt}</tbody>
+    </table></div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+    <div class="card">
+      <div class="ct">🚦 Semáforos de obra</div>
+      <div class="cb"><div class="semafs">{semafs_rpt}</div></div>
+    </div>
+    <div class="card">
+      <div class="ct">📝 Resumen ejecutivo</div>
+      <div class="cb"><ul class="resumen">{_res_html}</ul></div>
+    </div>
+  </div>
+
+  <!-- SECCIÓN 2 -->
+  <div class="sec-lbl n2"><span class="nb">N2</span>ANÁLISIS EVM · CURVA S</div>
+  <div class="card">
+    <div class="ct">🎯 Indicadores de situación EVM</div>
+    <div class="cb"><div style="display:flex;flex-wrap:wrap;gap:10px;">{_qa_rpt}</div></div>
+  </div>
+  <div style="display:grid;grid-template-columns:3fr 2fr;gap:14px;margin-bottom:14px;">
+    <div class="card">
+      <div class="ct">📈 Curva S — PV · EV · AC acumulados</div>
+      <div class="cb" style="position:relative;height:280px;"><canvas id="chartS_rpt"></canvas></div>
+      <div style="padding:0 14px 10px;font-size:.72rem;color:#6b7280;display:flex;gap:16px;flex-wrap:wrap;">
+        <span style="color:#6366f1;">■ PV planificado</span>
+        <span style="color:#0891b2;">■ EV ganado</span>
+        <span style="color:#dc2626;">■ AC costo real</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="ct">📊 Indicadores EVM clave</div>
+      <div class="cb"><table>
+        <thead><tr><th>Indicador</th><th style="text-align:right;">Valor</th></tr></thead>
+        <tbody>
+          <tr><td>BAC — Presupuesto total</td><td style="text-align:right;font-weight:700;">{_m(BAC_rpt)}</td></tr>
+          <tr><td>EV — Valor ganado</td><td style="text-align:right;font-weight:700;color:#0891b2;">{_m(EV_rpt)}</td></tr>
+          <tr><td>PV — Planificado a hoy</td><td style="text-align:right;font-weight:700;color:#6366f1;">{_m(PV_rpt)}</td></tr>
+          <tr><td>AC — Costo real</td><td style="text-align:right;font-weight:700;color:#dc2626;">{_m(AC_rpt)}</td></tr>
+          <tr><td>SV — Desvío cronograma</td><td style="text-align:right;font-weight:700;color:{'#166534' if SV_rpt>=0 else '#991b1b'};">{_m(SV_rpt)}</td></tr>
+          <tr><td>CV — Desvío de costo</td><td style="text-align:right;font-weight:700;color:{'#166534' if CV_rpt>=0 else '#991b1b'};">{_m(CV_rpt)}</td></tr>
+          <tr><td>SPI — Eficiencia cronograma</td><td style="text-align:right;font-weight:700;color:{'#166534' if SPI_rpt>=0.95 else ('#f59e0b' if SPI_rpt>=0.8 else '#991b1b')};">{SPI_rpt:.2f}</td></tr>
+          <tr><td>CPI — Eficiencia de costo</td><td style="text-align:right;font-weight:700;color:{'#166534' if CPI_rpt>=0.95 else ('#f59e0b' if CPI_rpt>=0.8 else '#991b1b')};">{CPI_rpt:.2f}</td></tr>
+          <tr><td>EAC — Proyección al cierre</td><td style="text-align:right;font-weight:700;">{_m(EAC_rpt)}</td></tr>
+          <tr><td>VAC — Variación al cierre</td><td style="text-align:right;font-weight:700;color:{'#166534' if VAC_rpt>=0 else '#991b1b'};">{_m(VAC_rpt)}</td></tr>
+          <tr><td>% Completitud (EV/BAC)</td><td style="text-align:right;font-weight:700;">{pct_cpl_rpt:.1f}%</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="ct">📅 Serie mensual EVM (últimos 12 meses)</div>
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th>Mes</th><th style="text-align:right;color:#a5b4fc;">PV acum.</th><th style="text-align:right;color:#67e8f9;">EV acum.</th><th style="text-align:right;color:#fca5a5;">AC acum.</th><th style="text-align:right;">SV</th><th style="text-align:right;">CV</th></tr></thead>
+      <tbody>{_evm_tabla_rows}</tbody>
+    </table></div>
+  </div>
+
+  <!-- SECCIÓN 3 -->
+  <div class="sec-lbl n3"><span class="nb">N3</span>FLUJO DE CAJA · EGRESOS MENSUALES</div>
+  <div class="card">
+    <div class="ct">📈 Evolución de egresos mensuales</div>
+    <div class="cb" style="position:relative;height:260px;"><canvas id="chartFC_rpt"></canvas></div>
+    <div style="padding:0 14px 10px;font-size:.72rem;color:#6b7280;display:flex;gap:16px;flex-wrap:wrap;">
+      <span style="color:rgba(99,102,241,.85);">■ Costos variables</span>
+      <span style="color:rgba(8,145,178,.85);">■ Mano de Obra</span>
+      <span style="color:rgba(245,158,11,.85);">■ Estructura / GF</span>
+      <span style="color:#dc2626;">— Egresos acum.</span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="ct">📋 Detalle mensual completo</div>
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th>Mes</th><th style="text-align:right;">Total egresos</th><th style="text-align:right;">Mano de Obra</th><th style="text-align:right;">Costos variables</th><th style="text-align:right;">Estructura / GF</th><th style="text-align:right;">Acumulado</th></tr></thead>
+      <tbody>{_fc_rows_html}</tbody>
+    </table></div>
+  </div>
+
+</div>
+<script>
+(function(){{
+  const lbl_s = {_jrpt.dumps([_lbl_m(m) for m in _all_m_evm])};
+  const pv_s  = {_jrpt.dumps(_pv_ser_r)};
+  const ev_s  = {_jrpt.dumps(_ev_ser_r)};
+  const ac_s  = {_jrpt.dumps(_ac_ser_r)};
+  new Chart(document.getElementById('chartS_rpt').getContext('2d'), {{
+    type:'line', data:{{ labels:lbl_s, datasets:[
+      {{label:'PV',data:pv_s,borderColor:'#6366f1',borderWidth:2.5,pointRadius:1,tension:.35,fill:false}},
+      {{label:'EV',data:ev_s,borderColor:'#0891b2',borderWidth:2.5,pointRadius:1,tension:.35,fill:false}},
+      {{label:'AC',data:ac_s,borderColor:'#dc2626',borderWidth:2.5,pointRadius:1,tension:.35,fill:false}},
+    ]}},
+    options:{{responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:c=>` ${{c.dataset.label}}: ${{(c.parsed.y/1000000).toFixed(2)}}M`}}}}}},
+      scales:{{y:{{beginAtZero:true,ticks:{{callback:v=>'$'+(v/1000000).toFixed(1)+'M',font:{{size:9}}}},grid:{{color:'#f1f5f9'}}}},x:{{ticks:{{font:{{size:9}},maxRotation:45}}}}}}}}
+  }});
+  const lbl_f = {_jrpt.dumps([_lbl_m(m) for m in _chart_meses_fc])};
+  const cv_f  = {_jrpt.dumps([round(_cv_mes_rpt.get(m,0)) for m in _chart_meses_fc])};
+  const mo_f  = {_jrpt.dumps([round(_mo_mes_rpt.get(m,0)) for m in _chart_meses_fc])};
+  const gf_f  = {_jrpt.dumps([round(_gf_mes_rpt.get(m,0)+_mant_mes_rpt.get(m,0)) for m in _chart_meses_fc])};
+  const acum_f= {_jrpt.dumps(_acum_fc_ser)};
+  new Chart(document.getElementById('chartFC_rpt').getContext('2d'), {{
+    type:'bar', data:{{ labels:lbl_f, datasets:[
+      {{label:'Costos variables',data:cv_f,backgroundColor:'rgba(99,102,241,.75)',stack:'e',borderRadius:3}},
+      {{label:'Mano de Obra',data:mo_f,backgroundColor:'rgba(8,145,178,.75)',stack:'e',borderRadius:3}},
+      {{label:'Estructura/GF',data:gf_f,backgroundColor:'rgba(245,158,11,.75)',stack:'e',borderRadius:3}},
+      {{label:'Acumulado',data:acum_f,type:'line',yAxisID:'yA',borderColor:'#dc2626',borderWidth:2,pointRadius:2,fill:false,tension:.3,order:0}},
+    ]}},
+    options:{{responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:c=>` ${{c.dataset.label}}: ${{(c.parsed.y/1000000).toFixed(2)}}M`}}}}}},
+      scales:{{x:{{stacked:true,ticks:{{font:{{size:9}},maxRotation:45}}}},y:{{stacked:true,beginAtZero:true,ticks:{{callback:v=>'$'+(v/1000000).toFixed(1)+'M',font:{{size:9}}}},grid:{{color:'#f1f5f9'}}}},
+        yA:{{position:'right',beginAtZero:true,ticks:{{callback:v=>'$'+(v/1000000).toFixed(1)+'M',font:{{size:9}}}},grid:{{drawOnChartArea:false}}}}}}}}
+  }});
+}})();
+</script>
+</body></html>"""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
