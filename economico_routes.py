@@ -4068,13 +4068,13 @@ tr:last-child td{{border-bottom:none;}}
     <div class="cb"><div class="qa-card-wrap" style="display:flex;flex-wrap:wrap;gap:12px;">{qa_html}</div></div>
   </div>
 
-  <!-- Gráfico + Tabla lado a lado en print -->
-  <div class="evm-layout" style="display:contents;">
+  <!-- Gráfico + Tabla lado a lado (pantalla y PDF) -->
+  <div class="evm-layout" style="display:grid;grid-template-columns:3fr 2fr;gap:14px;align-items:start;">
 
   <!-- Curva S chart -->
   <div class="card chart-card"><div class="ct">📈 Curva S — PV · EV · AC</div>
     <div class="cb">
-      <div style="position:relative;height:380px;"><canvas id="chartS"></canvas></div>
+      <div style="position:relative;height:340px;"><canvas id="chartS"></canvas></div>
       <div class="leg">
         <span><span style="display:inline-block;width:24px;height:3px;background:#6366f1;border-radius:2px;"></span>PV — Valor Planificado (BCWS)</span>
         <span><span style="display:inline-block;width:24px;height:3px;background:#0891b2;border-radius:2px;"></span>EV — Valor Ganado (BCWP)</span>
