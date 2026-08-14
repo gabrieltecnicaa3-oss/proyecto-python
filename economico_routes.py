@@ -4002,18 +4002,22 @@ tr:last-child td{{border-bottom:none;}}
 .leg span{{display:flex;align-items:center;gap:5px;}}
 .print-hdr{{display:none;}}
 @media print{{
-  html,body{{background:#fff;font-size:11px;}}
+  html,body{{background:#fff;font-size:10.5px;}}
   .no-print,.hdr{{display:none!important;}}
-  .print-hdr{{display:flex!important;align-items:center;justify-content:space-between;padding:10px 0 8px;margin-bottom:12px;
+  .print-hdr{{display:flex!important;align-items:center;justify-content:space-between;padding:10px 0 8px;margin-bottom:10px;
     border-top:3px solid #e36c09;border-bottom:2px solid #e2e8f0;gap:14px;flex-wrap:wrap;}}
-  .print-hdr-logo{{height:36px;object-fit:contain;}}
-  .print-hdr-title{{font-size:13px;font-weight:700;color:#111;}}
-  .print-hdr-sub{{font-size:11px;color:#6b7280;margin-top:2px;}}
-  .body{{padding:4px 0;}}
-  .card{{box-shadow:none;border:1px solid #e5e7eb;break-inside:avoid;page-break-inside:avoid;}}
+  .print-hdr-logo{{height:34px;object-fit:contain;}}
+  .print-hdr-title{{font-size:12px;font-weight:700;color:#111;}}
+  .print-hdr-sub{{font-size:10px;color:#6b7280;margin-top:2px;}}
+  .body{{padding:0;gap:8px;max-width:100%;overflow:hidden;}}
+  .card{{box-shadow:none;border:1px solid #e5e7eb;overflow:hidden;max-width:100%;}}
+  .card.chart-card canvas{{max-height:200px!important;height:200px!important;}}
   .ct{{background:#f1f5f9!important;}}
   th{{background:#e5e7eb!important;color:#111!important;}}
-  @page{{size:A4;margin:12mm 12mm 14mm 12mm;}}
+  td,th{{padding:5px 7px!important;font-size:10px!important;}}
+  .leg{{font-size:9px!important;gap:8px!important;}}
+  .cb{{padding:10px!important;}}
+  @page{{size:A4 landscape;margin:10mm 10mm 12mm 10mm;}}
   *{{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}}
 }}
 </style></head><body>
@@ -4065,7 +4069,7 @@ tr:last-child td{{border-bottom:none;}}
   </div>
 
   <!-- Curva S chart -->
-  <div class="card"><div class="ct">📈 Curva S — PV · EV · AC</div>
+  <div class="card chart-card"><div class="ct">📈 Curva S — PV · EV · AC</div>
     <div class="cb">
       <div style="position:relative;height:380px;"><canvas id="chartS"></canvas></div>
       <div class="leg">
