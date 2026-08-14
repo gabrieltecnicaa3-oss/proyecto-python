@@ -3134,64 +3134,67 @@ def _curva_s_impl():
     _c2 = "#16a34a" if CPI >= 0.95 else ("#f59e0b" if CPI >= 0.8 else "#dc2626")
     _c3 = "#16a34a" if VAC >= 0 else ("#f59e0b" if VAC >= -BAC*0.05 else "#dc2626")
 
-    # ── Plazo: señal primaria = fechas reales de entrega; secundaria = EVM SV ──
+    # ── Plazo: para portfolio, N/A; para obra, usa fechas reales y luego fallback a EVM SV ──
     import datetime as _dtpl
     _today = _dtpl.date.today()
-    _overdue_days = 0    # >0 = retraso en días (peor OT vencida)
-    _upcoming_days = None  # días hasta la próxima entrega más urgente
-    for _oid, _od in ot_map.items():
-        _fe = _od.get("fe", "")
-        _av = _od.get("avance", 0.0)
-        if not _fe or _av >= 100:
-            continue
-        try:
-            _fd_date = _dtpl.date.fromisoformat(_fe[:10])
-        except Exception:
-            continue
-        _delta = (_today - _fd_date).days   # positivo = vencida
-        if _delta > 0:
-            _overdue_days = max(_overdue_days, _delta)
-        else:
-            _days_to = -_delta
-            if _upcoming_days is None or _days_to < _upcoming_days:
-                _upcoming_days = _days_to
-
-    if _overdue_days > 0:
-        # Al menos una OT vencida con avance < 100%
-        _c4 = "#f59e0b" if _overdue_days <= 15 else "#dc2626"
-        _em4 = "⚠️" if _overdue_days <= 15 else "🔴"
-        sv_tiempo_txt  = f"{_overdue_days} día{'s' if _overdue_days != 1 else ''} de retraso"
-        sv_tiempo_desc = "Retraso leve en la entrega" if _overdue_days <= 15 else "Retraso en la entrega"
-        sv_tiempo_detail = f"Fecha de entrega superada · SV = {_m(SV)}"
-    elif _upcoming_days is not None and _upcoming_days <= 14:
-        # Entrega inminente (≤ 14 días) sin OTs vencidas
-        _c4 = "#f59e0b" if _upcoming_days <= 7 else "#16a34a"
-        _em4 = "⚠️" if _upcoming_days <= 7 else "✅"
-        sv_tiempo_txt  = f"{_upcoming_days} día{'s' if _upcoming_days != 1 else ''} para entrega"
-        sv_tiempo_desc = "Entrega muy próxima" if _upcoming_days <= 7 else "Entrega próxima"
-        sv_tiempo_detail = f"Próxima fecha de entrega · SV = {_m(SV)}"
-    elif sv_months == 0:
-        _c4 = "#6b7280"; _em4 = "⚪"
-        sv_tiempo_txt  = "N/D"
+    if not obra_fil:
+        _c4 = "#94a3b8"; _em4 = "—"
+        sv_tiempo_txt = "N/A"
         sv_tiempo_desc = "No aplicable"
-        sv_tiempo_detail = "Sin fechas de entrega activas ni tasa de PV válida"
+        sv_tiempo_detail = "El indicador de plazo no es comparable en el portfolio total; revisar por obra."
     else:
-        # Solo EVM-SV disponible
-        sv_days = sv_months * 30
-        _adelante = sv_days >= 0
-        _c4 = "#16a34a" if _adelante else ("#f59e0b" if abs(sv_days) <= 15 else "#dc2626")
-        _em4 = "✅" if _adelante else ("⚠️" if abs(sv_days) <= 15 else "🔴")
-        sv_tiempo_txt = f"{abs(sv_days):.0f} día{'s' if abs(sv_days) != 1 else ''} {'adelante' if _adelante else 'atrás'}"
-        if abs(sv_days) <= 5:
-            sv_tiempo_desc = "En término"
-        elif _adelante:
-            sv_tiempo_desc = "A favor del cronograma"
-        elif abs(sv_days) <= 15:
-            sv_tiempo_desc = "Retraso leve"
+        _overdue_days = 0
+        _upcoming_days = None
+        for _oid, _od in ot_map.items():
+            _fe = _od.get("fe", "")
+            _av = _od.get("avance", 0.0)
+            if not _fe or _av >= 100:
+                continue
+            try:
+                _fd_date = _dtpl.date.fromisoformat(_fe[:10])
+            except Exception:
+                continue
+            _delta = (_today - _fd_date).days
+            if _delta > 0:
+                _overdue_days = max(_overdue_days, _delta)
+            else:
+                _days_to = -_delta
+                if _upcoming_days is None or _days_to < _upcoming_days:
+                    _upcoming_days = _days_to
+
+        if _overdue_days > 0:
+            _c4 = "#f59e0b" if _overdue_days <= 15 else "#dc2626"
+            _em4 = "⚠️" if _overdue_days <= 15 else "🔴"
+            sv_tiempo_txt = f"{_overdue_days} día{'s' if _overdue_days != 1 else ''} de retraso"
+            sv_tiempo_desc = "Retraso leve en la entrega" if _overdue_days <= 15 else "Retraso en la entrega"
+            sv_tiempo_detail = f"Fecha de entrega superada · SV = {_m(SV)}"
+        elif _upcoming_days is not None and _upcoming_days <= 14:
+            _c4 = "#f59e0b" if _upcoming_days <= 7 else "#16a34a"
+            _em4 = "⚠️" if _upcoming_days <= 7 else "✅"
+            sv_tiempo_txt = f"{_upcoming_days} día{'s' if _upcoming_days != 1 else ''} para entrega"
+            sv_tiempo_desc = "Entrega muy próxima" if _upcoming_days <= 7 else "Entrega próxima"
+            sv_tiempo_detail = f"Próxima fecha de entrega · SV = {_m(SV)}"
+        elif sv_months == 0:
+            _c4 = "#6b7280"; _em4 = "⚪"
+            sv_tiempo_txt = "N/D"
+            sv_tiempo_desc = "No aplicable"
+            sv_tiempo_detail = "Sin fechas de entrega activas ni tasa de PV válida"
         else:
-            sv_tiempo_desc = "Retraso importante"
-        sv_tiempo_detail = (f"SV = {_m(SV)} | cronograma favorable" if _adelante
-                            else f"SV = {_m(SV)} | {'plazo se mantiene' if abs(sv_days) <= 15 else 'plazo en riesgo'}")
+            sv_days = sv_months * 30
+            _adelante = sv_days >= 0
+            _c4 = "#16a34a" if _adelante else ("#f59e0b" if abs(sv_days) <= 15 else "#dc2626")
+            _em4 = "✅" if _adelante else ("⚠️" if abs(sv_days) <= 15 else "🔴")
+            sv_tiempo_txt = f"{abs(sv_days):.0f} día{'s' if abs(sv_days) != 1 else ''} {'adelante' if _adelante else 'atrás'}"
+            if abs(sv_days) <= 5:
+                sv_tiempo_desc = "En término"
+            elif _adelante:
+                sv_tiempo_desc = "A favor del cronograma"
+            elif abs(sv_days) <= 15:
+                sv_tiempo_desc = "Retraso leve"
+            else:
+                sv_tiempo_desc = "Retraso importante"
+            sv_tiempo_detail = (f"SV = {_m(SV)} | cronograma favorable" if _adelante
+                                else f"SV = {_m(SV)} | {'plazo se mantiene' if abs(sv_days) <= 15 else 'plazo en riesgo'}")
 
     qa_html = (
         _qa_card("¿Vamos según lo previsto?",
