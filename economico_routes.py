@@ -1648,13 +1648,13 @@ def economico_dashboard_ejecutivo():
     gf_mes_costs = {str(r[0]): float(r[1] or 0) for r in gf_rows}
     total_gf_real = sum(gf_mes_costs.values())
 
-    # Ahora calculamos saldo con total de estructura (mantenimiento + gastos fijos)
+    # total_estructura_real se mantiene para la distribución N4; N2 usa solo gastos fijos
     total_estructura_real = total_mant_real + total_gf_real
-    saldo_prev   = total_gg_prev - total_estructura_real
-    pct_cob_prev = min((total_gg_prev / total_estructura_real * 100.0) if total_estructura_real > 0 else 100.0, 200.0)
-    # Ranking de desvíos: GG reales vs previstos (real = overhead total de estructura)
+    saldo_prev   = total_gg_prev - total_gf_real
+    pct_cob_prev = min((total_gg_prev / total_gf_real * 100.0) if total_gf_real > 0 else 100.0, 200.0)
+    # Ranking: GG real = solo gastos fijos (N2)
     rubros_global["Gastos Generales"]["prev"] = total_gg_prev
-    rubros_global["Gastos Generales"]["real"] = total_estructura_real
+    rubros_global["Gastos Generales"]["real"] = total_gf_real
 
     # Series para el chart — unión de todos los meses con datos
     _all_meses = sorted(set(mant_mes_costs.keys()) | set(gf_mes_costs.keys()))
@@ -1793,13 +1793,13 @@ def economico_dashboard_ejecutivo():
           <td>{af_bar}</td>
           <td>{ae_bar}</td>
           <td style="text-align:right;font-weight:700;color:{mc};">{mg_aj:.1f}%</td>
-          <td style="text-align:right;color:#6b7280;">{_m(o['pv'])}</td>
-          <td style="text-align:right;color:#6b7280;">{_m(o.get('r_tot_aj', o['r_tot']))}</td>
+          <td style="text-align:right;color:#6b7280;">{_m(o['agg']['p_cd'])}</td>
+          <td style="text-align:right;color:#6b7280;">{_m(o['r_cd'])}</td>
           <td style="text-align:center;font-size:1.3rem;">{o['sem_em']}</td>
         </tr>"""
-    # Fila de totales — reutiliza _pv_total y _cproy_total calculados en KPIs globales
-    total_pv   = _pv_total
-    total_real = sum(o.get('r_tot_aj', o['r_tot']) for o in obras_data)
+    # Fila de totales N1: CD previsto y CD ejecutado
+    total_pv   = costo_cd_prev
+    total_real = costo_cd
     total_mg   = mg_prom  # idéntico cálculo ponderado
     mc_tot     = _cm(total_mg)
     tabla_obras += f"""<tr style="background:#f1f5f9;font-weight:700;border-top:2px solid #cbd5e1;">
@@ -1859,13 +1859,14 @@ def economico_dashboard_ejecutivo():
     chart_af_js     = _json.dumps(chart_af)
     chart_ae_js     = _json.dumps(chart_ae)
 
-    gg_evo_labels_js = _json.dumps(_all_meses)
-    gg_evo_data_js   = _json.dumps([
-        round(mant_mes_costs.get(m, 0) + gf_mes_costs.get(m, 0), 0) for m in _all_meses
-    ])
+    _meses_gf = sorted(gf_mes_costs.keys())
+    gg_evo_labels_js = _json.dumps(_meses_gf)
+    gg_evo_data_js   = _json.dumps([round(gf_mes_costs.get(m, 0), 0) for m in _meses_gf])
+    _n_meses_gf = len(_meses_gf) if _meses_gf else 1
+    gg_prev_mes_js   = _json.dumps([round(total_gg_prev / _n_meses_gf, 0)] * len(_meses_gf))
 
     gg_prev_total = total_gg_prev
-    gg_real_total = total_estructura_real
+    gg_real_total = total_gf_real
     gg_saldo_total = saldo_prev
     gg_pct_real_cd = (gg_real_total / costo_cd * 100.0) if costo_cd > 0 else 0.0
     pv_total = _pv_total
@@ -1877,10 +1878,10 @@ def economico_dashboard_ejecutivo():
     # ── Chart Precio de Venta vs Costo Real por obra ────────────────────────
     import json as _json2
     chart2_labels_js = _json2.dumps([o["obra"] for o in obras_data])
-    chart2_pv_js     = _json2.dumps([round(o["pv"], 0) for o in obras_data])
-    chart2_costo_js  = _json2.dumps([round(o.get("r_tot_aj", o["r_tot"]), 0) for o in obras_data])
+    chart2_pv_js     = _json2.dumps([round(o["agg"]["p_cd"], 0) for o in obras_data])
+    chart2_costo_js  = _json2.dumps([round(o["r_cd"], 0) for o in obras_data])
     chart2_colors_js = _json2.dumps([
-      "rgba(16,185,129,0.75)" if o["pv"] >= o.get("r_tot_aj", o["r_tot"]) else "rgba(239,68,68,0.75)"
+      "rgba(16,185,129,0.75)" if o["r_cd"] <= o["agg"]["p_cd"] else "rgba(239,68,68,0.75)"
         for o in obras_data
     ])
 
@@ -2184,8 +2185,8 @@ def economico_dashboard_ejecutivo():
               <th style="min-width:110px;">Av. Físico <span title="Estado de Avance ingresado manualmente en la OT (0–100%)" style="cursor:help;opacity:.7;font-weight:400;">ⓘ</span></th>
               <th style="min-width:110px;">Av. Económico <span title="Costo Total Real / Costo Total Presupuestado × 100. Superar 100% indica sobrecosto." style="cursor:help;opacity:.7;font-weight:400;">ⓘ</span></th>
               <th style="text-align:right;">Margen Proy.</th>
-              <th style="text-align:right;">Precio de Venta</th>
-              <th style="text-align:right;">Costo Real</th>
+              <th style="text-align:right;">Costos directos previstos</th>
+              <th style="text-align:right;">Costo directo ejecutado</th>
               <th style="text-align:center;">Estado</th>
             </tr></thead>
             <tbody>{tabla_obras}</tbody>
@@ -2208,9 +2209,9 @@ def economico_dashboard_ejecutivo():
     </div>
 
     <div class="card">
-      <div class="ct">💵 Precio de Venta vs Costo Real — por obra</div>
+      <div class="ct">💵 Costos directos previstos vs Costo directo ejecutado — por obra</div>
       <div style="padding:6px 16px 0;font-size:.75rem;color:#6b7280;">
-        Verde = obra rentable (PV &gt; Costo Real). Rojo = costo supera el precio de venta presupuestado.
+        Verde = bajo presupuesto (ejecutado ≤ previsto). Rojo = costo ejecutado supera el previsto.
       </div>
       <div class="cb" style="position:relative;height:260px;">
         <canvas id="chartIngEgr"></canvas>
@@ -2231,7 +2232,7 @@ def economico_dashboard_ejecutivo():
         <div class="ct">GG real</div>
         <div class="cb">
           <div style="font-size:1.9rem;font-weight:900;color:#b45309;">{_m(gg_real_total)}</div>
-          <div style="font-size:.76rem;color:#64748b;margin-top:6px;">mantenimiento + gastos fijos</div>
+          <div style="font-size:.76rem;color:#64748b;margin-top:6px;">gastos fijos (sin mantenimiento)</div>
         </div>
       </div>
       <div class="card" style="border-top:4px solid {'#16a34a' if gg_saldo_total >= 0 else '#dc2626'};">
@@ -2257,7 +2258,7 @@ def economico_dashboard_ejecutivo():
     </div>
 
     <div class="card" style="margin-top:16px;">
-      <div class="ct">📉 Evolución de GG por mes</div>
+      <div class="ct">📉 Gastos fijos reales vs GG previstos distribuidos — por mes</div>
       <div class="cb" style="position:relative;height:260px;">
         <canvas id="chartGGMensual"></canvas>
       </div>
@@ -2419,7 +2420,7 @@ def economico_dashboard_ejecutivo():
       }}
     }});
 
-    // Chart 2: Precio de Venta vs Costo Real por obra
+    // Chart 2: Costos directos previstos vs ejecutados por obra
     const ctx2 = document.getElementById('chartIngEgr').getContext('2d');
     new Chart(ctx2, {{
       type: 'bar',
@@ -2427,14 +2428,14 @@ def economico_dashboard_ejecutivo():
         labels: {chart2_labels_js},
         datasets: [
           {{
-            label: 'Precio de Venta (Presupuestado)',
+            label: 'Costos directos previstos',
             data: {chart2_pv_js},
             backgroundColor: 'rgba(99,102,241,0.7)',
             borderColor: 'rgba(99,102,241,1)',
             borderWidth: 1, borderRadius: 4,
           }},
           {{
-            label: 'Costo Real',
+            label: 'Costo directo ejecutado',
             data: {chart2_costo_js},
             backgroundColor: {chart2_colors_js},
             borderWidth: 1, borderRadius: 4,
@@ -2462,27 +2463,43 @@ def economico_dashboard_ejecutivo():
       }}
     }});
 
-    // Chart 3: Evolución de GG por mes
+    // Chart 3: Gastos fijos reales vs GG previstos por mes
     const ctx3 = document.getElementById('chartGGMensual').getContext('2d');
     new Chart(ctx3, {{
       type: 'bar',
       data: {{
         labels: {gg_evo_labels_js},
-        datasets: [{{
-          label: 'Gastos Generales',
-          data: {gg_evo_data_js},
-          backgroundColor: 'rgba(245, 158, 11, 0.7)',
-          borderColor: 'rgba(217, 119, 6, 1)',
-          borderWidth: 1,
-          borderRadius: 4
-        }}]
+        datasets: [
+          {{
+            type: 'bar',
+            label: 'Gastos fijos reales',
+            data: {gg_evo_data_js},
+            backgroundColor: 'rgba(245, 158, 11, 0.7)',
+            borderColor: 'rgba(217, 119, 6, 1)',
+            borderWidth: 1,
+            borderRadius: 4,
+            order: 2
+          }},
+          {{
+            type: 'line',
+            label: 'GG previsto (dist. mensual)',
+            data: {gg_prev_mes_js},
+            borderColor: 'rgba(37, 99, 235, 1)',
+            backgroundColor: 'rgba(37, 99, 235, 0.08)',
+            borderWidth: 2,
+            pointRadius: 4,
+            fill: false,
+            tension: 0,
+            order: 1
+          }}
+        ]
       }},
       options: {{
         responsive: true,
         maintainAspectRatio: false,
         plugins: {{
-          legend: {{ display: false }},
-          tooltip: {{ callbacks: {{ label: c => ` GG: ${{(c.parsed.y/1000000).toFixed(2)}} M` }} }}
+          legend: {{ display: true, position: 'top', labels: {{ font: {{ size: 11 }} }} }},
+          tooltip: {{ callbacks: {{ label: c => ` ${{c.dataset.label}}: ${{(c.parsed.y/1000000).toFixed(2)}} M` }} }}
         }},
         scales: {{
           y: {{
