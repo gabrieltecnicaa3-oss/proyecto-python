@@ -1862,8 +1862,36 @@ def economico_dashboard_ejecutivo():
     _meses_gf = sorted(gf_mes_costs.keys())
     gg_evo_labels_js = _json.dumps(_meses_gf)
     gg_evo_data_js   = _json.dumps([round(gf_mes_costs.get(m, 0), 0) for m in _meses_gf])
-    _n_meses_gf = len(_meses_gf) if _meses_gf else 1
-    gg_prev_mes_js   = _json.dumps([round(total_gg_prev / _n_meses_gf, 0)] * len(_meses_gf))
+
+    # GG previsto distribuido proporcionalmente al CD ejecutado mensual de obras productivas
+    _prod_ot_ids = [oi["id"] for info in obras_dict.values() for oi in info["ots"]]
+    _cd_mes_prd: dict = {}
+    if _prod_ot_ids:
+        _ph_prd = ",".join("?" * len(_prod_ot_ids))
+        for _rv in db.execute(
+            f"SELECT mes, COALESCE(SUM(monto),0) FROM economico_costos_reales_mensual "
+            f"WHERE ot_id IN ({_ph_prd}) GROUP BY mes", _prod_ot_ids
+        ).fetchall():
+            _cd_mes_prd[str(_rv[0])] = _cd_mes_prd.get(str(_rv[0]), 0.0) + float(_rv[1] or 0)
+        _prd_cfg_c: dict = {}
+        for _rv in db.execute(
+            f"SELECT ot_id, {fmt_mes3} AS mes, SUM(horas) FROM partes_trabajo "
+            f"WHERE ot_id IN ({_ph_prd}) AND fecha IS NOT NULL AND fecha != '' GROUP BY ot_id, mes",
+            _prod_ot_ids
+        ).fetchall():
+            _ot_k = str(_rv[0]); _mk = str(_rv[1] or "")
+            if _ot_k not in _prd_cfg_c:
+                _rw = db.execute("SELECT obra FROM ordenes_trabajo WHERE id=?", (_ot_k,)).fetchone()
+                _prd_cfg_c[_ot_k] = _get_config_obra(db, (_rw[0] or "") if _rw else "")
+            _c = _prd_cfg_c[_ot_k]
+            _cd_mes_prd[_mk] = _cd_mes_prd.get(_mk, 0.0) + float(_rv[2] or 0) * (_c["precio_hora_mo"] + _c["precio_hora_cons"])
+    _total_cd_prd = sum(_cd_mes_prd.values())
+    if _total_cd_prd > 0:
+        gg_prev_mes_js = _json.dumps([
+            round(total_gg_prev * (_cd_mes_prd.get(m, 0.0) / _total_cd_prd), 0) for m in _meses_gf
+        ])
+    else:
+        gg_prev_mes_js = _json.dumps([round(total_gg_prev / max(len(_meses_gf), 1), 0)] * len(_meses_gf))
 
     gg_prev_total = total_gg_prev
     gg_real_total = total_gf_real
