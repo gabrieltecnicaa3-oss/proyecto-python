@@ -363,13 +363,11 @@ def gestion_calidad_dashboard():
     except Exception:
         total_piezas_fabricadas = 0
     try:
-        # Mismo criterio para NC: sumar unidades de piezas con al menos un NC
+        # NC histórico = hallazgos de obra tipo NC (eventos detectados en campo, no estados de proceso)
         _r2 = db.execute(
-            "SELECT COALESCE(SUM(max_cant),0) FROM ("
-            "SELECT ot_id, TRIM(COALESCE(posicion,'')) AS pos, MAX(COALESCE(cantidad,1)) AS max_cant "
-            "FROM procesos WHERE COALESCE(eliminado,0)=0 AND TRIM(COALESCE(posicion,''))!='' "
-            "AND UPPER(TRIM(COALESCE(estado,''))) IN ('NC','NO CONFORME','NO CONFORMIDAD') "
-            "GROUP BY ot_id, TRIM(COALESCE(posicion,''))) t"
+            "SELECT COUNT(*) FROM hallazgos_calidad "
+            "WHERE COALESCE(detectado_en_obra,0)=1 "
+            "AND UPPER(TRIM(COALESCE(tipo_hallazgo,'')))='NC'"
         ).fetchone()
         total_nc_hist = int((_r2[0] if _r2 else 0) or 0)
     except Exception:

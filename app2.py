@@ -4761,7 +4761,7 @@ def pieza(pos):
     acciones_footer.append(f'<a class="btn" href="#" onclick="toggleHallazgoObra();return false;" style="background:#f59e0b;">🏗️ Hallazgo de Obra</a>')
 
     html += f"""
-    <div id="panel-hallazgo" style="display:{'block' if msg_obra else 'none'};background:#fff;border:2px solid #f59e0b;border-radius:12px;margin:10px 0;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.1);">
+    <div id="panel-hallazgo" style="display:{'block' if (msg_obra or _hall_obra_rows) else 'none'};background:#fff;border:2px solid #f59e0b;border-radius:12px;margin:10px 0;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.1);">
       <div style="font-weight:700;color:#92400e;font-size:.9rem;margin-bottom:6px;">🏗️ Hallazgo de Obra &mdash; {html_lib.escape(pos)}</div>
       <div style="font-size:.75rem;color:#6b7280;margin-bottom:8px;">No modifica el estado de la pieza. Registro informativo post-despacho.</div>
       {_msg_obra_html}
