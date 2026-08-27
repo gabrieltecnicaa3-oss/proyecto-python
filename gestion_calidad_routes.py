@@ -352,21 +352,22 @@ def gestion_calidad_dashboard():
 
     # KPIs históricos de piezas fabricadas
     try:
+        # Sumar MAX(cantidad) por (ot_id, posicion) — cada codigo puede tener N unidades
         _r = db.execute(
-            "SELECT COALESCE(SUM(cnt),0) FROM ("
-            "SELECT ot_id, COUNT(DISTINCT TRIM(COALESCE(posicion,''))) AS cnt "
+            "SELECT COALESCE(SUM(max_cant),0) FROM ("
+            "SELECT ot_id, TRIM(COALESCE(posicion,'')) AS pos, MAX(COALESCE(cantidad,1)) AS max_cant "
             "FROM procesos WHERE COALESCE(eliminado,0)=0 AND TRIM(COALESCE(posicion,''))!='' "
-            "GROUP BY ot_id) t"
+            "GROUP BY ot_id, TRIM(COALESCE(posicion,''))) t"
         ).fetchone()
         total_piezas_fabricadas = int((_r[0] if _r else 0) or 0)
     except Exception:
         total_piezas_fabricadas = 0
     try:
-        # Contar piezas distintas (ot_id+posicion) con al menos un NC — no filas de proceso
+        # Mismo criterio para NC: sumar unidades de piezas con al menos un NC
         _r2 = db.execute(
-            "SELECT COUNT(*) FROM ("
-            "SELECT ot_id, TRIM(COALESCE(posicion,'')) FROM procesos "
-            "WHERE COALESCE(eliminado,0)=0 AND TRIM(COALESCE(posicion,''))!='' "
+            "SELECT COALESCE(SUM(max_cant),0) FROM ("
+            "SELECT ot_id, TRIM(COALESCE(posicion,'')) AS pos, MAX(COALESCE(cantidad,1)) AS max_cant "
+            "FROM procesos WHERE COALESCE(eliminado,0)=0 AND TRIM(COALESCE(posicion,''))!='' "
             "AND UPPER(TRIM(COALESCE(estado,''))) IN ('NC','NO CONFORME','NO CONFORMIDAD') "
             "GROUP BY ot_id, TRIM(COALESCE(posicion,''))) t"
         ).fetchone()
