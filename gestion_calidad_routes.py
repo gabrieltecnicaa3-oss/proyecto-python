@@ -1034,6 +1034,24 @@ def gestion_calidad_dashboard():
     return html
 
 
+@gestion_calidad_bp.route("/modulo/calidad/hallazgo-obra/<int:hallazgo_id>/eliminar", methods=["POST"])
+def eliminar_hallazgo_obra(hallazgo_id):
+    db = get_db()
+    redirect_back = (request.form.get("redirect_back") or "/home").strip()
+    sep = "&" if "?" in redirect_back else "?"
+    row = db.execute(
+        "SELECT id FROM hallazgos_calidad WHERE id=? AND COALESCE(detectado_en_obra,0)=1",
+        (hallazgo_id,)
+    ).fetchone()
+    if row:
+        db.execute("DELETE FROM hallazgos_calidad WHERE id=?", (hallazgo_id,))
+        db.commit()
+        msg = "✅ Hallazgo eliminado"
+    else:
+        msg = "⚠️ Hallazgo no encontrado"
+    return redirect(redirect_back + sep + "msg_obra=" + quote(msg))
+
+
 @gestion_calidad_bp.route("/modulo/calidad/hallazgo-obra", methods=["POST"])
 def registrar_hallazgo_obra():
     """Registra un hallazgo detectado en obra desde la vista de pieza."""

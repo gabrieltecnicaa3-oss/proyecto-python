@@ -4637,14 +4637,14 @@ def pieza(pos):
     try:
         if ot_scope_btn is not None:
             _hall_obra_rows = db.execute(
-                "SELECT tipo_hallazgo, proceso, descripcion, fecha_hallazgo FROM hallazgos_calidad "
+                "SELECT id, tipo_hallazgo, proceso, descripcion, fecha_hallazgo FROM hallazgos_calidad "
                 "WHERE COALESCE(detectado_en_obra,0)=1 AND TRIM(COALESCE(pieza,''))=TRIM(?) "
                 "AND TRIM(COALESCE(obra,''))=TRIM(?) AND COALESCE(ot_id,-1)=? ORDER BY id DESC",
                 (pos, _obra_url_h or '', ot_scope_btn)
             ).fetchall()
         if not _hall_obra_rows:
             _hall_obra_rows = db.execute(
-                "SELECT tipo_hallazgo, proceso, descripcion, fecha_hallazgo FROM hallazgos_calidad "
+                "SELECT id, tipo_hallazgo, proceso, descripcion, fecha_hallazgo FROM hallazgos_calidad "
                 "WHERE COALESCE(detectado_en_obra,0)=1 AND TRIM(COALESCE(pieza,''))=TRIM(?) "
                 "AND TRIM(COALESCE(obra,''))=TRIM(?) ORDER BY id DESC",
                 (pos, _obra_url_h or '')
@@ -4653,13 +4653,20 @@ def pieza(pos):
         _hall_obra_rows = []
     _hall_items_html = ""
     _tipo_colors = {"NC": "background:#fee2e2;color:#991b1b", "OBS": "background:#ffedd5;color:#9a3412", "OM": "background:#fef9c3;color:#854d0e"}
-    for _ht, _hp, _hd, _hf in _hall_obra_rows:
+    for _hid, _ht, _hp, _hd, _hf in _hall_obra_rows:
         _bc = _tipo_colors.get(str(_ht or '').upper(), "background:#f1f5f9;color:#374151")
         _hall_items_html += (
-            f'<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;padding:7px 10px;margin-bottom:5px;font-size:.81rem;">'
-            f'<span style="{_bc};padding:2px 7px;border-radius:999px;font-weight:700;font-size:.74rem;">{html_lib.escape(str(_ht or ""))}</span>'
-            f'&nbsp;<b>{html_lib.escape(str(_hp or ""))}</b>&nbsp;&bull;&nbsp;{html_lib.escape(str(_hd or ""))}'
-            f'<span style="float:right;color:#9ca3af;font-size:.74rem;">{html_lib.escape(str(_hf or ""))}</span></div>'
+            f'<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;padding:7px 10px;margin-bottom:5px;font-size:.81rem;display:flex;align-items:center;gap:8px;">'
+            f'<span style="{_bc};padding:2px 7px;border-radius:999px;font-weight:700;font-size:.74rem;white-space:nowrap;">{html_lib.escape(str(_ht or ""))}</span>'
+            f'<b style="white-space:nowrap;">{html_lib.escape(str(_hp or ""))}</b>'
+            f'<span style="flex:1;color:#374151;">{html_lib.escape(str(_hd or ""))}</span>'
+            f'<span style="color:#9ca3af;font-size:.74rem;white-space:nowrap;margin-right:6px;">{html_lib.escape(str(_hf or ""))}</span>'
+            f'<form method="post" action="/modulo/calidad/hallazgo-obra/{_hid}/eliminar" style="margin:0;" '
+            f'onsubmit="return confirm(\'¿Eliminar este hallazgo?\');">'
+            f'<input type="hidden" name="redirect_back" value="{html_lib.escape(_back_url)}">'
+            f'<button type="submit" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;border-radius:5px;padding:2px 8px;font-size:.74rem;font-weight:700;cursor:pointer;">&#x2715;</button>'
+            f'</form>'
+            f'</div>'
         )
     _ot_hidden = f'<input type="hidden" name="ot_id" value="{ot_scope_btn}">' if ot_scope_btn is not None else ''
     _msg_obra_html = f'<div style="background:#ecfdf5;color:#166534;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:.82rem;font-weight:700;">{html_lib.escape(msg_obra)}</div>' if msg_obra else ''
