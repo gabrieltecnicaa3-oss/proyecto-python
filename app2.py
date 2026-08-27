@@ -4662,48 +4662,7 @@ def pieza(pos):
             f'<span style="float:right;color:#9ca3af;font-size:.74rem;">{html_lib.escape(str(_hf or ""))}</span></div>'
         )
     _ot_hidden = f'<input type="hidden" name="ot_id" value="{ot_scope_btn}">' if ot_scope_btn is not None else ''
-    _msg_obra_html = f'<div style="color:#16a34a;font-size:.82rem;margin-bottom:6px;font-weight:700;">{html_lib.escape(msg_obra)}</div>' if msg_obra else ''
-    html += f"""
-            <div class="card" style="border-left:4px solid #f59e0b;margin-top:8px;">
-                <div class="card-info">
-                    <div class="process-title" style="color:#92400e;">🏗️ HALLAZGO DE OBRA</div>
-                    <div style="font-size:.76rem;color:#6b7280;margin-bottom:8px;">Descripción posterior al despacho. No modifica el estado de la pieza.</div>
-                    {_msg_obra_html}
-                    {_hall_items_html if _hall_items_html else '<div style="color:#9ca3af;font-size:.8rem;margin-bottom:8px;">Sin hallazgos de obra registrados.</div>'}
-                    <form method="post" action="/modulo/calidad/hallazgo-obra" style="margin-top:8px;">
-                        <input type="hidden" name="pieza" value="{html_lib.escape(pos)}">
-                        <input type="hidden" name="obra" value="{html_lib.escape(_obra_url_h or '')}">
-                        {_ot_hidden}
-                        <input type="hidden" name="redirect_back" value="{html_lib.escape(_back_url)}">
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
-                            <div>
-                                <label style="font-size:.78rem;font-weight:700;color:#374151;display:block;margin-bottom:3px;">Tipo</label>
-                                <select name="tipo_hallazgo" style="width:100%;padding:7px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;" required>
-                                    <option value="OBS">OBS (Observación)</option>
-                                    <option value="NC">NC (No conforme)</option>
-                                    <option value="OM">OM (Op. Mejora)</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label style="font-size:.78rem;font-weight:700;color:#374151;display:block;margin-bottom:3px;">Proceso</label>
-                                <select name="proceso_h" style="width:100%;padding:7px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;" required>
-                                    <option value="ARMADO">Armado</option>
-                                    <option value="SOLDADURA">Soldadura</option>
-                                    <option value="PINTURA">Pintura</option>
-                                    <option value="DESPACHO">Despacho</option>
-                                </select>
-                            </div>
-                        </div>
-                        <textarea name="descripcion" rows="2" placeholder="Descripción del hallazgo..." required
-                            style="width:100%;padding:7px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;resize:vertical;"></textarea>
-                        <button type="submit" style="margin-top:6px;background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;font-weight:700;font-size:.82rem;cursor:pointer;">
-                            + Registrar hallazgo
-                        </button>
-                    </form>
-                </div>
-                <div class="card-actions"></div>
-            </div>
-            """
+    _msg_obra_html = f'<div style="background:#ecfdf5;color:#166534;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:.82rem;font-weight:700;">{html_lib.escape(msg_obra)}</div>' if msg_obra else ''
 
     btn_agregar = "btn-add bloqueado" if es_completada else "btn-add"
     obra_url = obra if obra != '---' else (qr_obra or "")
@@ -4792,11 +4751,52 @@ def pieza(pos):
     if not es_obra:
         acciones_footer.insert(1, f'<a class="btn {btn_agregar}" href="{btn_href}">{btn_texto}</a>')
         acciones_footer.append(f'<a class="btn" href="{export_href}" style="background: #2563eb;">⬇ Exportar CSV</a>')
+    acciones_footer.append(f'<a class="btn" href="#" onclick="toggleHallazgoObra();return false;" style="background:#f59e0b;">🏗️ Hallazgo de Obra</a>')
 
     html += f"""
+    <div id="panel-hallazgo" style="display:{'block' if msg_obra else 'none'};background:#fff;border:2px solid #f59e0b;border-radius:12px;margin:10px 0;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.1);">
+      <div style="font-weight:700;color:#92400e;font-size:.9rem;margin-bottom:6px;">🏗️ Hallazgo de Obra &mdash; {html_lib.escape(pos)}</div>
+      <div style="font-size:.75rem;color:#6b7280;margin-bottom:8px;">No modifica el estado de la pieza. Registro informativo post-despacho.</div>
+      {_msg_obra_html}
+      {_hall_items_html if _hall_items_html else '<div style="color:#9ca3af;font-size:.8rem;margin-bottom:8px;">Sin hallazgos registrados para esta pieza.</div>'}
+      <form method="post" action="/modulo/calidad/hallazgo-obra">
+        <input type="hidden" name="pieza" value="{html_lib.escape(pos)}">
+        <input type="hidden" name="obra" value="{html_lib.escape(_obra_url_h or '')}">
+        {_ot_hidden}
+        <input type="hidden" name="redirect_back" value="{html_lib.escape(_back_url)}">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+          <div>
+            <label style="font-size:.78rem;font-weight:700;color:#374151;display:block;margin-bottom:3px;">Tipo</label>
+            <select name="tipo_hallazgo" style="width:100%;padding:7px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;" required>
+              <option value="OBS">OBS (Observación)</option>
+              <option value="NC">NC (No conforme)</option>
+              <option value="OM">OM (Op. Mejora)</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:.78rem;font-weight:700;color:#374151;display:block;margin-bottom:3px;">Proceso</label>
+            <select name="proceso_h" style="width:100%;padding:7px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;" required>
+              <option value="ARMADO">Armado</option>
+              <option value="SOLDADURA">Soldadura</option>
+              <option value="PINTURA">Pintura</option>
+              <option value="DESPACHO">Despacho</option>
+            </select>
+          </div>
+        </div>
+        <textarea name="descripcion" rows="2" placeholder="Descripción del hallazgo..." required
+          style="width:100%;padding:7px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;resize:vertical;margin-bottom:8px;"></textarea>
+        <button type="submit" style="background:#f59e0b;color:#fff;border:none;padding:9px 18px;border-radius:6px;font-weight:700;font-size:.85rem;cursor:pointer;">+ Registrar hallazgo</button>
+      </form>
+    </div>
     <div class="footer-actions">
         {' '.join(acciones_footer)}
     </div>
+    <script>
+    function toggleHallazgoObra() {{
+        var p = document.getElementById('panel-hallazgo');
+        if (p) p.style.display = p.style.display === 'none' ? 'block' : 'none';
+    }}
+    </script>
     </body>
     </html>
     """
