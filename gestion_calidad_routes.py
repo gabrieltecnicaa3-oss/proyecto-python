@@ -362,9 +362,13 @@ def gestion_calidad_dashboard():
     except Exception:
         total_piezas_fabricadas = 0
     try:
+        # Contar piezas distintas (ot_id+posicion) con al menos un NC — no filas de proceso
         _r2 = db.execute(
-            "SELECT COUNT(*) FROM procesos WHERE COALESCE(eliminado,0)=0 "
-            "AND UPPER(TRIM(COALESCE(estado,''))) IN ('NC','NO CONFORME','NO CONFORMIDAD')"
+            "SELECT COUNT(*) FROM ("
+            "SELECT ot_id, TRIM(COALESCE(posicion,'')) FROM procesos "
+            "WHERE COALESCE(eliminado,0)=0 AND TRIM(COALESCE(posicion,''))!='' "
+            "AND UPPER(TRIM(COALESCE(estado,''))) IN ('NC','NO CONFORME','NO CONFORMIDAD') "
+            "GROUP BY ot_id, TRIM(COALESCE(posicion,''))) t"
         ).fetchone()
         total_nc_hist = int((_r2[0] if _r2 else 0) or 0)
     except Exception:
