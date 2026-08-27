@@ -291,7 +291,7 @@ def gestion_calidad_dashboard():
     estados_om = {"OM", "OP MEJORA", "OPORTUNIDAD DE MEJORA"}
 
     metricas = {
-        p: {"nc": 0, "obs": 0, "om": 0, "total": 0, "obra": 0}
+        p: {"nc": 0, "obs": 0, "om": 0, "total": 0, "obra": 0, "obra_nc": 0, "obra_obs": 0, "obra_om": 0}
         for p in procesos_base
     }
 
@@ -334,16 +334,40 @@ def gestion_calidad_dashboard():
     total_hallazgos = total_nc + total_obs + total_om
     porcentaje_hallazgos = (total_hallazgos / total_registros * 100) if total_registros else 0
 
-    # Hallazgos detectados en obra por proceso (sin filtro de período)
+    # Hallazgos detectados en obra por proceso y tipo (sin filtro de período)
     try:
-        for _proc_o, _cnt_o in db.execute(
-            "SELECT UPPER(TRIM(COALESCE(proceso,''))), COUNT(*) FROM hallazgos_calidad "
-            "WHERE COALESCE(detectado_en_obra,0)=1 GROUP BY UPPER(TRIM(COALESCE(proceso,'')))"
+        for _proc_o, _tipo_o, _cnt_o in db.execute(
+            "SELECT UPPER(TRIM(COALESCE(proceso,''))), UPPER(TRIM(COALESCE(tipo_hallazgo,''))), COUNT(*) "
+            "FROM hallazgos_calidad WHERE COALESCE(detectado_en_obra,0)=1 "
+            "GROUP BY UPPER(TRIM(COALESCE(proceso,''))), UPPER(TRIM(COALESCE(tipo_hallazgo,'')))"
         ).fetchall():
             if str(_proc_o) in metricas:
-                metricas[str(_proc_o)]["obra"] = int(_cnt_o or 0)
+                _n = int(_cnt_o or 0)
+                metricas[str(_proc_o)]["obra"] += _n
+                if _tipo_o == "NC":  metricas[str(_proc_o)]["obra_nc"] += _n
+                elif _tipo_o == "OBS": metricas[str(_proc_o)]["obra_obs"] += _n
+                elif _tipo_o == "OM":  metricas[str(_proc_o)]["obra_om"] += _n
     except Exception:
         pass
+
+    # KPIs históricos de piezas fabricadas
+    try:
+        _r = db.execute(
+            "SELECT COUNT(DISTINCT TRIM(COALESCE(posicion,''))) FROM procesos "
+            "WHERE COALESCE(eliminado,0)=0 AND TRIM(COALESCE(posicion,''))!=''"
+        ).fetchone()
+        total_piezas_fabricadas = int((_r[0] if _r else 0) or 0)
+    except Exception:
+        total_piezas_fabricadas = 0
+    try:
+        _r2 = db.execute(
+            "SELECT COUNT(*) FROM procesos WHERE COALESCE(eliminado,0)=0 "
+            "AND UPPER(TRIM(COALESCE(estado,''))) IN ('NC','NO CONFORME','NO CONFORMIDAD')"
+        ).fetchone()
+        total_nc_hist = int((_r2[0] if _r2 else 0) or 0)
+    except Exception:
+        total_nc_hist = 0
+    pct_nc_piezas = (total_nc_hist / total_piezas_fabricadas * 100.0) if total_piezas_fabricadas else 0.0
 
     proceso_critico = "-"
     critico_valor = -1
@@ -427,9 +451,21 @@ def gestion_calidad_dashboard():
         obs = metricas[proceso]["obs"]
         om = metricas[proceso]["om"]
         obra = metricas[proceso]["obra"]
+        obra_nc = metricas[proceso]["obra_nc"]
+        obra_obs = metricas[proceso]["obra_obs"]
+        obra_om = metricas[proceso]["obra_om"]
         hallazgos = nc + obs + om
         total_proceso = metricas[proceso]["total"]
         tasa = (hallazgos / total_proceso * 100) if total_proceso else 0
+
+        if obra:
+            _obra_cell = (
+                f'<span class="badge tipo-nc">NC:{obra_nc}</span> '
+                f'<span class="badge tipo-obs">OBS:{obra_obs}</span> '
+                f'<span class="badge tipo-om">OM:{obra_om}</span>'
+            )
+        else:
+            _obra_cell = '<span style="color:#9ca3af;">-</span>'
 
         filas_html += f"""
         <tr>
@@ -439,16 +475,17 @@ def gestion_calidad_dashboard():
             <td>{om}</td>
             <td><b>{hallazgos}</b></td>
             <td>{tasa:.1f}%</td>
-            <td style="font-weight:700;color:{'#92400e' if obra else '#6b7280'};">{obra if obra else '-'}</td>
+            <td style="white-space:nowrap;">{_obra_cell}</td>
         </tr>
         """
 
-        ancho_barra = min(100, hallazgos * 10)
+        ancho_barra = min(100, (hallazgos + obra) * 10)
+        barra_obra = f'<div style="background:#f59e0b;height:20px;width:{min(100,obra*10)}%;float:right;"></div>' if obra else ''
         barras_html += f"""
         <div class="bar-row">
             <div class="bar-label">{proceso}</div>
-            <div class="bar-track">
-                <div class="bar-fill" style="width:{ancho_barra}%">{hallazgos}</div>
+            <div class="bar-track" style="position:relative;">
+                <div class="bar-fill" style="width:{ancho_barra}%;">{hallazgos}{f' +{obra}🏗️' if obra else ''}</div>
             </div>
         </div>
         """
@@ -518,6 +555,7 @@ def gestion_calidad_dashboard():
           AND TRIM(fecha_hallazgo) <> ''
           AND fecha_hallazgo >= ?
           AND fecha_hallazgo <= ?
+          AND COALESCE(detectado_en_obra, 0) = 0
         ORDER BY fecha_hallazgo DESC, id DESC
         LIMIT 200
         """,
@@ -710,6 +748,8 @@ def gestion_calidad_dashboard():
         <div class="kpi"><div class="t">Total Hallazgos</div><div class="v">{total_hallazgos}</div></div>
         <div class="kpi"><div class="t">% Hallazgos / Registros</div><div class="v">{porcentaje_hallazgos:.1f}%</div></div>
         <div class="kpi"><div class="t">Proceso con más hallazgos</div><div class="v" style="font-size:18px;">{proceso_critico}</div></div>
+        <div class="kpi" style="border-left-color:#2563eb;"><div class="t" style="color:#1d4ed8;">Piezas fabricadas (histórico)</div><div class="v" style="color:#1d4ed8;">{total_piezas_fabricadas:,}</div></div>
+        <div class="kpi" style="border-left-color:#7c3aed;"><div class="t" style="color:#6d28d9;">NC / Piezas fabricadas</div><div class="v" style="color:#6d28d9;font-size:1.1rem;">{pct_nc_piezas:.3f}%</div></div>
     </div>
 
     <div class="layout">
