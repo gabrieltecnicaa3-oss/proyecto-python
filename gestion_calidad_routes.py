@@ -271,40 +271,6 @@ def gestion_calidad_dashboard():
         db.commit()
         return redirect("/modulo/gestion-calidad?periodo=" + quote(periodo_post) + "&mensaje=" + quote("✅ Tratamiento de hallazgo guardado"))
 
-
-@gestion_calidad_bp.route("/modulo/calidad/hallazgo-obra", methods=["POST"])
-def registrar_hallazgo_obra():
-    """Registra un hallazgo detectado en obra desde la vista de pieza."""
-    db = get_db()
-    pieza_v = (request.form.get("pieza") or "").strip()
-    obra_v  = (request.form.get("obra") or "").strip()
-    ot_id_raw = (request.form.get("ot_id") or "").strip()
-    try:
-        ot_id_val = int(ot_id_raw) if ot_id_raw else None
-    except Exception:
-        ot_id_val = None
-    tipo_h   = (request.form.get("tipo_hallazgo") or "").strip().upper()
-    proceso_h = (request.form.get("proceso_h") or "").strip().upper()
-    descripcion_v = (request.form.get("descripcion") or "").strip()
-    redirect_back = (request.form.get("redirect_back") or "/home").strip()
-
-    sep = "&" if "?" in redirect_back else "?"
-    if tipo_h not in {"NC", "OBS", "OM"} or proceso_h not in {"ARMADO", "SOLDADURA", "PINTURA", "DESPACHO"} or not descripcion_v:
-        return redirect(redirect_back + sep + "msg_obra=" + quote("⚠️ Completar tipo, proceso y descripción"))
-
-    db.execute(
-        """
-        INSERT INTO hallazgos_calidad (
-            fecha_hallazgo, proceso, tipo_hallazgo, estado_tratamiento,
-            accion_inmediata, acciones_correctivas,
-            detectado_en_obra, pieza, obra, ot_id, descripcion
-        ) VALUES (date('now'), ?, ?, 'ABIERTO', ?, '-', 1, ?, ?, ?, ?)
-        """,
-        (proceso_h, tipo_h, descripcion_v, pieza_v, obra_v, ot_id_val, descripcion_v)
-    )
-    db.commit()
-    return redirect(redirect_back + sep + "msg_obra=" + quote("✅ Hallazgo de obra registrado"))
-
     periodo = (request.args.get("periodo") or "mensual").strip().lower()
     mensaje = (request.args.get("mensaje") or "").strip()
     if periodo not in ("mensual", "trimestral", "semestral"):
@@ -959,3 +925,37 @@ def registrar_hallazgo_obra():
     </html>
     """
     return html
+
+
+@gestion_calidad_bp.route("/modulo/calidad/hallazgo-obra", methods=["POST"])
+def registrar_hallazgo_obra():
+    """Registra un hallazgo detectado en obra desde la vista de pieza."""
+    db = get_db()
+    pieza_v = (request.form.get("pieza") or "").strip()
+    obra_v  = (request.form.get("obra") or "").strip()
+    ot_id_raw = (request.form.get("ot_id") or "").strip()
+    try:
+        ot_id_val = int(ot_id_raw) if ot_id_raw else None
+    except Exception:
+        ot_id_val = None
+    tipo_h    = (request.form.get("tipo_hallazgo") or "").strip().upper()
+    proceso_h = (request.form.get("proceso_h") or "").strip().upper()
+    descripcion_v = (request.form.get("descripcion") or "").strip()
+    redirect_back = (request.form.get("redirect_back") or "/home").strip()
+
+    sep = "&" if "?" in redirect_back else "?"
+    if tipo_h not in {"NC", "OBS", "OM"} or proceso_h not in {"ARMADO", "SOLDADURA", "PINTURA", "DESPACHO"} or not descripcion_v:
+        return redirect(redirect_back + sep + "msg_obra=" + quote("⚠️ Completar tipo, proceso y descripción"))
+
+    db.execute(
+        """
+        INSERT INTO hallazgos_calidad (
+            fecha_hallazgo, proceso, tipo_hallazgo, estado_tratamiento,
+            accion_inmediata, acciones_correctivas,
+            detectado_en_obra, pieza, obra, ot_id, descripcion
+        ) VALUES (date('now'), ?, ?, 'ABIERTO', ?, '-', 1, ?, ?, ?, ?)
+        """,
+        (proceso_h, tipo_h, descripcion_v, pieza_v, obra_v, ot_id_val, descripcion_v)
+    )
+    db.commit()
+    return redirect(redirect_back + sep + "msg_obra=" + quote("✅ Hallazgo de obra registrado"))
