@@ -511,6 +511,41 @@ def gestion_calidad_dashboard():
         (fecha_desde.isoformat(), fecha_hasta.isoformat())
     ).fetchall()
 
+    # Hallazgos detectados en obra (todos los períodos, no solo el filtro actual)
+    hallazgos_obra = db.execute(
+        """
+        SELECT fecha_hallazgo,
+               COALESCE(obra, ''),
+               COALESCE(pieza, ''),
+               COALESCE(proceso, ''),
+               COALESCE(tipo_hallazgo, ''),
+               COALESCE(descripcion, COALESCE(accion_inmediata, '')),
+               COALESCE(estado_tratamiento, '')
+        FROM hallazgos_calidad
+        WHERE COALESCE(detectado_en_obra, 0) = 1
+        ORDER BY id DESC
+        LIMIT 200
+        """
+    ).fetchall()
+
+    hallazgos_obra_html = ""
+    for _hfecha, _hobra, _hpieza, _hproc, _htipo, _hdesc, _hest in hallazgos_obra:
+        _tc = {"NC": "tipo-nc", "OBS": "tipo-obs", "OM": "tipo-om"}.get(str(_htipo or "").upper(), "tipo-obs")
+        _ec = {"ABIERTO": "estado-abierto", "EN PROCESO": "estado-proceso", "CERRADA": "estado-cerrada"}.get(str(_hest or "").upper(), "estado-abierto")
+        hallazgos_obra_html += f"""
+        <tr>
+            <td>{html_lib.escape(str(_hfecha or ''))}</td>
+            <td>{html_lib.escape(str(_hobra or ''))}</td>
+            <td>{html_lib.escape(str(_hpieza or ''))}</td>
+            <td><b>{html_lib.escape(str(_hproc or ''))}</b></td>
+            <td><span class="badge {_tc}">{html_lib.escape(str(_htipo or ''))}</span></td>
+            <td style="text-align:left;">{html_lib.escape(str(_hdesc or ''))}</td>
+            <td><span class="badge {_ec}">{html_lib.escape(str(_hest or ''))}</span></td>
+        </tr>
+        """
+    if not hallazgos_obra_html:
+        hallazgos_obra_html = "<tr><td colspan='7' style='text-align:center;color:#6b7280;'>Sin hallazgos de obra registrados</td></tr>"
+
     tratamientos_rows_html = ""
     for fh, proc, tipo, est, acc_i, acc_c, req_cr, clasif, gen_rtb, hs_rtb, kg_rtb, dias_rtb, costo_rtb, en_obra, pieza_row, obra_row in tratamientos:
         tipo_class = "tipo-obs"
@@ -858,6 +893,22 @@ def gestion_calidad_dashboard():
             </div>
             <button type="submit">Guardar tratamiento</button>
         </form>
+    </div>
+
+    <div class="card" style="margin-top:15px;border-top:3px solid #f59e0b;">
+        <h3 style="color:#92400e;">🏗️ Hallazgos detectados en Obra</h3>
+        <table>
+            <tr>
+                <th>Fecha</th>
+                <th>Obra</th>
+                <th>Pieza</th>
+                <th>Proceso</th>
+                <th>Tipo</th>
+                <th style="text-align:left;">Descripción</th>
+                <th>Estado</th>
+            </tr>
+            {hallazgos_obra_html}
+        </table>
     </div>
 
     <div class="card" style="margin-top:15px;">
