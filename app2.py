@@ -719,6 +719,12 @@ def init_db():
         ("control_despacho", "obra", "TEXT"),
         ("control_despacho", "detalle_control", "TEXT"),
         ("control_despacho", "fecha_creacion", "DATETIME"),
+        # hallazgo de obra
+        ("hallazgos_calidad", "detectado_en_obra", "INTEGER DEFAULT 0"),
+        ("hallazgos_calidad", "pieza", "TEXT"),
+        ("hallazgos_calidad", "obra", "TEXT"),
+        ("hallazgos_calidad", "ot_id", "INTEGER"),
+        ("hallazgos_calidad", "descripcion", "TEXT"),
     ]
     for _tabla, _col, _def in columnas_criticas:
         try:
@@ -4623,7 +4629,8 @@ def pieza(pos):
             """
 
     # Hallazgos de obra para esta pieza (detectados post-despacho)
-    _back_url = f"/pieza/{quote(pos)}?obra={quote(obra_url)}" if obra_url else f"/pieza/{quote(pos)}"
+    _obra_url_h = obra if obra != '---' else (qr_obra or "")
+    _back_url = f"/pieza/{quote(pos)}?obra={quote(_obra_url_h)}" if _obra_url_h else f"/pieza/{quote(pos)}"
     if ot_scope_btn is not None:
         _back_url += f"&ot_id={ot_scope_btn}"
     _hall_obra_rows = []
@@ -4633,14 +4640,14 @@ def pieza(pos):
                 "SELECT tipo_hallazgo, proceso, descripcion, fecha_hallazgo FROM hallazgos_calidad "
                 "WHERE COALESCE(detectado_en_obra,0)=1 AND TRIM(COALESCE(pieza,''))=TRIM(?) "
                 "AND TRIM(COALESCE(obra,''))=TRIM(?) AND COALESCE(ot_id,-1)=? ORDER BY id DESC",
-                (pos, obra_url or '', ot_scope_btn)
+                (pos, _obra_url_h or '', ot_scope_btn)
             ).fetchall()
         if not _hall_obra_rows:
             _hall_obra_rows = db.execute(
                 "SELECT tipo_hallazgo, proceso, descripcion, fecha_hallazgo FROM hallazgos_calidad "
                 "WHERE COALESCE(detectado_en_obra,0)=1 AND TRIM(COALESCE(pieza,''))=TRIM(?) "
                 "AND TRIM(COALESCE(obra,''))=TRIM(?) ORDER BY id DESC",
-                (pos, obra_url or '')
+                (pos, _obra_url_h or '')
             ).fetchall()
     except Exception:
         _hall_obra_rows = []
@@ -4650,12 +4657,12 @@ def pieza(pos):
         _bc = _tipo_colors.get(str(_ht or '').upper(), "background:#f1f5f9;color:#374151")
         _hall_items_html += (
             f'<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;padding:7px 10px;margin-bottom:5px;font-size:.81rem;">'
-            f'<span style="{_bc};padding:2px 7px;border-radius:999px;font-weight:700;font-size:.74rem;">{html.escape(str(_ht or ""))}</span>'
-            f'&nbsp;<b>{html.escape(str(_hp or ""))}</b>&nbsp;&bull;&nbsp;{html.escape(str(_hd or ""))}'
-            f'<span style="float:right;color:#9ca3af;font-size:.74rem;">{html.escape(str(_hf or ""))}</span></div>'
+            f'<span style="{_bc};padding:2px 7px;border-radius:999px;font-weight:700;font-size:.74rem;">{html_lib.escape(str(_ht or ""))}</span>'
+            f'&nbsp;<b>{html_lib.escape(str(_hp or ""))}</b>&nbsp;&bull;&nbsp;{html_lib.escape(str(_hd or ""))}'
+            f'<span style="float:right;color:#9ca3af;font-size:.74rem;">{html_lib.escape(str(_hf or ""))}</span></div>'
         )
     _ot_hidden = f'<input type="hidden" name="ot_id" value="{ot_scope_btn}">' if ot_scope_btn is not None else ''
-    _msg_obra_html = f'<div style="color:#16a34a;font-size:.82rem;margin-bottom:6px;font-weight:700;">{html.escape(msg_obra)}</div>' if msg_obra else ''
+    _msg_obra_html = f'<div style="color:#16a34a;font-size:.82rem;margin-bottom:6px;font-weight:700;">{html_lib.escape(msg_obra)}</div>' if msg_obra else ''
     html += f"""
             <div class="card" style="border-left:4px solid #f59e0b;margin-top:8px;">
                 <div class="card-info">
@@ -4664,10 +4671,10 @@ def pieza(pos):
                     {_msg_obra_html}
                     {_hall_items_html if _hall_items_html else '<div style="color:#9ca3af;font-size:.8rem;margin-bottom:8px;">Sin hallazgos de obra registrados.</div>'}
                     <form method="post" action="/modulo/calidad/hallazgo-obra" style="margin-top:8px;">
-                        <input type="hidden" name="pieza" value="{html.escape(pos)}">
-                        <input type="hidden" name="obra" value="{html.escape(obra_url or '')}">
+                        <input type="hidden" name="pieza" value="{html_lib.escape(pos)}">
+                        <input type="hidden" name="obra" value="{html_lib.escape(_obra_url_h or '')}">
                         {_ot_hidden}
-                        <input type="hidden" name="redirect_back" value="{html.escape(_back_url)}">
+                        <input type="hidden" name="redirect_back" value="{html_lib.escape(_back_url)}">
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
                             <div>
                                 <label style="font-size:.78rem;font-weight:700;color:#374151;display:block;margin-bottom:3px;">Tipo</label>
