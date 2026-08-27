@@ -53,6 +53,12 @@ def _asegurar_schema_gestion_calidad():
         "ALTER TABLE hallazgos_calidad ADD COLUMN impacto_entrega_dias REAL DEFAULT 0",
         "ALTER TABLE hallazgos_calidad ADD COLUMN costo_hallazgo REAL DEFAULT 0",
         "ALTER TABLE procesos ADD COLUMN eliminado INTEGER DEFAULT 0",
+        # hallazgo de obra
+        "ALTER TABLE hallazgos_calidad ADD COLUMN detectado_en_obra INTEGER DEFAULT 0",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN pieza TEXT",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN obra TEXT",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN ot_id INTEGER",
+        "ALTER TABLE hallazgos_calidad ADD COLUMN descripcion TEXT",
     ]:
         try:
             db.execute(_sql)
@@ -264,6 +270,40 @@ def gestion_calidad_dashboard():
         )
         db.commit()
         return redirect("/modulo/gestion-calidad?periodo=" + quote(periodo_post) + "&mensaje=" + quote("✅ Tratamiento de hallazgo guardado"))
+
+
+@gestion_calidad_bp.route("/modulo/calidad/hallazgo-obra", methods=["POST"])
+def registrar_hallazgo_obra():
+    """Registra un hallazgo detectado en obra desde la vista de pieza."""
+    db = get_db()
+    pieza_v = (request.form.get("pieza") or "").strip()
+    obra_v  = (request.form.get("obra") or "").strip()
+    ot_id_raw = (request.form.get("ot_id") or "").strip()
+    try:
+        ot_id_val = int(ot_id_raw) if ot_id_raw else None
+    except Exception:
+        ot_id_val = None
+    tipo_h   = (request.form.get("tipo_hallazgo") or "").strip().upper()
+    proceso_h = (request.form.get("proceso_h") or "").strip().upper()
+    descripcion_v = (request.form.get("descripcion") or "").strip()
+    redirect_back = (request.form.get("redirect_back") or "/home").strip()
+
+    sep = "&" if "?" in redirect_back else "?"
+    if tipo_h not in {"NC", "OBS", "OM"} or proceso_h not in {"ARMADO", "SOLDADURA", "PINTURA", "DESPACHO"} or not descripcion_v:
+        return redirect(redirect_back + sep + "msg_obra=" + quote("⚠️ Completar tipo, proceso y descripción"))
+
+    db.execute(
+        """
+        INSERT INTO hallazgos_calidad (
+            fecha_hallazgo, proceso, tipo_hallazgo, estado_tratamiento,
+            accion_inmediata, acciones_correctivas,
+            detectado_en_obra, pieza, obra, ot_id, descripcion
+        ) VALUES (date('now'), ?, ?, 'ABIERTO', ?, '-', 1, ?, ?, ?, ?)
+        """,
+        (proceso_h, tipo_h, descripcion_v, pieza_v, obra_v, ot_id_val, descripcion_v)
+    )
+    db.commit()
+    return redirect(redirect_back + sep + "msg_obra=" + quote("✅ Hallazgo de obra registrado"))
 
     periodo = (request.args.get("periodo") or "mensual").strip().lower()
     mensaje = (request.args.get("mensaje") or "").strip()
@@ -490,7 +530,10 @@ def gestion_calidad_dashboard():
                         COALESCE(retrabajo_hs, 0),
                         COALESCE(desperdicio_kg, 0),
                         COALESCE(impacto_entrega_dias, 0),
-                        COALESCE(costo_hallazgo, 0)
+                        COALESCE(costo_hallazgo, 0),
+                        COALESCE(detectado_en_obra, 0),
+                        COALESCE(pieza, ''),
+                        COALESCE(obra, '')
         FROM hallazgos_calidad
         WHERE fecha_hallazgo IS NOT NULL
           AND TRIM(fecha_hallazgo) <> ''
@@ -503,7 +546,7 @@ def gestion_calidad_dashboard():
     ).fetchall()
 
     tratamientos_rows_html = ""
-    for fh, proc, tipo, est, acc_i, acc_c, req_cr, clasif, gen_rtb, hs_rtb, kg_rtb, dias_rtb, costo_rtb in tratamientos:
+    for fh, proc, tipo, est, acc_i, acc_c, req_cr, clasif, gen_rtb, hs_rtb, kg_rtb, dias_rtb, costo_rtb, en_obra, pieza_row, obra_row in tratamientos:
         tipo_class = "tipo-obs"
         if tipo == "NC":
             tipo_class = "tipo-nc"
@@ -529,10 +572,18 @@ def gestion_calidad_dashboard():
                 f"Días: {float(dias_rtb or 0):.1f} | Costo: {float(costo_rtb or 0):.2f}"
             )
 
+        obra_badge = ""
+        if int(en_obra or 0) == 1:
+            obra_badge = '<span class="badge" style="background:#fef3c7;color:#92400e;" title="Detectado en obra">🏗️ OBRA</span>'
+            if pieza_row:
+                obra_badge += f' <span style="font-size:11px;color:#6b7280;">{html_lib.escape(str(pieza_row))}</span>'
+            if obra_row:
+                obra_badge += f' / {html_lib.escape(str(obra_row))}'
+
         tratamientos_rows_html += f"""
         <tr>
             <td>{fh}</td>
-            <td><b>{html_lib.escape(str(proc or ''))}</b></td>
+            <td><b>{html_lib.escape(str(proc or ''))}</b>{('<br>' + obra_badge) if obra_badge else ''}</td>
             <td><span class="badge {tipo_class}">{tipo}</span></td>
             <td><span class="badge {est_class}">{est}</span></td>
             <td>{html_lib.escape(causa_txt)}</td>

@@ -3680,6 +3680,7 @@ def pieza(pos):
     qr_perfil   = _clean_qr(request.args.get('perfil', ''))
     qr_peso     = _clean_qr(request.args.get('peso', ''))
     qr_desc     = _clean_qr(request.args.get('desc', ''))
+    msg_obra    = (request.args.get('msg_obra') or '').strip()
 
     # Si viene obra por QR/query, todo se resuelve por POS+OBRA.
     if qr_obra:
@@ -4616,6 +4617,82 @@ def pieza(pos):
                     <div class="kv-line"><span class="kv-label">Estado:</span> <span class="estado-ok">{despachado_info.get('estado') or '-'}</span></div>
                     <div class="kv-line"><span class="kv-label">Remito:</span> {despachado_info.get('remito') or '-'}</div>
                     <div class="kv-line"><span class="kv-label">Transporte:</span> {despachado_info.get('transporte') or '-'}</div>
+                </div>
+                <div class="card-actions"></div>
+            </div>
+            """
+
+    # Hallazgos de obra para esta pieza (detectados post-despacho)
+    _back_url = f"/pieza/{quote(pos)}?obra={quote(obra_url)}" if obra_url else f"/pieza/{quote(pos)}"
+    if ot_scope_btn is not None:
+        _back_url += f"&ot_id={ot_scope_btn}"
+    _hall_obra_rows = []
+    try:
+        if ot_scope_btn is not None:
+            _hall_obra_rows = db.execute(
+                "SELECT tipo_hallazgo, proceso, descripcion, fecha_hallazgo FROM hallazgos_calidad "
+                "WHERE COALESCE(detectado_en_obra,0)=1 AND TRIM(COALESCE(pieza,''))=TRIM(?) "
+                "AND TRIM(COALESCE(obra,''))=TRIM(?) AND COALESCE(ot_id,-1)=? ORDER BY id DESC",
+                (pos, obra_url or '', ot_scope_btn)
+            ).fetchall()
+        if not _hall_obra_rows:
+            _hall_obra_rows = db.execute(
+                "SELECT tipo_hallazgo, proceso, descripcion, fecha_hallazgo FROM hallazgos_calidad "
+                "WHERE COALESCE(detectado_en_obra,0)=1 AND TRIM(COALESCE(pieza,''))=TRIM(?) "
+                "AND TRIM(COALESCE(obra,''))=TRIM(?) ORDER BY id DESC",
+                (pos, obra_url or '')
+            ).fetchall()
+    except Exception:
+        _hall_obra_rows = []
+    _hall_items_html = ""
+    _tipo_colors = {"NC": "background:#fee2e2;color:#991b1b", "OBS": "background:#ffedd5;color:#9a3412", "OM": "background:#fef9c3;color:#854d0e"}
+    for _ht, _hp, _hd, _hf in _hall_obra_rows:
+        _bc = _tipo_colors.get(str(_ht or '').upper(), "background:#f1f5f9;color:#374151")
+        _hall_items_html += (
+            f'<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;padding:7px 10px;margin-bottom:5px;font-size:.81rem;">'
+            f'<span style="{_bc};padding:2px 7px;border-radius:999px;font-weight:700;font-size:.74rem;">{html.escape(str(_ht or ""))}</span>'
+            f'&nbsp;<b>{html.escape(str(_hp or ""))}</b>&nbsp;&bull;&nbsp;{html.escape(str(_hd or ""))}'
+            f'<span style="float:right;color:#9ca3af;font-size:.74rem;">{html.escape(str(_hf or ""))}</span></div>'
+        )
+    _ot_hidden = f'<input type="hidden" name="ot_id" value="{ot_scope_btn}">' if ot_scope_btn is not None else ''
+    _msg_obra_html = f'<div style="color:#16a34a;font-size:.82rem;margin-bottom:6px;font-weight:700;">{html.escape(msg_obra)}</div>' if msg_obra else ''
+    html += f"""
+            <div class="card" style="border-left:4px solid #f59e0b;margin-top:8px;">
+                <div class="card-info">
+                    <div class="process-title" style="color:#92400e;">🏗️ HALLAZGO DE OBRA</div>
+                    <div style="font-size:.76rem;color:#6b7280;margin-bottom:8px;">Descripción posterior al despacho. No modifica el estado de la pieza.</div>
+                    {_msg_obra_html}
+                    {_hall_items_html if _hall_items_html else '<div style="color:#9ca3af;font-size:.8rem;margin-bottom:8px;">Sin hallazgos de obra registrados.</div>'}
+                    <form method="post" action="/modulo/calidad/hallazgo-obra" style="margin-top:8px;">
+                        <input type="hidden" name="pieza" value="{html.escape(pos)}">
+                        <input type="hidden" name="obra" value="{html.escape(obra_url or '')}">
+                        {_ot_hidden}
+                        <input type="hidden" name="redirect_back" value="{html.escape(_back_url)}">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                            <div>
+                                <label style="font-size:.78rem;font-weight:700;color:#374151;display:block;margin-bottom:3px;">Tipo</label>
+                                <select name="tipo_hallazgo" style="width:100%;padding:7px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;" required>
+                                    <option value="OBS">OBS (Observación)</option>
+                                    <option value="NC">NC (No conforme)</option>
+                                    <option value="OM">OM (Op. Mejora)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="font-size:.78rem;font-weight:700;color:#374151;display:block;margin-bottom:3px;">Proceso</label>
+                                <select name="proceso_h" style="width:100%;padding:7px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;" required>
+                                    <option value="ARMADO">Armado</option>
+                                    <option value="SOLDADURA">Soldadura</option>
+                                    <option value="PINTURA">Pintura</option>
+                                    <option value="DESPACHO">Despacho</option>
+                                </select>
+                            </div>
+                        </div>
+                        <textarea name="descripcion" rows="2" placeholder="Descripción del hallazgo..." required
+                            style="width:100%;padding:7px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;resize:vertical;"></textarea>
+                        <button type="submit" style="margin-top:6px;background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;font-weight:700;font-size:.82rem;cursor:pointer;">
+                            + Registrar hallazgo
+                        </button>
+                    </form>
                 </div>
                 <div class="card-actions"></div>
             </div>
