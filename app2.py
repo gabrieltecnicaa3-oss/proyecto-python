@@ -4670,6 +4670,7 @@ def pieza(pos):
         )
     _ot_hidden = f'<input type="hidden" name="ot_id" value="{ot_scope_btn}">' if ot_scope_btn is not None else ''
     _msg_obra_html = f'<div style="background:#ecfdf5;color:#166534;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:.82rem;font-weight:700;">{html_lib.escape(msg_obra)}</div>' if msg_obra else ''
+    import datetime as _dt_obra; _today_iso = _dt_obra.date.today().isoformat()
 
     btn_agregar = "btn-add bloqueado" if es_completada else "btn-add"
     obra_url = obra if obra != '---' else (qr_obra or "")
@@ -4771,7 +4772,12 @@ def pieza(pos):
         <input type="hidden" name="obra" value="{html_lib.escape(_obra_url_h or '')}">
         {_ot_hidden}
         <input type="hidden" name="redirect_back" value="{html_lib.escape(_back_url)}">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">
+          <div>
+            <label style="font-size:.78rem;font-weight:700;color:#374151;display:block;margin-bottom:3px;">Fecha</label>
+            <input type="date" name="fecha_hallazgo" value="{_today_iso}" required
+              style="width:100%;padding:7px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;">
+          </div>
           <div>
             <label style="font-size:.78rem;font-weight:700;color:#374151;display:block;margin-bottom:3px;">Tipo</label>
             <select name="tipo_hallazgo" style="width:100%;padding:7px;border:1px solid #d1d5db;border-radius:6px;font-size:.82rem;" required>

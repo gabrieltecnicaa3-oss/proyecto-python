@@ -1069,6 +1069,7 @@ def registrar_hallazgo_obra():
     tipo_h    = (request.form.get("tipo_hallazgo") or "").strip().upper()
     proceso_h = (request.form.get("proceso_h") or "").strip().upper()
     descripcion_v = (request.form.get("descripcion") or "").strip()
+    fecha_v   = (request.form.get("fecha_hallazgo") or date.today().isoformat()).strip()
     redirect_back = (request.form.get("redirect_back") or "/home").strip()
 
     sep = "&" if "?" in redirect_back else "?"
@@ -1083,7 +1084,7 @@ def registrar_hallazgo_obra():
             detectado_en_obra, pieza, obra, ot_id, descripcion
         ) VALUES (?, ?, ?, 'ABIERTO', ?, '-', 1, ?, ?, ?, ?)
         """,
-        (date.today().isoformat(), proceso_h, tipo_h, descripcion_v, pieza_v, obra_v, ot_id_val, descripcion_v)
+        (fecha_v, proceso_h, tipo_h, descripcion_v, pieza_v, obra_v, ot_id_val, descripcion_v)
     )
     db.commit()
     return redirect(redirect_back + sep + "msg_obra=" + quote("✅ Hallazgo de obra registrado"))
