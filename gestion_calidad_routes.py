@@ -1004,9 +1004,9 @@ def registrar_hallazgo_obra():
             fecha_hallazgo, proceso, tipo_hallazgo, estado_tratamiento,
             accion_inmediata, acciones_correctivas,
             detectado_en_obra, pieza, obra, ot_id, descripcion
-        ) VALUES (date('now'), ?, ?, 'ABIERTO', ?, '-', 1, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, 'ABIERTO', ?, '-', 1, ?, ?, ?, ?)
         """,
-        (proceso_h, tipo_h, descripcion_v, pieza_v, obra_v, ot_id_val, descripcion_v)
+        (date.today().isoformat(), proceso_h, tipo_h, descripcion_v, pieza_v, obra_v, ot_id_val, descripcion_v)
     )
     db.commit()
     return redirect(redirect_back + sep + "msg_obra=" + quote("✅ Hallazgo de obra registrado"))
