@@ -353,8 +353,10 @@ def gestion_calidad_dashboard():
     # KPIs históricos de piezas fabricadas
     try:
         _r = db.execute(
-            "SELECT COUNT(DISTINCT TRIM(COALESCE(posicion,''))) FROM procesos "
-            "WHERE COALESCE(eliminado,0)=0 AND TRIM(COALESCE(posicion,''))!=''"
+            "SELECT COALESCE(SUM(cnt),0) FROM ("
+            "SELECT ot_id, COUNT(DISTINCT TRIM(COALESCE(posicion,''))) AS cnt "
+            "FROM procesos WHERE COALESCE(eliminado,0)=0 AND TRIM(COALESCE(posicion,''))!='' "
+            "GROUP BY ot_id) t"
         ).fetchone()
         total_piezas_fabricadas = int((_r[0] if _r else 0) or 0)
     except Exception:
