@@ -291,7 +291,7 @@ def gestion_calidad_dashboard():
     estados_om = {"OM", "OP MEJORA", "OPORTUNIDAD DE MEJORA"}
 
     metricas = {
-        p: {"nc": 0, "obs": 0, "om": 0, "total": 0}
+        p: {"nc": 0, "obs": 0, "om": 0, "total": 0, "obra": 0}
         for p in procesos_base
     }
 
@@ -333,6 +333,17 @@ def gestion_calidad_dashboard():
     total_om = sum(m["om"] for m in metricas.values())
     total_hallazgos = total_nc + total_obs + total_om
     porcentaje_hallazgos = (total_hallazgos / total_registros * 100) if total_registros else 0
+
+    # Hallazgos detectados en obra por proceso (sin filtro de período)
+    try:
+        for _proc_o, _cnt_o in db.execute(
+            "SELECT UPPER(TRIM(COALESCE(proceso,''))), COUNT(*) FROM hallazgos_calidad "
+            "WHERE COALESCE(detectado_en_obra,0)=1 GROUP BY UPPER(TRIM(COALESCE(proceso,'')))"
+        ).fetchall():
+            if str(_proc_o) in metricas:
+                metricas[str(_proc_o)]["obra"] = int(_cnt_o or 0)
+    except Exception:
+        pass
 
     proceso_critico = "-"
     critico_valor = -1
@@ -415,6 +426,7 @@ def gestion_calidad_dashboard():
         nc = metricas[proceso]["nc"]
         obs = metricas[proceso]["obs"]
         om = metricas[proceso]["om"]
+        obra = metricas[proceso]["obra"]
         hallazgos = nc + obs + om
         total_proceso = metricas[proceso]["total"]
         tasa = (hallazgos / total_proceso * 100) if total_proceso else 0
@@ -427,6 +439,7 @@ def gestion_calidad_dashboard():
             <td>{om}</td>
             <td><b>{hallazgos}</b></td>
             <td>{tasa:.1f}%</td>
+            <td style="font-weight:700;color:{'#92400e' if obra else '#6b7280'};">{obra if obra else '-'}</td>
         </tr>
         """
 
@@ -710,6 +723,7 @@ def gestion_calidad_dashboard():
                     <th>Op. Mejora</th>
                     <th>Total Hallazgos</th>
                     <th>Tasa Hallazgos</th>
+                    <th style="background:#fef3c7;color:#92400e;">🏗️ Obra</th>
                 </tr>
                 {filas_html}
             </table>
