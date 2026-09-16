@@ -487,14 +487,12 @@ def estado_produccion():
     import json as _json_est
     _db_est = get_db()
     _today = date.today()
-    _this_monday = _today - timedelta(days=_today.weekday())
-    # Siempre comparar semanas VENCIDAS (completas), no la semana en curso
-    _w_start  = _this_monday - timedelta(days=7)   # Lunes semana vencida
-    _w_end    = _this_monday - timedelta(days=1)   # Domingo semana vencida
-    _pw_start = _this_monday - timedelta(days=14)  # Lunes semana anterior
-    _pw_end   = _this_monday - timedelta(days=8)   # Domingo semana anterior
-    _pw2_start = _this_monday - timedelta(days=21) # Lunes 2 semanas atrás
-    _pw2_end   = _this_monday - timedelta(days=15) # Domingo 2 semanas atrás
+    _w_start  = _today - timedelta(days=_today.weekday())
+    _w_end    = _today
+    _pw_start = _w_start - timedelta(days=7)
+    _pw_end   = _w_start - timedelta(days=1)
+    _pw2_start = _w_start - timedelta(days=14)
+    _pw2_end   = _w_start - timedelta(days=8)
     _m_start  = _today.replace(day=1)
     _m_end    = _today
     _pm_end   = _m_start - timedelta(days=1)
@@ -550,7 +548,7 @@ def estado_produccion():
         bg = '#dcfce7' if color == '#166534' else '#fee2e2'
         return f'<span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;background:{bg};color:{color};white-space:nowrap;">{arrow} {abs(pct):.1f}%</span>'
 
-    _lbl_sa  = f"Sem. vencida ({_w_start.strftime('%d/%m')}–{_w_end.strftime('%d/%m')})"
+    _lbl_sa  = f"Esta sem. ({_w_start.strftime('%d/%m')}–{_w_end.strftime('%d/%m')})"
     _lbl_sp  = f"Sem. -1 ({_pw_start.strftime('%d/%m')}–{_pw_end.strftime('%d/%m')})"
     _lbl_sp2 = f"Sem. -2 ({_pw2_start.strftime('%d/%m')}–{_pw2_end.strftime('%d/%m')})"
     _lbl_ma  = _m_start.strftime('%b %Y')
@@ -1008,7 +1006,7 @@ body {
     <select id="comparar-periodo-selector" onchange="mostrarComparacion()" style="padding:8px 12px; border:1px solid #fdba74; border-radius:6px; color:#7c2d12; font-weight:bold;">
       <option value="none">Sin comparación</option>
       <option value="mes-anterior">Este mes vs Mes anterior</option>
-      <option value="semana-anterior">Sem. vencida vs Sem. anterior</option>
+      <option value="semana-anterior">Esta semana vs Semana anterior</option>
       <option value="mes-ano">Este mes vs Mismo mes año anterior</option>
     </select>
   </div>
@@ -1939,7 +1937,7 @@ actualizarDescripcionTipo(tipoObraActivo);
       </div>
       <div class="comp-bloques">
         <div class="comp-bloque">
-          <div class="comp-bloque-title">📆 Sem. vencida vs semana anterior</div>
+          <div class="comp-bloque-title">📆 Esta semana vs semana anterior</div>
           <div class="comp-row">
             <span class="comp-lbl">HH</span>
             <span class="comp-val">{_hh_sa:,.1f}</span>
@@ -2305,27 +2303,6 @@ def api_dashboard_estado():
         ).fetchall()
         hs_acum_by_obra = {str(r[0] or 'SIN OBRA'): round(float(r[1] or 0), 1) for r in _hs_acum_rows}
 
-    # Incluir HS acumuladas de OTs de mantenimiento (excluidas del query principal)
-    try:
-        _hs_mant_rows = db.execute(
-            """
-            SELECT COALESCE(NULLIF(TRIM(ot.obra),''), 'SIN OBRA') AS obra,
-                   COALESCE(SUM(pt.horas), 0) AS hs_totales
-            FROM ordenes_trabajo ot
-            LEFT JOIN partes_trabajo pt ON pt.ot_id = ot.id
-            WHERE ot.es_mantenimiento = 1
-              AND ot.fecha_cierre IS NULL
-            GROUP BY obra
-            """
-        ).fetchall()
-        for _r_m in _hs_mant_rows:
-            _obra_m = str(_r_m[0] or 'SIN OBRA')
-            _hs_m = round(float(_r_m[1] or 0), 1)
-            if _hs_m > 0:
-                hs_acum_by_obra[_obra_m] = hs_acum_by_obra.get(_obra_m, 0.0) + _hs_m
-    except Exception:
-        pass
-
     hs_por_obra = []
     for row in obras:
         obra_nombre = str(row[0] or 'SIN OBRA')
@@ -2340,29 +2317,6 @@ def api_dashboard_estado():
             "hs_reales_acumuladas": hs_acum_by_obra.get(obra_nombre, 0.0),
             "hs_segun_avance": round(hs_segun_avance_suma, 1)
         })
-
-    # Agregar obras de mantenimiento con HS que no aparecen en la lista principal
-    _obras_en_lista = {item["label"] for item in hs_por_obra}
-    for _obra_mant, _hs_mant in hs_acum_by_obra.items():
-        _label_mant = _obra_mant[:24]
-        if _hs_mant > 0 and _label_mant not in _obras_en_lista:
-            try:
-                _es_mant = db.execute(
-                    "SELECT 1 FROM ordenes_trabajo WHERE TRIM(COALESCE(obra,''))=? AND es_mantenimiento=1 AND fecha_cierre IS NULL LIMIT 1",
-                    (_obra_mant,)
-                ).fetchone()
-            except Exception:
-                _es_mant = None
-            if _es_mant:
-                hs_por_obra.append({
-                    "label": _label_mant,
-                    "hs_previstas": 0.0,
-                    "hs_cargadas": 0.0,
-                    "hs_reales_acumuladas": _hs_mant,
-                    "hs_segun_avance": 0.0
-                })
-                _obras_en_lista.add(_label_mant)
-
     _perf_mark("obras_y_hs")
 
     # Calcular kg_source_rows ANTES de usarla
