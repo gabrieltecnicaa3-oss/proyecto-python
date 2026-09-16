@@ -3684,6 +3684,7 @@ def _curva_s_impl():
     import datetime as _dtcs
     from calendar import monthrange as _mr
     from db_utils import DB_ENGINE as _DB_CS
+    from proceso_utils import ORDEN_PROCESOS as _ORDEN_EV, _ot_no_requiere_pintura as _sin_pintura_ev, _proceso_aprobado as _aprobado_ev
 
     hoy = _dtcs.date.today()
     mes_hoy = hoy.strftime("%Y-%m")
@@ -3765,14 +3766,14 @@ def _curva_s_impl():
 
     # ── Distribución lineal del PV por mes ────────────────────────────────────
     def _pv_ot_sin_programacion(bac, fecha_entrega):
-      """Asigna el BAC completo al mes de entrega de una OT corta sin plan."""
-      try:
-        fecha = _dtcs.date.fromisoformat(fecha_entrega[:10])
-      except Exception:
-        return {}
-      if bac <= 0:
-        return {}
-      return {f"{fecha.year}-{fecha.month:02d}": float(bac)}
+        """Asigna el BAC completo al mes de entrega de una OT corta sin plan."""
+        try:
+            fecha = _dtcs.date.fromisoformat(fecha_entrega[:10])
+        except Exception:
+            return {}
+        if bac <= 0:
+            return {}
+        return {f"{fecha.year}-{fecha.month:02d}": float(bac)}
 
     def _dist_pv(bac, fi_s, ff_s):
         try:
@@ -3782,7 +3783,7 @@ def _curva_s_impl():
             return {}
         if ff <= fi or bac <= 0:
             return {}
-        total_days = (ff - fi).days
+        total_days = (ff - fi).days + 1
         result: dict = {}
         cur = _dtcs.date(fi.year, fi.month, 1)
         while _dtcs.date(cur.year, cur.month, 1) <= _dtcs.date(ff.year, ff.month, 1):
@@ -3791,18 +3792,92 @@ def _curva_s_impl():
             ms = max(fi, _dtcs.date(yr, mo, 1))
             me = min(ff, _dtcs.date(yr, mo, dim))
             if me >= ms:
-                result[f"{yr}-{mo:02d}"] = result.get(f"{yr}-{mo:02d}", 0.0) + bac * (me - ms).days / total_days
+                result[f"{yr}-{mo:02d}"] = result.get(f"{yr}-{mo:02d}", 0.0) + bac * ((me - ms).days + 1) / total_days
             cur = _dtcs.date(yr+1, 1, 1) if mo == 12 else _dtcs.date(yr, mo+1, 1)
+        return result
+
+    def _pesos_ev_ot(ot_id):
+        if _sin_pintura_ev(db, ot_id=ot_id):
+            return {"ARMADO": 70.0, "SOLDADURA": 10.0, "PINTURA": 0.0, "DESPACHO": 25.0}
+        return {"ARMADO": 70.0, "SOLDADURA": 10.0, "PINTURA": 15.0, "DESPACHO": 5.0}
+
+    def _ev_real_ot_mes(ot_id, bac):
+        if bac <= 0:
+            return {}
+        try:
+            rows = db.execute(
+                """
+                SELECT TRIM(COALESCE(posicion,'')), UPPER(TRIM(COALESCE(proceso,''))),
+                       COALESCE(estado,''), COALESCE(re_inspeccion,''), COALESCE(reproceso,''),
+                       COALESCE(fecha,''), TRIM(COALESCE(descripcion,''))
+                FROM procesos
+                WHERE ot_id=? AND COALESCE(eliminado,0)=0 AND TRIM(COALESCE(posicion,''))<>''
+                """,
+                (ot_id,),
+            ).fetchall()
+        except Exception:
+            rows = db.execute(
+                """
+                SELECT TRIM(COALESCE(posicion,'')), UPPER(TRIM(COALESCE(proceso,''))),
+                       COALESCE(estado,''), COALESCE(re_inspeccion,''), COALESCE(reproceso,''),
+                       COALESCE(fecha,''), TRIM(COALESCE(descripcion,''))
+                FROM procesos
+                WHERE ot_id=? AND TRIM(COALESCE(posicion,''))<>''
+                """,
+                (ot_id,),
+            ).fetchall()
+
+        posiciones = set()
+        desc_por_pos = {}
+        eventos = {}
+        flujo_valido = set(_ORDEN_EV) | {"DESPACHO"}
+        for pos, proc, estado, reinspeccion, reproceso, fecha_txt, desc in rows:
+            pos = str(pos or "").strip()
+            if not pos:
+                continue
+            posiciones.add(pos)
+            if desc and pos not in desc_por_pos:
+                desc_por_pos[pos] = str(desc or "").strip()
+            proc = str(proc or "").strip().upper()
+            if proc == "P/DESPACHO":
+                proc = "DESPACHO"
+            if proc not in flujo_valido or not _aprobado_ev(estado, reinspeccion):
+                continue
+            if proc == "PINTURA" and any(x in str(reproceso or "").upper() for x in ("ETAPA:SUPERFICIE", "ETAPA:FONDO")):
+                continue
+            try:
+                fecha = _dtcs.date.fromisoformat(str(fecha_txt or "")[:10])
+            except Exception:
+                continue
+            key = (pos, proc)
+            if key not in eventos or fecha < eventos[key]:
+                eventos[key] = fecha
+
+        if not posiciones or not eventos:
+            return {}
+
+        pesos_ot = _pesos_ev_ot(ot_id)
+        valor_pos = bac / len(posiciones)
+        result = {}
+        for (pos, proc), fecha in eventos.items():
+            pesos = dict(pesos_ot)
+            if "INSERTO" in str(desc_por_pos.get(pos, "")).upper() or pos.upper().startswith("INS"):
+                pesos = {"ARMADO": 90.0, "SOLDADURA": 0.0, "PINTURA": 0.0, "DESPACHO": 10.0}
+            valor = valor_pos * (pesos.get(proc, 0.0) / 100.0)
+            if valor <= 0:
+                continue
+            mes = f"{fecha.year}-{fecha.month:02d}"
+            result[mes] = result.get(mes, 0.0) + valor
         return result
 
     pv_mes: dict = {}
     for oid in ot_ids:
-      bac_ot = bac_map.get(str(oid), 0.0)
-      fi_ot, ff_ot = _dates(oid)
-      pv_ot = _dist_pv(bac_ot, fi_ot, ff_ot)
-      if not pv_ot and oid not in prog_map:
-        pv_ot = _pv_ot_sin_programacion(bac_ot, ot_map[oid]["fe"])
-      for m, v in pv_ot.items():
+        bac_ot = bac_map.get(str(oid), 0.0)
+        fi_ot, ff_ot = _dates(oid)
+        pv_ot = _dist_pv(bac_ot, fi_ot, ff_ot)
+        if not pv_ot and oid not in prog_map:
+            pv_ot = _pv_ot_sin_programacion(bac_ot, ot_map[oid]["fe"])
+        for m, v in pv_ot.items():
             pv_mes[m] = pv_mes.get(m, 0.0) + v
 
     # OTs sin programación: el PV puede usar fechas de partes/entrega como
@@ -3810,25 +3885,23 @@ def _curva_s_impl():
     # aprobado. Si tampoco hay fechas válidas, la OT queda fuera del PV.
     pv_sin_programacion = []
     for oid in ot_ids:
-      bac_ot = bac_map.get(str(oid), 0.0)
-      if bac_ot <= 0 or oid in prog_map:
-        continue
-      fi_ot, ff_ot = _dates(oid)
-      pv_ot = _dist_pv(bac_ot, fi_ot, ff_ot)
-      if not pv_ot:
-        pv_ot = _pv_ot_sin_programacion(bac_ot, ot_map[oid]["fe"])
-      pv_sin_programacion.append({
-        "ot_id": oid,
-        "obra": ot_map[oid]["obra"],
-        "bac": bac_ot,
-        "estimado": bool(pv_ot),
-      })
+        bac_ot = bac_map.get(str(oid), 0.0)
+        if bac_ot <= 0 or oid in prog_map:
+            continue
+        fi_ot, ff_ot = _dates(oid)
+        pv_ot = _dist_pv(bac_ot, fi_ot, ff_ot)
+        if not pv_ot:
+            pv_ot = _pv_ot_sin_programacion(bac_ot, ot_map[oid]["fe"])
+        pv_sin_programacion.append({
+            "ot_id": oid,
+            "obra": ot_map[oid]["obra"],
+            "bac": bac_ot,
+            "estimado": bool(pv_ot),
+        })
 
     # ── EV mensual ────────────────────────────────────────────────────────────
-    # La gráfica debe reflejar el EV del proyecto al día de hoy, sin duplicar ni
-    # sobreacumularlo. El EV de la tabla es el valor ganado real (avance % × BAC),
-    # así que en la serie mensual lo escalamos como cuota del PV vigente hasta hoy,
-    # y luego se acumula una sola vez en el gráfico.
+    # El EV de la serie usa fechas reales de aprobaciones de fabricación. No debe
+    # copiar la forma del PV: PV es planificado, EV es avance real ganado.
     hh_rows = db.execute(
         f"SELECT {_fmt_pt} AS mes, ot_id, SUM(horas) FROM partes_trabajo "
         f"WHERE ot_id IN ({ph}) AND fecha IS NOT NULL AND fecha!='' GROUP BY {_fmt_pt}, ot_id",
@@ -3844,19 +3917,22 @@ def _curva_s_impl():
         ac_mo_mes[mes_h] = ac_mo_mes.get(mes_h, 0.0) + hh_h * (c["precio_hora_mo"] + c["precio_hora_cons"])
 
     ev_total_hoy = sum(ot_map[oid]["avance"] / 100.0 * bac_map.get(str(oid), 0) for oid in ot_ids)
-    pv_hoy = sum(v for m, v in pv_mes.items() if m <= mes_hoy)
+    ev_real_inc_mes: dict = {}
+    for oid in ot_ids:
+      for m, v in _ev_real_ot_mes(oid, bac_map.get(str(oid), 0.0)).items():
+        if m <= mes_hoy:
+          ev_real_inc_mes[m] = ev_real_inc_mes.get(m, 0.0) + v
+
     ev_mes: dict = {}
-    if pv_hoy > 0:
-        pv_acum = 0.0
-        for m in sorted(pv_mes):
-            if m > mes_hoy:
-                continue
-            pv_acum += pv_mes.get(m, 0.0)
-            ev_mes[m] = (pv_acum / pv_hoy) * ev_total_hoy
+    ev_real_total_hoy = sum(ev_real_inc_mes.values())
+    if ev_real_total_hoy > 0:
+      ev_factor = ev_total_hoy / ev_real_total_hoy if ev_total_hoy > 0 else 0.0
+      ev_acum = 0.0
+      for m in sorted(ev_real_inc_mes):
+        ev_acum += ev_real_inc_mes.get(m, 0.0) * ev_factor
+        ev_mes[m] = min(ev_acum, ev_total_hoy)
     else:
-        for m in sorted(pv_mes):
-            if m <= mes_hoy:
-                ev_mes[m] = 0.0
+      ev_mes[mes_hoy] = ev_total_hoy
 
     # ── AC mensual (costos variables + MO) ───────────────────────────────────
     ac_mes: dict = dict(ac_mo_mes)
@@ -3899,21 +3975,21 @@ def _curva_s_impl():
     pct_complete = EV / BAC * 100 if BAC > 0 else 0
 
     if pv_sin_programacion:
-      _pv_warn_rows = "".join(
-        f'<li><b>OT {x["ot_id"]}</b> · {_E(x["obra"])} · BAC {_m(x["bac"])}'
+        _pv_warn_rows = "".join(
+            f'<li><b>OT {x["ot_id"]}</b> · {_E(x["obra"])} · BAC {_m(x["bac"])}'
             f' — {"PV asignado al mes de entrega" if x["estimado"] else "sin PV calculable: falta fecha de entrega"}</li>'
-        for x in pv_sin_programacion
-      )
-      pv_alert_html = (
-        '<div class="card" style="border-left:5px solid #f59e0b;background:#fffbeb;">'
-        '<div class="cb" style="color:#92400e;">'
-        '<div style="font-weight:800;margin-bottom:5px;">⚠️ PV sin programación aprobada</div>'
-        '<div style="font-size:.8rem;margin-bottom:6px;">Estas OTs tienen BAC y EV, pero no tienen registro en programación. La diferencia PV/EV debe interpretarse con precaución.</div>'
-        f'<ul style="margin:0;padding-left:20px;font-size:.78rem;line-height:1.6;">{_pv_warn_rows}</ul>'
-        '</div></div>'
-      )
+            for x in pv_sin_programacion
+        )
+        pv_alert_html = (
+            '<div class="card" style="border-left:5px solid #f59e0b;background:#fffbeb;">'
+            '<div class="cb" style="color:#92400e;">'
+            '<div style="font-weight:800;margin-bottom:5px;">⚠️ PV sin programación aprobada</div>'
+            '<div style="font-size:.8rem;margin-bottom:6px;">Estas OTs tienen BAC y EV, pero no tienen registro en programación. Se suman al PV en el mes de entrega.</div>'
+            f'<ul style="margin:0;padding-left:20px;font-size:.78rem;line-height:1.6;">{_pv_warn_rows}</ul>'
+            '</div></div>'
+        )
     else:
-      pv_alert_html = ""
+        pv_alert_html = ""
 
     # Desvío en meses (solo cuando el PV mensual es válido y el desvío no es absurdo).
     # El SV es una variación de valor, no de tiempo; no se debe convertir a meses sin un
@@ -4164,8 +4240,6 @@ tr:last-child td{{border-bottom:none;}}
     <div style="font-size:.78rem;color:#9ca3af;">Datos hasta: {hoy.strftime("%d/%m/%Y")}</div>
   </div></div>
 
-  {pv_alert_html}
-
   <!-- Q&A cards -->
   <div class="card"><div class="ct">🎯 Indicadores de situación</div>
     <div class="cb"><div class="qa-card-wrap" style="display:flex;flex-wrap:wrap;gap:12px;">{qa_html}</div></div>
@@ -4199,6 +4273,8 @@ tr:last-child td{{border-bottom:none;}}
   </div>
 
   </div><!-- /evm-layout -->
+
+  {pv_alert_html}
 
 </div>
 <script>
