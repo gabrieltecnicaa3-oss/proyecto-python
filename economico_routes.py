@@ -3764,6 +3764,16 @@ def _curva_s_impl():
         return fi, ff
 
     # ── Distribución lineal del PV por mes ────────────────────────────────────
+    def _pv_ot_sin_programacion(bac, fecha_entrega):
+      """Asigna el BAC completo al mes de entrega de una OT corta sin plan."""
+      try:
+        fecha = _dtcs.date.fromisoformat(fecha_entrega[:10])
+      except Exception:
+        return {}
+      if bac <= 0:
+        return {}
+      return {f"{fecha.year}-{fecha.month:02d}": float(bac)}
+
     def _dist_pv(bac, fi_s, ff_s):
         try:
             fi = _dtcs.date.fromisoformat(fi_s[:10])
@@ -3787,8 +3797,32 @@ def _curva_s_impl():
 
     pv_mes: dict = {}
     for oid in ot_ids:
-        for m, v in _dist_pv(bac_map.get(str(oid), 0), *_dates(oid)).items():
+      bac_ot = bac_map.get(str(oid), 0.0)
+      fi_ot, ff_ot = _dates(oid)
+      pv_ot = _dist_pv(bac_ot, fi_ot, ff_ot)
+      if not pv_ot and oid not in prog_map:
+        pv_ot = _pv_ot_sin_programacion(bac_ot, ot_map[oid]["fe"])
+      for m, v in pv_ot.items():
             pv_mes[m] = pv_mes.get(m, 0.0) + v
+
+    # OTs sin programación: el PV puede usar fechas de partes/entrega como
+    # fallback, pero debe quedar visible porque no representa un cronograma
+    # aprobado. Si tampoco hay fechas válidas, la OT queda fuera del PV.
+    pv_sin_programacion = []
+    for oid in ot_ids:
+      bac_ot = bac_map.get(str(oid), 0.0)
+      if bac_ot <= 0 or oid in prog_map:
+        continue
+      fi_ot, ff_ot = _dates(oid)
+      pv_ot = _dist_pv(bac_ot, fi_ot, ff_ot)
+      if not pv_ot:
+        pv_ot = _pv_ot_sin_programacion(bac_ot, ot_map[oid]["fe"])
+      pv_sin_programacion.append({
+        "ot_id": oid,
+        "obra": ot_map[oid]["obra"],
+        "bac": bac_ot,
+        "estimado": bool(pv_ot),
+      })
 
     # ── EV mensual ────────────────────────────────────────────────────────────
     # La gráfica debe reflejar el EV del proyecto al día de hoy, sin duplicar ni
@@ -3863,6 +3897,23 @@ def _curva_s_impl():
     VAC  = BAC - EAC
     TCPI = (BAC - EV) / (BAC - AC) if (BAC - AC) > 0 else 0.0
     pct_complete = EV / BAC * 100 if BAC > 0 else 0
+
+    if pv_sin_programacion:
+      _pv_warn_rows = "".join(
+        f'<li><b>OT {x["ot_id"]}</b> · {_E(x["obra"])} · BAC {_m(x["bac"])}'
+            f' — {"PV asignado al mes de entrega" if x["estimado"] else "sin PV calculable: falta fecha de entrega"}</li>'
+        for x in pv_sin_programacion
+      )
+      pv_alert_html = (
+        '<div class="card" style="border-left:5px solid #f59e0b;background:#fffbeb;">'
+        '<div class="cb" style="color:#92400e;">'
+        '<div style="font-weight:800;margin-bottom:5px;">⚠️ PV sin programación aprobada</div>'
+        '<div style="font-size:.8rem;margin-bottom:6px;">Estas OTs tienen BAC y EV, pero no tienen registro en programación. La diferencia PV/EV debe interpretarse con precaución.</div>'
+        f'<ul style="margin:0;padding-left:20px;font-size:.78rem;line-height:1.6;">{_pv_warn_rows}</ul>'
+        '</div></div>'
+      )
+    else:
+      pv_alert_html = ""
 
     # Desvío en meses (solo cuando el PV mensual es válido y el desvío no es absurdo).
     # El SV es una variación de valor, no de tiempo; no se debe convertir a meses sin un
@@ -4112,6 +4163,8 @@ tr:last-child td{{border-bottom:none;}}
     </form>
     <div style="font-size:.78rem;color:#9ca3af;">Datos hasta: {hoy.strftime("%d/%m/%Y")}</div>
   </div></div>
+
+  {pv_alert_html}
 
   <!-- Q&A cards -->
   <div class="card"><div class="ct">🎯 Indicadores de situación</div>
