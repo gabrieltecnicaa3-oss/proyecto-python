@@ -566,6 +566,32 @@ def estado_produccion():
                "colors": ['#fed7aa','#fb923c','#f97316','#bfdbfe','#60a5fa','#3b82f6']},
     })
 
+    # ── Histórico de KG fabricados por mes (últimos 12 meses) ────────────────
+    _hist_meses = []
+    _cursor_mes = date(_today.year, _today.month, 1)
+    for _i in range(12):
+        _hist_meses.append(_cursor_mes)
+        _cursor_mes = (_cursor_mes - timedelta(days=1)).replace(day=1)
+    _hist_meses.reverse()
+
+    _MESES_ES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']
+    _hist_kg_labels = []
+    _hist_kg_values = []
+    for _mes_ini in _hist_meses:
+        if _mes_ini.month == 12:
+            _mes_fin = date(_mes_ini.year, 12, 31)
+        else:
+            _mes_fin = date(_mes_ini.year, _mes_ini.month + 1, 1) - timedelta(days=1)
+        if _mes_ini == _m_start:
+            _mes_fin = _today
+        _hist_kg_labels.append(f"{_MESES_ES[_mes_ini.month - 1]} {_mes_ini.year}")
+        _hist_kg_values.append(round(_kg_p(_mes_ini, _mes_fin), 0))
+
+    _hist_kg_chart = _json_est.dumps({
+        "labels": _hist_kg_labels,
+        "values": _hist_kg_values,
+    })
+
     html = """<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1979,8 +2005,42 @@ actualizarDescripcionTipo(tipoObraActivo);
           <div class="comp-chart-wrap"><canvas id="compChartKG"></canvas></div>
         </div>
       </div>
+      <div style="margin-top:14px;">
+        <div class="comp-chart-lbl">📅 Histórico de KG fabricados por mes (últimos 12 meses)</div>
+        <div class="comp-chart-wrap" style="height:230px;"><canvas id="compChartKgHistorico"></canvas></div>
+      </div>
     </div>
     <script>
+    var _histKgData = {_hist_kg_chart};
+    (function() {{
+      var ctx = document.getElementById('compChartKgHistorico');
+      if (!ctx) return;
+      new Chart(ctx, {{
+        type: 'bar',
+        data: {{
+          labels: _histKgData.labels,
+          datasets: [{{
+            label: 'KG fabricados',
+            data: _histKgData.values,
+            backgroundColor: '#fb923c',
+            borderColor: '#ea580c',
+            borderWidth: 1,
+            borderRadius: 5
+          }}]
+        }},
+        options: {{
+          responsive: true, maintainAspectRatio: false,
+          plugins: {{
+            legend: {{ display: false }},
+            tooltip: {{ callbacks: {{ label: function(c) {{ return ' ' + c.parsed.y.toLocaleString('es-AR') + ' kg'; }} }} }}
+          }},
+          scales: {{
+            x: {{ ticks: {{ font: {{ size: 10 }}, maxRotation: 30 }} }},
+            y: {{ beginAtZero: true, ticks: {{ font: {{ size: 10 }} }}, grid: {{ color: '#fff7ed' }} }}
+          }}
+        }}
+      }});
+    }})();
     var _compAllData = {_comp_chart};
     var _compCHH = null, _compCKG = null;
     function _compMk(id, ds) {{
