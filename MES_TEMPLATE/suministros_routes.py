@@ -84,6 +84,10 @@ def _ensure_tables(db):
     except Exception:
         pass
     try:
+        db.execute("ALTER TABLE articulos_sum ADD COLUMN area_cm2 REAL")
+    except Exception:
+        pass
+    try:
         db.execute("ALTER TABLE items_op ADD COLUMN largo REAL DEFAULT 6.0")
     except Exception:
         pass

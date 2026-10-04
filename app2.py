@@ -17,6 +17,10 @@ from proceso_utils import (
 from ot_routes import ot_bp
 from suministros_routes import suministros_bp
 from analisis_estrategico_routes import analisis_estrategico_bp
+from presupuestos import presupuestos_bp
+import presupuestos.routes  # noqa: F401 - registra las rutas API del blueprint
+import presupuestos.views  # noqa: F401 - registra las pantallas HTML del blueprint
+import presupuestos.config_views  # noqa: F401 - registra la pantalla de Configuración (separada de la carga)
 from db_utils import (
     get_db,
     _resolver_ot_id_para_obra,
@@ -73,6 +77,7 @@ app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB por request
 
 # Registrar blueprint de suministros
 app.register_blueprint(suministros_bp)
+app.register_blueprint(presupuestos_bp)
 
 ROLE_ADMIN = "administrador"
 ROLE_SUPERVISOR = "supervisor"
@@ -2205,6 +2210,13 @@ def dashboard():
             "titulo": "Módulo Económico",
             "desc": "Costos previstos vs reales, KPIs ($/kg, margen), desvíos por rubro y avance físico vs económico",
         },
+        {
+            "href": "/modulo/presupuestos",
+            "css": "presupuestos",
+            "icon": "🧮",
+            "titulo": "Presupuestos",
+            "desc": "Carga de presupuestos por tarea (Fabricación/Montaje), items por rubro y cálculo de precio de venta",
+        },
     ]
 
     ADMIN_ONLY_HREFS = {"/modulo/suministros", "/modulo/historial", "/modulo/reportes", "/modulo/tablero-ejecutivo", "/modulo/analisis-estrategico", "/modulo/auditoria-obra"}
@@ -2445,6 +2457,9 @@ def dashboard():
     }
     .module-card.economico {
         border-left: 5px solid #6366f1;
+    }
+    .module-card.presupuestos {
+        border-left: 5px solid #4338ca;
     }
     .module-card.rutina {
         border-left: 5px solid #0f766e;
