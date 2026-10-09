@@ -48,7 +48,9 @@ def ensure_tablas_presupuestos(db):
         fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
         fecha_adjudicacion DATETIME,
         ot_id INTEGER,
-        tipo_cambio_referencia REAL
+        tipo_cambio_referencia REAL,
+        odoo_analitica_fab_id INTEGER,
+        odoo_analitica_mon_id INTEGER
     )
     """)
     # Migración para instalaciones existentes (creadas antes de agregar estas columnas).
@@ -58,6 +60,8 @@ def ensure_tablas_presupuestos(db):
         ("fecha", "DATE"),
         ("numero_presupuesto", "TEXT"),
         ("copiado_de_id", "INTEGER"),
+        ("odoo_analitica_fab_id", "INTEGER"),
+        ("odoo_analitica_mon_id", "INTEGER"),
     ):
         try:
             db.execute(f"ALTER TABLE presupuestos ADD COLUMN {_col} {_def}")
@@ -111,9 +115,15 @@ def ensure_tablas_presupuestos(db):
     CREATE TABLE IF NOT EXISTS catalogo_equipos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nombre TEXT NOT NULL,
-        tarifa_dia_default REAL
+        tarifa_dia_default REAL,
+        producto_odoo TEXT
     )
     """)
+    try:
+        db.execute("ALTER TABLE catalogo_equipos ADD COLUMN producto_odoo TEXT")
+        db.commit()
+    except Exception:
+        pass
 
     db.execute("""
     CREATE TABLE IF NOT EXISTS catalogo_esquemas_pintura (
@@ -154,6 +164,23 @@ def ensure_tablas_presupuestos(db):
     except Exception:
         pass
 
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS config_productos_odoo (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        seccion TEXT NOT NULL,
+        concepto TEXT NOT NULL,
+        tipo_item TEXT,
+        familia TEXT,
+        tarea TEXT,
+        producto_odoo TEXT
+    )
+    """)
+    try:
+        db.execute("ALTER TABLE config_productos_odoo ADD COLUMN tarea TEXT")
+        db.commit()
+    except Exception:
+        pass
+
     # Índices para los filtros/joins más frecuentes del futuro CRUD.
     db.execute("CREATE INDEX IF NOT EXISTS idx_tareas_presupuesto_id ON tareas(presupuesto_id)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_tarea_secciones_tarea_id ON tarea_secciones(tarea_id)")
@@ -166,6 +193,7 @@ def ensure_tablas_presupuestos(db):
     _asegurar_config_default(db)
     _asegurar_categorias_odoo_seed(db)
     _asegurar_split_traslado_movilidad(db)
+    _asegurar_productos_odoo_seed(db)
 
 
 # Seed de config_categorias_odoo (sección 2.1 de la especificación): mapeo
@@ -258,6 +286,85 @@ def listar_categorias_odoo(db):
     ]
 
 
+# Seed de config_productos_odoo (Reporte 3, pedido "día 0" de Odoo): mapeo
+# (seccion, concepto, tipo_item, familia, tarea) -> producto_odoo. Los campos
+# tipo_item/familia/tarea en None = comodín (aplican a cualquier valor); gana la
+# regla más específica (tarea > familia > tipo_item). `tarea` es el tipo de la
+# pestaña (Correas, Grating, Zinguería, Insertos): TODOS sus materiales van a un
+# único producto. producto_odoo en None = sin producto (el reporte lo avisa).
+# Los equipos (rubro "equipo") NO van acá: su producto vive en
+# catalogo_equipos.producto_odoo.
+_SEED_PRODUCTOS_ODOO = (
+    ("FABRICACION", "materiales", "perfil", None, None, "Perfiles Metálicos"),
+    ("FABRICACION", "materiales", "porcentaje", None, None, "Placas varias"),
+    ("FABRICACION", "materiales", "chapa", None, None, "Chapas varias"),
+    ("FABRICACION", "materiales", "tornillos", None, None, "Consumibles varios"),
+    ("FABRICACION", "materiales", None, None, "Correas", "Correas varias"),
+    ("FABRICACION", "materiales", None, None, "Grating", "Grating"),
+    ("FABRICACION", "materiales", None, None, "Zinguería", "Zinguerias varias"),
+    ("FABRICACION", "materiales", None, None, "Insertos", "Varillas Roscadas"),
+    ("FABRICACION", "bulones", None, None, None, "Bulones"),
+    ("FABRICACION", "pintura", None, None, None, "Pintura y Accesorios"),
+    ("FABRICACION", "ingenieria", None, None, None, "Proyectos de Ingeniería (EEMM)"),
+    ("FABRICACION", "subcontratos", None, None, None, "Subcontratos de Estructuras Metálicas y Herrería"),
+    ("MONTAJE", "subcontratos", None, None, None, "Subcontratos de Estructuras Metálicas y Herrería"),
+)
+
+_INSERT_PRODUCTO_ODOO = (
+    "INSERT INTO config_productos_odoo (seccion, concepto, tipo_item, familia, tarea, producto_odoo) VALUES (?, ?, ?, ?, ?, ?)"
+)
+
+# tipo_item que nunca existieron en el modelo (primer seed, reemplazados por la regla por pestaña).
+_TIPO_ITEM_ODOO_OBSOLETOS = (
+    "zingueria_ml", "zingueria_unidad", "zingueria_fijaciones", "grating_panel", "grating_escalon", "grating",
+)
+
+
+def _asegurar_productos_odoo_seed(db):
+    """Carga el seed de config_productos_odoo si la tabla está vacía; si ya tenía el
+    seed viejo (sin reglas por pestaña), lo migra una sola vez."""
+    row = db.execute("SELECT COUNT(1) FROM config_productos_odoo").fetchone()
+    total = int(row[0]) if row else 0
+    if total == 0:
+        db.executemany(_INSERT_PRODUCTO_ODOO, _SEED_PRODUCTOS_ODOO)
+        db.commit()
+        return
+
+    ya_migrado = db.execute("SELECT 1 FROM config_productos_odoo WHERE tarea IS NOT NULL LIMIT 1").fetchone()
+    if ya_migrado:
+        return
+    placeholders = ",".join("?" for _ in _TIPO_ITEM_ODOO_OBSOLETOS)
+    db.execute(
+        f"DELETE FROM config_productos_odoo WHERE concepto = 'materiales' AND tipo_item IN ({placeholders})",
+        _TIPO_ITEM_ODOO_OBSOLETOS,
+    )
+    db.executemany(
+        _INSERT_PRODUCTO_ODOO,
+        [fila for fila in _SEED_PRODUCTOS_ODOO if fila[4] is not None or fila[2] == "tornillos"],
+    )
+    db.commit()
+
+
+def listar_productos_odoo(db):
+    """Lista config_productos_odoo tal cual está en la DB (Reporte 3)."""
+    _asegurar_productos_odoo_seed(db)
+    rows = db.execute(
+        "SELECT seccion, concepto, tipo_item, familia, tarea, producto_odoo FROM config_productos_odoo ORDER BY id"
+    ).fetchall()
+    return [
+        {"seccion": r[0], "concepto": r[1], "tipo_item": r[2], "familia": r[3], "tarea": r[4], "producto_odoo": r[5]}
+        for r in rows
+    ]
+
+
+def actualizar_analitica_odoo(db, presupuesto_id, seccion, odoo_id):
+    """Guarda el último ID de cuenta analítica de Odoo usado para el pedido de
+    esa sección (FABRICACION o MONTAJE)."""
+    columna = {"FABRICACION": "odoo_analitica_fab_id", "MONTAJE": "odoo_analitica_mon_id"}[seccion]
+    db.execute(f"UPDATE presupuestos SET {columna} = ? WHERE id = ?", (odoo_id, presupuesto_id))
+    db.commit()
+
+
 def _asegurar_config_default(db):
     """Crea la fila única de config_presupuestos si la tabla está vacía."""
     row = db.execute("SELECT COUNT(1) FROM config_presupuestos").fetchone()
@@ -302,7 +409,7 @@ def obtener_presupuesto(db, presupuesto_id):
         """
         SELECT id, cliente, planta, titulo, fecha, estado, fecha_creacion,
                fecha_adjudicacion, ot_id, tipo_cambio_referencia, numero_presupuesto,
-               copiado_de_id, obra_referencia
+               copiado_de_id, obra_referencia, odoo_analitica_fab_id, odoo_analitica_mon_id
         FROM presupuestos WHERE id = ?
         """,
         (presupuesto_id,),
@@ -323,6 +430,8 @@ def obtener_presupuesto(db, presupuesto_id):
         "numero_presupuesto": row[10],
         "copiado_de_id": row[11],
         "obra_referencia": row[12],
+        "odoo_analitica_fab_id": row[13],
+        "odoo_analitica_mon_id": row[14],
     }
 
 
@@ -672,24 +781,24 @@ def eliminar_item_costo(db, item_id):
 # catalogo_equipos
 # ─────────────────────────────────────────────────────────────────
 
-def crear_equipo(db, nombre, tarifa_dia_default=0):
+def crear_equipo(db, nombre, tarifa_dia_default=0, producto_odoo=None):
     cursor = db.execute(
-        "INSERT INTO catalogo_equipos (nombre, tarifa_dia_default) VALUES (?, ?)",
-        (nombre, tarifa_dia_default),
+        "INSERT INTO catalogo_equipos (nombre, tarifa_dia_default, producto_odoo) VALUES (?, ?, ?)",
+        (nombre, tarifa_dia_default, producto_odoo),
     )
     db.commit()
     return cursor.lastrowid
 
 
 def listar_equipos(db):
-    rows = db.execute("SELECT id, nombre, tarifa_dia_default FROM catalogo_equipos ORDER BY nombre").fetchall()
-    return [{"id": r[0], "nombre": r[1], "tarifa_dia_default": r[2]} for r in rows]
+    rows = db.execute("SELECT id, nombre, tarifa_dia_default, producto_odoo FROM catalogo_equipos ORDER BY nombre").fetchall()
+    return [{"id": r[0], "nombre": r[1], "tarifa_dia_default": r[2], "producto_odoo": r[3]} for r in rows]
 
 
-def actualizar_equipo(db, equipo_id, nombre, tarifa_dia_default):
+def actualizar_equipo(db, equipo_id, nombre, tarifa_dia_default, producto_odoo=None):
     db.execute(
-        "UPDATE catalogo_equipos SET nombre = ?, tarifa_dia_default = ? WHERE id = ?",
-        (nombre, tarifa_dia_default, equipo_id),
+        "UPDATE catalogo_equipos SET nombre = ?, tarifa_dia_default = ?, producto_odoo = ? WHERE id = ?",
+        (nombre, tarifa_dia_default, producto_odoo, equipo_id),
     )
     db.commit()
 

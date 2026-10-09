@@ -98,3 +98,43 @@ def rubro_valido(tipo_seccion, rubro):
     tipo_norm = str(tipo_seccion or "").strip().upper()
     rubro_norm = str(rubro or "").strip()
     return rubro_norm in RUBROS_POR_SECCION.get(tipo_norm, ())
+
+
+# ─────────────────────────────────────────────────────────────────
+# Reporte 3 — planilla de carga masiva de pedidos de compra "día 0" en Odoo
+# ─────────────────────────────────────────────────────────────────
+
+# Sin CUIT: Odoo no acepta el texto con el número.
+ODOO_VENDOR = "A3 Servicios Constructivos S.R.L."
+
+# Order Reference de Fabricación = prefijo + obra; el de Montaje es solo la obra.
+ODOO_PREFIJO_FABRICACION = "TA-"
+
+ODOO_PEDIDO_COLUMNAS = (
+    "Order Reference",
+    "Vendor*",
+    "Order Deadline",
+    "Expected Arrival",
+    "Vendor Reference",
+    "Order Lines/Products*",
+    "Order Lines/Quantity",
+    "Order Lines/Unit Price",
+    "Order Lines/Taxes",
+    "Payment Terms",
+    "Order Lines/Analytic Distribution",
+)
+
+# Rubros que entran al pedido por sección (el resto — mano_obra, consumibles,
+# fletes, ingeniero, tecnico_hys, GG, impuestos, beneficio — no se carga).
+ODOO_RUBROS_POR_SECCION = {
+    "FABRICACION": ("materiales", "bulones", "pintura", "ingenieria", "subcontratos"),
+    "MONTAJE": ("equipo", "subcontratos"),
+}
+
+# Sugerencias para el campo producto_odoo de catalogo_equipos (texto libre en la
+# pantalla de configuración; esto solo alimenta el autocompletado).
+ODOO_PRODUCTOS_EQUIPOS_SUGERIDOS = (
+    "Alquiler de HIDRO 42 TM",
+    "Alquiler HAULOTTE BRAZO ARTICULADO 16M ALTURA",
+    "Alquiler GRUA 30 TONELADAS",
+)

@@ -7,6 +7,7 @@ Pantalla SEPARADA de la carga de presupuestos (paso 4 / views.py): edita
 con las pantallas de listado/carga de presupuestos.
 """
 from flask import request, redirect
+import html as html_lib
 
 from . import presupuestos_bp
 from .routes import _db
@@ -23,6 +24,7 @@ from .models import (
     eliminar_esquema_pintura,
 )
 from .views import _ESTILO_BASE
+from .constants import ODOO_PRODUCTOS_EQUIPOS_SUGERIDOS
 
 
 def _num(valor):
@@ -30,6 +32,10 @@ def _num(valor):
         return float(valor)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _texto_o_none(valor):
+    return (valor or "").strip() or None
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -91,6 +97,7 @@ def _pagina_configuracion(config, equipos, esquemas):
         <tr>
             <td><input form="equipo-form-{e['id']}" type="text" name="nombre" value="{e['nombre']}" required></td>
             <td><input form="equipo-form-{e['id']}" type="number" step="0.01" name="tarifa_dia_default" value="{e['tarifa_dia_default'] or 0}"></td>
+            <td><input form="equipo-form-{e['id']}" type="text" name="producto_odoo" list="productos-odoo-equipos" value="{html_lib.escape(e['producto_odoo'] or '', quote=True)}" placeholder="(sin asignar)"></td>
             <td style="white-space:nowrap;">
                 <button form="equipo-form-{e['id']}" type="submit" class="btn btn-sm">Guardar</button>
                 <form method="post" action="/modulo/presupuestos/configuracion/equipos/{e['id']}/eliminar" style="display:inline;" onsubmit="return confirm('¿Eliminar equipo {e['nombre']}?');">
@@ -100,7 +107,11 @@ def _pagina_configuracion(config, equipos, esquemas):
         </tr>
         """
         for e in equipos
-    ) or "<tr><td colspan='3' class='sin-datos'>Sin equipos cargados.</td></tr>"
+    ) or "<tr><td colspan='4' class='sin-datos'>Sin equipos cargados.</td></tr>"
+
+    opciones_productos_equipos = "".join(
+        f'<option value="{html_lib.escape(p, quote=True)}"></option>' for p in ODOO_PRODUCTOS_EQUIPOS_SUGERIDOS
+    )
 
     forms_esquemas = "".join(
         f'<form id="esquema-form-{e["id"]}" method="post" action="/modulo/presupuestos/configuracion/esquemas/{e["id"]}/editar"></form>'
@@ -169,8 +180,9 @@ def _pagina_configuracion(config, equipos, esquemas):
         <div class="card">
             <h3>Catálogo de equipos (Montaje)</h3>
             {forms_equipos}
+            <datalist id="productos-odoo-equipos">{opciones_productos_equipos}</datalist>
             <table>
-                <tr><th>Nombre</th><th>Tarifa día ($)</th><th>Acciones</th></tr>
+                <tr><th>Nombre</th><th>Tarifa día ($)</th><th>Producto en Odoo (pedido día 0)</th><th>Acciones</th></tr>
                 {filas_equipos}
             </table>
             <form method="post" action="/modulo/presupuestos/configuracion/equipos" style="margin-top:12px;">
@@ -183,6 +195,10 @@ def _pagina_configuracion(config, equipos, esquemas):
                         <label>Tarifa día ($)</label>
                         <input type="number" step="0.01" name="tarifa_dia_default" value="0">
                     </div>
+                </div>
+                <div>
+                    <label>Producto en Odoo (opcional)</label>
+                    <input type="text" name="producto_odoo" list="productos-odoo-equipos">
                 </div>
                 <button type="submit" class="btn">+ Agregar equipo</button>
             </form>
@@ -224,7 +240,12 @@ def vista_crear_equipo():
     db = _db()
     nombre = (request.form.get("nombre") or "").strip()
     if nombre:
-        crear_equipo(db, nombre=nombre, tarifa_dia_default=_num(request.form.get("tarifa_dia_default")))
+        crear_equipo(
+            db,
+            nombre=nombre,
+            tarifa_dia_default=_num(request.form.get("tarifa_dia_default")),
+            producto_odoo=_texto_o_none(request.form.get("producto_odoo")),
+        )
     return redirect("/modulo/presupuestos/configuracion")
 
 
@@ -233,7 +254,13 @@ def vista_editar_equipo(equipo_id):
     db = _db()
     nombre = (request.form.get("nombre") or "").strip()
     if nombre:
-        actualizar_equipo(db, equipo_id, nombre=nombre, tarifa_dia_default=_num(request.form.get("tarifa_dia_default")))
+        actualizar_equipo(
+            db,
+            equipo_id,
+            nombre=nombre,
+            tarifa_dia_default=_num(request.form.get("tarifa_dia_default")),
+            producto_odoo=_texto_o_none(request.form.get("producto_odoo")),
+        )
     return redirect("/modulo/presupuestos/configuracion")
 
 

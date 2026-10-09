@@ -19,13 +19,19 @@ import csv
 import json
 from io import BytesIO, StringIO
 
-from flask import request, redirect, send_file
+from flask import request, redirect, send_file, jsonify
 
 from . import presupuestos_bp
 from .routes import _db, _todos_los_resultados_tarea, _resumen_recursos_con_nombres
 from .constants import ESTADOS_PRESUPUESTO, TIPOS_SECCION, RUBROS_POR_SECCION, TAREAS_ESTANDAR, TAREAS_MODO_CHAPA, TAREAS_MODO_GRATING, MATERIALES_TEMPLATE_POR_TAREA, TAREAS_SELECCIONABLES
 from .calculo_presupuesto import calcular_presupuesto
 from .reportes_excel import generar_reporte_explosion_insumos, generar_reporte_prevision_fondos
+from .reportes_odoo_pedido import (
+    armar_pedido_odoo,
+    generar_excel_pedido_odoo,
+    validar_analitica_id,
+    nombre_archivo_pedido,
+)
 from .models import (
     crear_presupuesto,
     obtener_presupuesto,
@@ -39,6 +45,7 @@ from .models import (
     crear_secciones_tarea,
     eliminar_tarea,
     obtener_config,
+    actualizar_analitica_odoo,
 )
 
 
@@ -1653,12 +1660,139 @@ def vista_detalle_presupuesto(presupuesto_id):
 #    (misma función de agregación) para generar el CSV.
 # ─────────────────────────────────────────────────────────────────
 
+# Reporte 3 (pedido "día 0" de Odoo): botones + diálogo del Resumen. Son strings
+# planos (no f-strings) para no tener que escapar las llaves del JS.
+_ODOO_PEDIDO_BOTONES_HTML = """
+                <button type="button" class="btn" onclick="abrirPedidoOdoo('fab')">⬇ Odoo: pedido Fabricación</button>
+                <button type="button" class="btn" onclick="abrirPedidoOdoo('mon')">⬇ Odoo: pedido Montaje</button>
+"""
+
+_ODOO_PEDIDO_DIALOGO_HTML = """
+<dialog id="dlg-odoo" style="border:1px solid #cbd5e1;border-radius:12px;padding:16px;max-width:560px;width:92%;">
+    <h3 id="odoo-titulo" style="margin:0 0 8px 0;">Pedido para Odoo</h3>
+    <div id="odoo-estado" class="muted">Cargando...</div>
+    <div id="odoo-cuerpo" style="display:none;">
+        <label id="odoo-label" for="odoo-analitica" style="font-weight:700;display:block;margin-top:4px;"></label>
+        <input id="odoo-analitica" type="text" inputmode="numeric" autocomplete="off" style="width:100%;padding:8px;margin-top:4px;">
+        <div id="odoo-avisos" style="margin-top:10px;"></div>
+        <div id="odoo-totales" style="margin-top:10px;"></div>
+    </div>
+    <div id="odoo-error" style="color:#b91c1c;font-weight:600;margin-top:8px;"></div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+        <button type="button" class="btn btn-secondary" onclick="cerrarPedidoOdoo()">Cancelar</button>
+        <button type="button" class="btn" id="odoo-descargar" onclick="descargarPedidoOdoo()" disabled>Descargar</button>
+    </div>
+</dialog>
+"""
+
+_ODOO_PEDIDO_JS = """
+const ODOO_URL = "/modulo/presupuestos/__PRESUPUESTO_ID__/resumen/odoo-pedido/";
+let odooClave = null;
+let odooNombreArchivo = "pedido_odoo.xlsx";
+
+function odooFmt(v) {
+    return "$ " + (Number(v) || 0).toLocaleString("es-AR", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+function odooEsc(t) {
+    return String(t).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+}
+function odooEl(id) { return document.getElementById(id); }
+
+function abrirPedidoOdoo(clave) {
+    odooClave = clave;
+    odooEl("odoo-titulo").textContent = clave === "fab" ? "Pedido de Fabricación para Odoo" : "Pedido de Montaje para Odoo";
+    odooEl("odoo-estado").textContent = "Cargando...";
+    odooEl("odoo-cuerpo").style.display = "none";
+    odooEl("odoo-error").textContent = "";
+    odooEl("odoo-descargar").disabled = true;
+    odooEl("dlg-odoo").showModal();
+
+    fetch(ODOO_URL + clave + "/preview")
+        .then(r => r.json().then(d => ({ok: r.ok, d: d})))
+        .then(({ok, d}) => {
+            odooEl("odoo-estado").textContent = "";
+            if (!ok) { odooEl("odoo-error").textContent = d.error || "No se pudo preparar el pedido."; return; }
+
+            odooNombreArchivo = d.nombre_archivo;
+            odooEl("odoo-label").textContent = d.label_analitica;
+            odooEl("odoo-analitica").value = d.analitica_id || "";
+
+            let avisos = "";
+            if (d.sin_mapear.length) {
+                avisos = "<div style='background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px;'>" +
+                    "<b>Quedan fuera del archivo (sin producto de Odoo asignado):</b><ul style='margin:6px 0 0 18px;padding:0;'>" +
+                    d.sin_mapear.map(a => "<li>" + odooEsc(a.concepto) + ": " + odooFmt(a.importe) + "</li>").join("") +
+                    "</ul></div>";
+            }
+            odooEl("odoo-avisos").innerHTML = avisos;
+
+            odooEl("odoo-totales").innerHTML =
+                "<div><b>Total del archivo:</b> " + odooFmt(d.total_archivo) + "</div>" +
+                "<div><b>Total de los rubros incluidos en el presupuesto:</b> " + odooFmt(d.total_rubros) + "</div>" +
+                "<div class='muted'>Diferencia: " + odooFmt(d.diferencia) + " (suma de lo avisado: " + odooFmt(d.suma_sin_mapear) + ")</div>" +
+                (d.cuadra ? "" : "<div style='color:#b91c1c;font-weight:600;'>La diferencia no coincide con lo avisado: revisar antes de importar.</div>");
+
+            odooEl("odoo-cuerpo").style.display = "block";
+            if (!d.lineas.length) {
+                odooEl("odoo-error").textContent = "No hay líneas para exportar: ningún concepto tiene producto de Odoo asignado.";
+                return;
+            }
+            odooEl("odoo-descargar").disabled = false;
+        })
+        .catch(() => {
+            odooEl("odoo-estado").textContent = "";
+            odooEl("odoo-error").textContent = "No se pudo preparar el pedido.";
+        });
+}
+
+function cerrarPedidoOdoo() { odooEl("dlg-odoo").close(); }
+
+function descargarPedidoOdoo() {
+    const valor = odooEl("odoo-analitica").value.trim();
+    odooEl("odoo-error").textContent = "";
+    if (!valor) { odooEl("odoo-error").textContent = "Ingresá el ID de la cuenta analítica de Odoo."; return; }
+    if (!/^[0-9]+$/.test(valor) || Number(valor) <= 0) {
+        odooEl("odoo-error").textContent = "El ID de la cuenta analítica debe ser un número entero mayor a 0 (por ejemplo 932).";
+        return;
+    }
+
+    const datos = new FormData();
+    datos.append("analitica_id", valor);
+    fetch(ODOO_URL + odooClave + "/descargar", {method: "POST", body: datos})
+        .then(async r => {
+            if (!r.ok) {
+                let msg = "No se pudo generar el archivo.";
+                try { msg = (await r.json()).error || msg; } catch (e) {}
+                odooEl("odoo-error").textContent = msg;
+                return;
+            }
+            const blob = await r.blob();
+            const enlace = document.createElement("a");
+            enlace.href = URL.createObjectURL(blob);
+            enlace.download = odooNombreArchivo;
+            document.body.appendChild(enlace);
+            enlace.click();
+            enlace.remove();
+            setTimeout(() => URL.revokeObjectURL(enlace.href), 2000);
+            cerrarPedidoOdoo();
+        })
+        .catch(() => { odooEl("odoo-error").textContent = "No se pudo generar el archivo."; });
+}
+"""
+
+
 @presupuestos_bp.route("/<int:presupuesto_id>/resumen", methods=["GET"])
 def vista_resumen_presupuesto(presupuesto_id):
     db = _db()
     presupuesto = obtener_presupuesto(db, presupuesto_id)
     if not presupuesto:
         return "<h3>❌ Presupuesto no encontrado</h3>", 404
+
+    botones_odoo = _ODOO_PEDIDO_BOTONES_HTML if presupuesto.get("estado") == "adjudicado" else ""
+    dialogo_odoo = (
+        _ODOO_PEDIDO_DIALOGO_HTML + "<script>" + _ODOO_PEDIDO_JS.replace("__PRESUPUESTO_ID__", str(presupuesto_id)) + "</script>"
+        if botones_odoo else ""
+    )
 
     return f"""
     <html>
@@ -1675,8 +1809,10 @@ def vista_resumen_presupuesto(presupuesto_id):
                 <a href="/modulo/presupuestos/{presupuesto_id}/resumen/export.csv" class="btn">⬇ Exportar recursos (CSV)</a>
                 <a href="/modulo/presupuestos/{presupuesto_id}/resumen/reporte-explosion-insumos.xlsx" class="btn">⬇ Explosión de insumos (Excel)</a>
                 <a href="/modulo/presupuestos/{presupuesto_id}/resumen/reporte-prevision-fondos.xlsx" class="btn">⬇ Previsión de fondos (Excel)</a>
+                {botones_odoo}
             </div>
         </div>
+{dialogo_odoo}
 
         <div class="card">
             <h3 style="margin-top:0;">Resumen por tarea (Fabricación + Montaje)</h3>
@@ -1860,3 +1996,85 @@ def vista_reporte_prevision_fondos_xlsx(presupuesto_id):
     buffer = generar_reporte_prevision_fondos(db, presupuesto_id, obra_referencia)
     nombre_archivo = f"prevision_fondos_presupuesto_{presupuesto_id}.xlsx"
     return send_file(buffer, mimetype=_XLSX_MIMETYPE, as_attachment=True, download_name=nombre_archivo)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Reporte 3 — pedido "día 0" para carga masiva en Odoo (un archivo por sección)
+# ─────────────────────────────────────────────────────────────────
+
+_ODOO_SECCIONES = {"fab": "FABRICACION", "mon": "MONTAJE"}
+
+
+def _contexto_pedido_odoo(presupuesto_id, clave):
+    """Devuelve ((db, presupuesto, seccion), None) o (None, respuesta_de_error)."""
+    db = _db()
+    presupuesto = obtener_presupuesto(db, presupuesto_id)
+    if not presupuesto:
+        return None, (jsonify({"error": "Presupuesto no encontrado"}), 404)
+    seccion = _ODOO_SECCIONES.get(clave)
+    if not seccion:
+        return None, (jsonify({"error": "Sección inválida (usar fab o mon)"}), 404)
+    if presupuesto.get("estado") != "adjudicado":
+        return None, (jsonify({"error": "El pedido de Odoo solo se genera para presupuestos adjudicados."}), 400)
+    return (db, presupuesto, seccion), None
+
+
+@presupuestos_bp.route("/<int:presupuesto_id>/resumen/odoo-pedido/<clave>/preview", methods=["GET"])
+def vista_odoo_pedido_preview(presupuesto_id, clave):
+    """Avisos (conceptos sin producto de Odoo) y totales antes de descargar."""
+    contexto, error = _contexto_pedido_odoo(presupuesto_id, clave)
+    if error:
+        return error
+    db, presupuesto, seccion = contexto
+
+    obra_referencia = _obtener_obra_referencia(db, presupuesto, presupuesto_id)
+    try:
+        pedido = armar_pedido_odoo(db, presupuesto, seccion, obra_referencia)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    campo_analitica = "odoo_analitica_fab_id" if seccion == "FABRICACION" else "odoo_analitica_mon_id"
+    return jsonify({
+        "order_reference": pedido["order_reference"],
+        "label_analitica": f"ID de la cuenta analítica en Odoo para {pedido['order_reference']}",
+        "analitica_id": presupuesto.get(campo_analitica),
+        "nombre_archivo": nombre_archivo_pedido(pedido["order_reference"]),
+        "lineas": pedido["lineas"],
+        "sin_mapear": pedido["sin_mapear"],
+        "total_archivo": pedido["total_archivo"],
+        "total_rubros": pedido["total_rubros"],
+        "diferencia": pedido["diferencia"],
+        "suma_sin_mapear": pedido["suma_sin_mapear"],
+        "cuadra": pedido["cuadra"],
+    })
+
+
+@presupuestos_bp.route("/<int:presupuesto_id>/resumen/odoo-pedido/<clave>/descargar", methods=["POST"])
+def vista_odoo_pedido_descargar(presupuesto_id, clave):
+    """Valida el ID analítico, genera el .xlsx y recién ahí lo guarda en el presupuesto."""
+    contexto, error = _contexto_pedido_odoo(presupuesto_id, clave)
+    if error:
+        return error
+    db, presupuesto, seccion = contexto
+
+    try:
+        analitica_id = validar_analitica_id(request.form.get("analitica_id"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    obra_referencia = _obtener_obra_referencia(db, presupuesto, presupuesto_id)
+    try:
+        pedido = armar_pedido_odoo(db, presupuesto, seccion, obra_referencia)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if not pedido["lineas"]:
+        return jsonify({"error": "No hay líneas para exportar: ningún concepto tiene producto de Odoo asignado."}), 400
+
+    buffer = generar_excel_pedido_odoo(pedido, analitica_id)
+    actualizar_analitica_odoo(db, presupuesto_id, seccion, analitica_id)
+    return send_file(
+        buffer,
+        mimetype=_XLSX_MIMETYPE,
+        as_attachment=True,
+        download_name=nombre_archivo_pedido(pedido["order_reference"]),
+    )
