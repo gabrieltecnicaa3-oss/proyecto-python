@@ -6524,6 +6524,40 @@ def drive_test_upload():
         return jsonify({"ok": False, "error": str(e)})
 
 
+# ====================== MIGRACIÓN: renombrar familias de materiales ======================
+@app.route("/admin/fix-familias-categoria", methods=["GET", "POST"])
+def admin_fix_familias_categoria():
+    """Renombra categorias abreviadas/legacy en articulos_sum. Ejecutar una sola
+    vez por entorno (local y Railway) despues del deploy que agrega esta ruta."""
+    if not _is_admin_session():
+        return _respuesta_sin_permiso()
+
+    RENOMBRES = {
+        "PERFILES ANGULO": "Angulo Plegado",
+        "PL": "Planchuela",
+        "RD": "Redondo",
+        "TABLA DE PERFILES UPN": "UPN",
+    }
+
+    db = get_db()
+    resultados = []
+    for viejo, nuevo in RENOMBRES.items():
+        cursor = db.execute("UPDATE articulos_sum SET categoria = ? WHERE categoria = ?", (nuevo, viejo))
+        filas = cursor.rowcount if cursor.rowcount is not None else 0
+        resultados.append({"de": viejo, "a": nuevo, "filas": filas})
+    db.commit()
+
+    categorias_actuales = db.execute(
+        "SELECT COALESCE(categoria, '(null)'), COUNT(*) FROM articulos_sum GROUP BY categoria ORDER BY categoria"
+    ).fetchall()
+
+    return jsonify({
+        "ok": True,
+        "renombres_aplicados": resultados,
+        "categorias_actuales": [{"categoria": r[0], "cantidad": r[1]} for r in categorias_actuales],
+    })
+
+
 # ======================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

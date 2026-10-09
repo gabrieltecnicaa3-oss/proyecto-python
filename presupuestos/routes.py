@@ -22,6 +22,12 @@ from .calculo_presupuesto import (
     calcular_indicador_costo_kg,
     calcular_costo_estructura,
     calcular_indicador_mano_obra_consumibles,
+    calcular_kg_por_hh_presupuesto,
+    calcular_m2_total_presupuesto,
+    calcular_m2_por_dia_montaje,
+    calcular_usd_por_m2_total,
+    calcular_indicador_kg_tarea,
+    calcular_indicador_m2_tarea,
     calcular_resumen_recursos,
 )
 from .models import (
@@ -130,7 +136,7 @@ def api_listar_perfiles():
         try:
             rows = db.execute(
                 """
-                SELECT id, COALESCE(codigo, ''), COALESCE(descripcion, '')
+                SELECT id, COALESCE(codigo, ''), COALESCE(descripcion, ''), COALESCE(categoria, ''), COALESCE(kg_per_m, 0)
                 FROM articulos_sum
                 WHERE COALESCE(activo, 1) = 1
                 ORDER BY COALESCE(codigo, ''), COALESCE(descripcion, '')
@@ -139,7 +145,12 @@ def api_listar_perfiles():
         except Exception:
             rows = []
         perfiles = [
-            {"id": r[0], "label": (f"{r[1]} - {r[2]}" if r[1] else r[2]) or f"Perfil #{r[0]}"}
+            {
+                "id": r[0],
+                "label": (f"{r[1]} - {r[2]}" if r[1] else r[2]) or f"Perfil #{r[0]}",
+                "categoria": r[3] or "",
+                "kg_m": r[4] or 0,
+            }
             for r in rows
         ]
         return jsonify({"perfiles": perfiles}), 200
@@ -293,6 +304,7 @@ def api_crear_tarea(presupuesto_id):
         nombre = str(data.get("nombre") or "").strip()
         if not nombre:
             return jsonify({"error": "El nombre de la tarea es obligatorio."}), 400
+        tipo_tarea = str(data.get("tipo") or "").strip() or nombre
 
         tipos_in = data.get("tipos")
         tipos = list(TIPOS_SECCION) if tipos_in is None else tipos_in
@@ -301,9 +313,9 @@ def api_crear_tarea(presupuesto_id):
             return jsonify({"error": f"tipos debe ser un subconjunto no vacío de {TIPOS_SECCION}"}), 400
 
         orden = int(data.get("orden") or 0)
-        tarea_id = crear_tarea(db, presupuesto_id, nombre, orden=orden)
+        tarea_id = crear_tarea(db, presupuesto_id, nombre, orden=orden, tipo=tipo_tarea)
         try:
-            crear_secciones_tarea(db, tarea_id, obtener_config(db), tipos=tuple(tipos))
+            crear_secciones_tarea(db, tarea_id, obtener_config(db), tipos=tuple(tipos), nombre_tarea=tipo_tarea)
         except ValueError as ve:
             eliminar_tarea(db, tarea_id)
             return jsonify({"error": str(ve)}), 400
@@ -371,7 +383,8 @@ def api_agregar_seccion_tarea(tarea_id):
     existente (sección 2.1: se puede completar más adelante si hace falta)."""
     try:
         db = _db()
-        if not obtener_tarea(db, tarea_id):
+        tarea = obtener_tarea(db, tarea_id)
+        if not tarea:
             return jsonify({"error": "Tarea no encontrada"}), 404
 
         data = _body()
@@ -380,7 +393,7 @@ def api_agregar_seccion_tarea(tarea_id):
             return jsonify({"error": f"tipo debe ser uno de {TIPOS_SECCION}"}), 400
 
         try:
-            crear_secciones_tarea(db, tarea_id, obtener_config(db), tipos=(tipo,))
+            crear_secciones_tarea(db, tarea_id, obtener_config(db), tipos=(tipo,), nombre_tarea=(tarea.get("tipo") or tarea["nombre"]))
         except ValueError as ve:
             return jsonify({"error": str(ve)}), 400
 
@@ -459,7 +472,7 @@ def api_crear_item(seccion_id):
 
         tipo_item = data.get("tipo_item")
         perfil_id = data.get("perfil_id")
-        if perfil_id is None and rubro == "materiales" and tipo_item == "perfil":
+        if perfil_id is None and rubro == "materiales" and tipo_item in ("perfil", "chapa", "grating"):
             # La columna indexada perfil_id es para resolver kg_m/m2_m desde
             # Suministros; si no vino explícita, se deriva de datos.perfil_id
             # (que es lo que realmente usa el motor de cálculo).
@@ -501,7 +514,7 @@ def api_actualizar_item(item_id):
         perfil_id = data.get("perfil_id")
         rubro_actual = data.get("rubro") or item["rubro"]
         tipo_item_actual = data.get("tipo_item") or item["tipo_item"]
-        if perfil_id is None and datos is not None and rubro_actual == "materiales" and tipo_item_actual == "perfil":
+        if perfil_id is None and datos is not None and rubro_actual == "materiales" and tipo_item_actual in ("perfil", "chapa", "grating"):
             perfil_id = datos.get("perfil_id")
 
         actualizar_item_costo(
@@ -572,7 +585,10 @@ def _calcular_resultado_tarea(db, tarea_id):
         }
 
     perfiles_por_id = _obtener_perfiles_por_id(db, perfil_ids)
-    resultado = calcular_tarea(fabricacion_items, fabricacion_pcts, montaje_items, montaje_pcts, perfiles_por_id)
+    resultado = calcular_tarea(
+        fabricacion_items, fabricacion_pcts, montaje_items, montaje_pcts, perfiles_por_id,
+        tipo_cambio_referencia=tipo_cambio_referencia,
+    )
     resultado["fabricacion"]["indicador_mano_obra"] = calcular_indicador_mano_obra_consumibles(
         resultado["fabricacion"]["items"], tipo_cambio_referencia
     )
@@ -586,6 +602,29 @@ def api_recalcular_tarea(tarea_id):
         if not obtener_tarea(db, tarea_id):
             return jsonify({"error": "Tarea no encontrada"}), 404
         return jsonify({"resultado": _calcular_resultado_tarea(db, tarea_id)}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@presupuestos_bp.route("/api/tareas/<int:tarea_id>/indicador", methods=["GET"])
+def api_indicador_tarea(tarea_id):
+    """Indicadores propios de la tarea (no cruzan con el resto del presupuesto):
+    KG/HH + USD/kg (modo perfil) y m2/día + USD/m2 (modo chapa/grating)."""
+    try:
+        db = _db()
+        tarea = obtener_tarea(db, tarea_id)
+        if not tarea:
+            return jsonify({"error": "Tarea no encontrada"}), 404
+        presupuesto = obtener_presupuesto(db, tarea["presupuesto_id"])
+        tipo_cambio_referencia = presupuesto["tipo_cambio_referencia"] if presupuesto else None
+
+        resultado = _calcular_resultado_tarea(db, tarea_id)
+        indicador = calcular_indicador_kg_tarea(resultado, tipo_cambio_referencia)
+        indicador_m2 = calcular_indicador_m2_tarea(resultado, tipo_cambio_referencia)
+        indicador["m2_por_dia_montaje"] = indicador_m2["m2_por_dia_montaje"]
+        indicador["usd_por_m2_total"] = indicador_m2["usd_por_m2_total"]
+        indicador["tipo_cambio_referencia"] = tipo_cambio_referencia
+        return jsonify(indicador), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -725,6 +764,12 @@ def api_indicador_kg(presupuesto_id):
         costo_estructura = calcular_costo_estructura(resultados)
         indicador = calcular_indicador_costo_kg(
             costo_estructura, peso_total_kg, presupuesto["tipo_cambio_referencia"]
+        )
+        indicador["kg_por_hh"] = calcular_kg_por_hh_presupuesto(resultados)
+        m2_total = calcular_m2_total_presupuesto(resultados)
+        indicador["m2_por_dia_montaje"] = calcular_m2_por_dia_montaje(resultados)
+        indicador["usd_por_m2_total"] = calcular_usd_por_m2_total(
+            totales["precio_venta_presupuesto"], m2_total, presupuesto["tipo_cambio_referencia"]
         )
         indicador["precio_venta_presupuesto"] = totales["precio_venta_presupuesto"]
         indicador["tipo_cambio_referencia"] = presupuesto["tipo_cambio_referencia"]

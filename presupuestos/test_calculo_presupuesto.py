@@ -10,6 +10,10 @@ from presupuestos.calculo_presupuesto import (
     calcular_materiales_perfil,
     calcular_placas,
     calcular_materiales_no_listado,
+    calcular_materiales_chapa,
+    calcular_tornillos,
+    calcular_materiales_grating,
+    calcular_fijaciones,
     calcular_bulones,
     calcular_pintura,
     calcular_fletes,
@@ -31,6 +35,12 @@ from presupuestos.calculo_presupuesto import (
     calcular_costo_estructura,
     calcular_indicador_mano_obra_consumibles,
     calcular_resumen_recursos,
+    calcular_kg_por_hh_presupuesto,
+    calcular_m2_total_presupuesto,
+    calcular_m2_por_dia_montaje,
+    calcular_usd_por_m2_total,
+    calcular_indicador_kg_tarea,
+    calcular_indicador_m2_tarea,
 )
 
 
@@ -56,6 +66,35 @@ def test_calcular_placas():
 def test_calcular_materiales_no_listado():
     datos = {"descripcion": "Bulones especiales", "cantidad": 20, "unidad": "un", "precio_unitario": 15.0}
     assert _close(calcular_materiales_no_listado(datos), 300.0)
+
+
+def test_calcular_materiales_chapa():
+    perfil = {"m2_m": 1.1}
+    datos = {"cantidad": 2, "largo_mm": 2000, "precio_unitario_m2": 5.0}
+    r = calcular_materiales_chapa(datos, perfil)
+    assert _close(r["m2"], 4.0), r
+    assert _close(r["subtotal"], 20.0), r
+
+
+def test_calcular_tornillos():
+    r = calcular_tornillos({"precio_unitario": 0.5}, 10.0)
+    assert _close(r["cantidad"], 40.0), r
+    assert _close(r["subtotal"], 20.0), r
+
+
+def test_calcular_materiales_grating():
+    perfil = {"kg_m": 25.0}
+    datos = {"cantidad": 3, "m2": 2.0, "precio_unitario_m2": 40.0}
+    r = calcular_materiales_grating(datos, perfil)
+    assert _close(r["m2"], 6.0), r
+    assert _close(r["peso"], 150.0), r
+    assert _close(r["subtotal"], 240.0), r
+
+
+def test_calcular_fijaciones():
+    r = calcular_fijaciones({"precio_unitario": 0.8}, 6.0)
+    assert _close(r["cantidad"], 24.0), r
+    assert _close(r["subtotal"], 19.2), r
 
 
 def test_calcular_indicador_mano_obra_consumibles():
@@ -127,7 +166,67 @@ def test_seccion_fabricacion_orden_de_acumuladores():
     assert _close(items_resueltos[2]["subtotal"], 12.6)           # 0.02 * (600+30)
     assert _close(items_resueltos[3]["subtotal"], 360.0)          # 20 * 18 m2
     assert _close(resumen["costo_directo"], 600 + 30 + 12.6 + 360)
-    assert _close(resumen["m2_total_materiales"], 18.0)
+
+
+def test_seccion_fabricacion_chapa_y_tornillos():
+    # Tornillos (igual que Placas) usa el m2 TOTAL de la sección, sin
+    # importar su posición en la lista.
+    items = [
+        {"rubro": "materiales", "tipo_item": "chapa",
+         "datos": {"perfil_id": 1, "cantidad": 2, "largo_mm": 2000, "precio_unitario_m2": 5.0}},
+        {"rubro": "materiales", "tipo_item": "tornillos",
+         "datos": {"descripcion": "Tornillos", "precio_unitario": 0.5}},
+        {"rubro": "materiales", "tipo_item": "no_listado",
+         "datos": {"descripcion": "Selladora", "cantidad": 3, "precio_unitario": 10.0}},
+    ]
+    perfiles = {1: {"m2_m": 1.1}}
+    items_resueltos, resumen = calcular_seccion_fabricacion(items, perfiles)
+
+    assert _close(items_resueltos[0]["subtotal"], 20.0)           # chapa: 4.0 m2 * 5.0
+    assert _close(items_resueltos[0]["m2"], 4.0)
+    assert _close(items_resueltos[1]["cantidad"], 16.0)           # 4 * 4.0 m2
+    assert _close(items_resueltos[1]["subtotal"], 8.0)            # 16.0 * 0.5
+    assert _close(items_resueltos[2]["subtotal"], 30.0)           # no_listado
+    assert _close(resumen["costo_directo"], 20.0 + 8.0 + 30.0)
+    assert _close(resumen["m2_total_materiales"], 4.0)
+
+
+def test_pintura_no_depende_del_orden_de_items():
+    # Pintura puede quedar creada (autocreada en la UI) con un id menor que
+    # las líneas de materiales; su m2 total NO debe depender de esa posición.
+    items = [
+        {"rubro": "pintura", "datos": {"esquema_id": 1, "precio_unitario_m2": 5.0}},
+        {"rubro": "materiales", "tipo_item": "perfil",
+         "datos": {"perfil_id": 1, "cantidad": 10, "largo_mm": 6000, "precio_unitario_kg": 2.0}},
+    ]
+    perfiles = {1: {"kg_m": 5.0, "m2_m": 0.3}}
+    items_resueltos, resumen = calcular_seccion_fabricacion(items, perfiles, tipo_cambio_referencia=1000)
+    assert _close(items_resueltos[0]["m2"], 18.0), items_resueltos[0]
+    assert _close(items_resueltos[0]["subtotal"], 5.0 * 1000 * 18.0), items_resueltos[0]
+
+
+def test_seccion_fabricacion_grating_y_fijaciones():
+    # Fijaciones (igual que Tornillos/Placas) usa el m2 TOTAL de grating de la
+    # sección, sin importar su posición en la lista.
+    items = [
+        {"rubro": "materiales", "tipo_item": "grating",
+         "datos": {"perfil_id": 1, "cantidad": 3, "m2": 2.0, "precio_unitario_m2": 40.0}},
+        {"rubro": "materiales", "tipo_item": "fijaciones",
+         "datos": {"descripcion": "Fijaciones", "precio_unitario": 0.8}},
+        {"rubro": "materiales", "tipo_item": "no_listado",
+         "datos": {"descripcion": "Selladora", "cantidad": 3, "precio_unitario": 10.0}},
+    ]
+    perfiles = {1: {"kg_m": 25.0}}
+    items_resueltos, resumen = calcular_seccion_fabricacion(items, perfiles)
+
+    assert _close(items_resueltos[0]["subtotal"], 240.0)          # grating: 6.0 m2 * 40.0
+    assert _close(items_resueltos[0]["m2"], 6.0)
+    assert _close(items_resueltos[0]["peso"], 150.0)
+    assert _close(items_resueltos[1]["cantidad"], 24.0)           # 4 * 6.0 m2
+    assert _close(items_resueltos[1]["subtotal"], 19.2)           # 24.0 * 0.8
+    assert _close(items_resueltos[2]["subtotal"], 30.0)           # no_listado
+    assert _close(resumen["costo_directo"], 240.0 + 19.2 + 30.0)
+    assert _close(resumen["m2_total_materiales"], 6.0)
 
 
 def test_seccion_montaje_simple():
@@ -256,6 +355,8 @@ def test_resumen_recursos_agrupa_por_perfil_y_equipo():
             "perfil_id": 1, "cantidad": 10, "largo_mm": 6000, "precio_unitario_kg": 2.0,
         }},
         {"rubro": "mano_obra", "datos": {"operarios": 2, "dias": 5, "tarifa_dh": 1000}},
+        # consumibles espeja operarios/dias de mano_obra: NO debe sumar de nuevo.
+        {"rubro": "consumibles", "datos": {"operarios": 2, "dias": 5, "tarifa_dh": 50}},
     ]
     fabricacion_pcts = {"gg_pct": 0, "beneficio_pct": 0, "imp_pct": 0}
     montaje_items = [
@@ -276,6 +377,81 @@ def test_resumen_recursos_agrupa_por_perfil_y_equipo():
     assert len(recursos["materiales"]) == 1
     assert _close(recursos["materiales"][0]["cantidad"], 2 * 10)
     assert _close(recursos["materiales"][0]["peso_kg"], 2 * 300.0)
+
+
+def test_m2_por_dia_montaje_y_usd_por_m2_total():
+    perfil = {"m2_m": 1.1}
+    fabricacion_items = [
+        {"rubro": "materiales", "tipo_item": "chapa", "datos": {
+            "perfil_id": 1, "cantidad": 2, "largo_mm": 2000, "precio_unitario_m2": 5.0,
+        }},
+    ]
+    fabricacion_pcts = {"gg_pct": 0, "beneficio_pct": 0, "imp_pct": 0}
+    montaje_items = [
+        {"rubro": "mano_obra", "datos": {"operarios": 2, "dias": 2, "tarifa_dh": 100.0}},
+    ]
+    montaje_pcts = {"gg_pct": 0, "beneficio_pct": 0, "imp_pct": 0}
+
+    resultado = calcular_tarea(
+        fabricacion_items, fabricacion_pcts, montaje_items, montaje_pcts, perfiles_por_id={1: perfil}
+    )
+    m2_total = calcular_m2_total_presupuesto([resultado])
+    assert _close(m2_total, 4.0), m2_total
+
+    m2_por_dia = calcular_m2_por_dia_montaje([resultado])
+    assert _close(m2_por_dia, 4.0 / 2.0), m2_por_dia
+
+    totales = calcular_presupuesto([resultado])
+    usd_por_m2 = calcular_usd_por_m2_total(totales["precio_venta_presupuesto"], m2_total, tipo_cambio_referencia=1000)
+    assert _close(usd_por_m2, (totales["precio_venta_presupuesto"] / 1000) / 4.0), usd_por_m2
+
+    # Sin m2 ni tipo de cambio, no debe romper (división por cero evitada).
+    assert calcular_m2_por_dia_montaje([]) == 0.0
+    assert calcular_usd_por_m2_total(1000.0, 0.0, None) == 0.0
+
+
+def test_indicador_kg_tarea():
+    perfil = {"kg_m": 5.0, "m2_m": 0.3}
+    fabricacion_items = [
+        {"rubro": "materiales", "tipo_item": "perfil", "datos": {
+            "perfil_id": 1, "cantidad": 10, "largo_mm": 6000, "precio_unitario_kg": 2.0,
+        }},
+        {"rubro": "mano_obra", "datos": {"operarios": 2, "dias": 5, "tarifa_dh": 100.0}},
+    ]
+    fabricacion_pcts = {"gg_pct": 0, "beneficio_pct": 0, "imp_pct": 0}
+    montaje_pcts = {"gg_pct": 0, "beneficio_pct": 0, "imp_pct": 0}
+    resultado = calcular_tarea(
+        fabricacion_items, fabricacion_pcts, [], montaje_pcts, perfiles_por_id={1: perfil}
+    )
+    indicador = calcular_indicador_kg_tarea(resultado, tipo_cambio_referencia=1000)
+    # peso = 300kg, hh = 2*5*10 = 100
+    assert _close(indicador["kg_por_hh"], 300.0 / 100.0)
+    # costo_estructura = materiales(600) + mano_obra(2*5*100=1000) = 1600
+    assert _close(indicador["costo_por_kg"], 1600.0 / 300.0)
+    assert _close(indicador["costo_por_kg_usd"], indicador["costo_por_kg"] / 1000)
+
+
+def test_indicador_m2_tarea():
+    perfil = {"m2_m": 1.1}
+    fabricacion_items = [
+        {"rubro": "materiales", "tipo_item": "chapa", "datos": {
+            "perfil_id": 1, "cantidad": 2, "largo_mm": 2000, "precio_unitario_m2": 5.0,
+        }},
+    ]
+    fabricacion_pcts = {"gg_pct": 0, "beneficio_pct": 0, "imp_pct": 0}
+    montaje_items = [
+        {"rubro": "mano_obra", "datos": {"operarios": 2, "dias": 2, "tarifa_dh": 100.0}},
+    ]
+    montaje_pcts = {"gg_pct": 0, "beneficio_pct": 0, "imp_pct": 0}
+    resultado = calcular_tarea(
+        fabricacion_items, fabricacion_pcts, montaje_items, montaje_pcts, perfiles_por_id={1: perfil}
+    )
+    indicador = calcular_indicador_m2_tarea(resultado, tipo_cambio_referencia=1000)
+    # m2 = 4.0, dias montaje = 2
+    assert _close(indicador["m2_total"], 4.0)
+    assert _close(indicador["m2_por_dia_montaje"], 4.0 / 2.0)
+    # costo_directo fabricacion = 20.0 (4.0 m2 * 5.0), usd = 20.0/1000
+    assert _close(indicador["usd_por_m2_total"], (20.0 / 1000) / 4.0)
 
 
 def _run_all():

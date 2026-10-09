@@ -23,8 +23,9 @@ from flask import request, redirect, send_file
 
 from . import presupuestos_bp
 from .routes import _db, _todos_los_resultados_tarea, _resumen_recursos_con_nombres
-from .constants import ESTADOS_PRESUPUESTO, TIPOS_SECCION, RUBROS_POR_SECCION, TAREAS_ESTANDAR
+from .constants import ESTADOS_PRESUPUESTO, TIPOS_SECCION, RUBROS_POR_SECCION, TAREAS_ESTANDAR, TAREAS_MODO_CHAPA, TAREAS_MODO_GRATING, MATERIALES_TEMPLATE_POR_TAREA, TAREAS_SELECCIONABLES
 from .calculo_presupuesto import calcular_presupuesto
+from .reportes_excel import generar_reporte_explosion_insumos, generar_reporte_prevision_fondos
 from .models import (
     crear_presupuesto,
     obtener_presupuesto,
@@ -32,12 +33,27 @@ from .models import (
     actualizar_presupuesto,
     actualizar_estado_presupuesto,
     eliminar_presupuesto,
+    copiar_presupuesto,
     crear_tarea,
     listar_tareas,
     crear_secciones_tarea,
     eliminar_tarea,
     obtener_config,
 )
+
+
+def _obtener_obra_referencia(db, presupuesto, presupuesto_id):
+    """`presupuestos.obra_referencia` (sección 5.3) existe en la tabla pero
+    ningún CRUD de models.py la expone todavía (campo histórico, sin pantalla
+    de carga) — se lee directo acá. Si está vacía, se usa el título o el
+    cliente del presupuesto como respaldo para que el Reporte 2 no quede con
+    el nombre de obra en blanco."""
+    row = db.execute("SELECT obra_referencia FROM presupuestos WHERE id = ?", (presupuesto_id,)).fetchone()
+    obra_referencia = (row[0] if row else None) or ""
+    obra_referencia = obra_referencia.strip()
+    if not obra_referencia:
+        obra_referencia = (presupuesto.get("titulo") or presupuesto.get("cliente") or "").strip()
+    return obra_referencia
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -97,7 +113,7 @@ input[readonly] { background: #f1f5f9; color: #475569; cursor: not-allowed; }
 .resultado-box .fila { display: flex; justify-content: space-between; padding: 3px 0; }
 .muted { color: #64748b; font-size: 12px; }
 .sin-datos { text-align: center; padding: 24px; color: #64748b; }
-.tarea-scroll-wrap { max-height: 78vh; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 10px; }
+.tarea-scroll-wrap { border: 1px solid #e2e8f0; border-radius: 10px; }
 .panel-sticky {
     position: sticky; top: 0; z-index: 5; background: #fff; border-bottom: 2px solid #c7d2fe;
     padding: 10px 12px; box-shadow: 0 4px 10px rgba(15,23,42,0.06);
@@ -105,6 +121,8 @@ input[readonly] { background: #f1f5f9; color: #475569; cursor: not-allowed; }
 .panel-sticky .grid-paneles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
 .mini-resultado { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 8px 10px; font-size: 12px; }
 .mini-resultado.indicador { background: #eff6ff; border-color: #bfdbfe; }
+.mini-resultado.mini-fab { background: #eafbf0; border-color: #c3e6c9; }
+.mini-resultado.mini-mon { background: #fdf0e3; border-color: #f5d6ad; }
 .mini-resultado .fila { display: flex; justify-content: space-between; padding: 1px 0; }
 .mini-resultado .fila.total { font-weight: 800; border-top: 1px solid #bbf7d0; margin-top: 3px; padding-top: 3px; }
 .guardando-badge {
@@ -118,9 +136,12 @@ input[readonly] { background: #f1f5f9; color: #475569; cursor: not-allowed; }
 .rubro-block table th, .rubro-block table td { padding: 3px 6px; }
 .rubro-block input, .rubro-block select { margin-bottom: 0; padding: 3px 6px; font-size: 12px; }
 .seccion-wrap { padding: 6px 8px; border: 1px solid #dbe4ee; border-radius: 8px; margin-bottom: 6px; background: #fbfdff; }
+.seccion-wrap-fabricacion { background: #eaf7ec; border-color: #c3e6c9; }
+.seccion-wrap-montaje { background: #fdf0e3; border-color: #f5d6ad; }
 .tabla-materiales th, .tabla-materiales td { padding: 2px 5px; font-size: 11px; white-space: nowrap; }
 .tabla-materiales input, .tabla-materiales select { padding: 2px 5px; font-size: 11px; min-width: 76px; margin-bottom: 0; }
 .tabs-tareas { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 2px solid #e2e8f0; margin-bottom: 10px; }
+.oculto { display: none; }
 .tab-tarea {
     background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe; border-bottom: none;
     border-radius: 8px 8px 0 0; padding: 8px 14px; font-weight: 700; font-size: 13px; cursor: pointer;
@@ -156,9 +177,14 @@ def vista_listado():
     filas = ""
     for p in presupuestos:
         total_presupuesto = calcular_presupuesto(_todos_los_resultados_tarea(db, p["id"]))["precio_venta_presupuesto"]
+        copia_badge = (
+            f'<br><span class="muted" style="font-size:11px;">📋 copia de {p["copia_de_label"] or ("#" + str(p["copiado_de_id"]))}</span>'
+            if p.get("copiado_de_id") else ""
+        )
         filas += f"""
         <tr>
-            <td><b>#{p['id']}</b></td>
+            <td><b>#{p['id']}</b>{copia_badge}</td>
+            <td>{p['numero_presupuesto'] or '-'}</td>
             <td>{p['cliente'] or '-'}</td>
             <td>{p['planta'] or '-'}</td>
             <td>{_fmt_money(total_presupuesto)}</td>
@@ -166,6 +192,9 @@ def vista_listado():
             <td>{_badge_estado(p['estado'])}</td>
             <td>
                 <a class="btn btn-sm" href="/modulo/presupuestos/{p['id']}">Ver</a>
+                <form method="post" action="/modulo/presupuestos/{p['id']}/copiar" style="display:inline;">
+                    <button type="submit" class="btn btn-sm btn-secondary">Copiar</button>
+                </form>
                 <form method="post" action="/modulo/presupuestos/{p['id']}/eliminar" style="display:inline;" onsubmit="return confirm('¿Eliminar presupuesto #{p['id']}? Esta acción no se puede deshacer.');">
                     <button type="submit" class="btn btn-sm btn-danger">Eliminar</button>
                 </form>
@@ -175,7 +204,7 @@ def vista_listado():
 
     tabla = f"""
     <table>
-        <tr><th>ID</th><th>Cliente</th><th>Planta</th><th>Precio venta total</th><th>Creado</th><th>Estado</th><th>Acciones</th></tr>
+        <tr><th>ID</th><th>N° presupuesto</th><th>Cliente</th><th>Planta</th><th>Precio venta total</th><th>Creado</th><th>Estado</th><th>Acciones</th></tr>
         {filas}
     </table>
     """ if presupuestos else "<div class='sin-datos'>Todavía no hay presupuestos cargados.</div>"
@@ -229,19 +258,26 @@ def _form_datos_generales(titulo_pagina, datos=None, boton_texto="Guardar"):
                         <input type="text" name="cliente" value="{datos.get('cliente') or ''}" required>
                     </div>
                     <div>
-                        <label>Planta</label>
-                        <input type="text" name="planta" value="{datos.get('planta') or ''}">
+                        <label>N° de presupuesto</label>
+                        <input type="text" name="numero_presupuesto" value="{datos.get('numero_presupuesto') or ''}">
                     </div>
                 </div>
                 <div class="grid2">
                     <div>
+                        <label>Planta</label>
+                        <input type="text" name="planta" value="{datos.get('planta') or ''}">
+                    </div>
+                    <div>
                         <label>Título</label>
                         <input type="text" name="titulo" value="{datos.get('titulo') or ''}">
                     </div>
+                </div>
+                <div class="grid2">
                     <div>
                         <label>Fecha</label>
                         <input type="date" name="fecha" value="{datos.get('fecha') or ''}">
                     </div>
+                    <div></div>
                 </div>
                 <label>Tipo de cambio de referencia</label>
                 <input type="number" step="0.0001" name="tipo_cambio_referencia" value="{datos.get('tipo_cambio_referencia') if datos.get('tipo_cambio_referencia') is not None else ''}">
@@ -260,9 +296,9 @@ def _crear_tareas_estandar(db, presupuesto_id):
     depende del proyecto; acá solo quedan predeterminadas y listas."""
     config = obtener_config(db)
     for orden, nombre in enumerate(TAREAS_ESTANDAR, start=1):
-        tarea_id = crear_tarea(db, presupuesto_id, nombre, orden=orden)
+        tarea_id = crear_tarea(db, presupuesto_id, nombre, orden=orden, tipo=nombre)
         try:
-            crear_secciones_tarea(db, tarea_id, config, tipos=("FABRICACION", "MONTAJE"))
+            crear_secciones_tarea(db, tarea_id, config, tipos=("FABRICACION", "MONTAJE"), nombre_tarea=nombre)
         except ValueError:
             eliminar_tarea(db, tarea_id)
 
@@ -278,6 +314,7 @@ def vista_crear_presupuesto():
             titulo=(request.form.get("titulo") or "").strip(),
             fecha=(request.form.get("fecha") or "").strip() or None,
             tipo_cambio_referencia=request.form.get("tipo_cambio_referencia") or None,
+            numero_presupuesto=(request.form.get("numero_presupuesto") or "").strip() or None,
         )
         _crear_tareas_estandar(db, presupuesto_id)
         return redirect(f"/modulo/presupuestos/{presupuesto_id}")
@@ -301,10 +338,23 @@ def vista_editar_presupuesto(presupuesto_id):
             titulo=(request.form.get("titulo") or "").strip(),
             fecha=(request.form.get("fecha") or "").strip() or None,
             tipo_cambio_referencia=request.form.get("tipo_cambio_referencia") or None,
+            numero_presupuesto=(request.form.get("numero_presupuesto") or "").strip() or None,
         )
         return redirect(f"/modulo/presupuestos/{presupuesto_id}")
 
     return _form_datos_generales(f"Editar presupuesto #{presupuesto_id}", datos=presupuesto)
+
+
+@presupuestos_bp.route("/<int:presupuesto_id>/copiar", methods=["POST"])
+def vista_copiar_presupuesto(presupuesto_id):
+    """Duplica tareas/secciones/items del presupuesto (ver copiar_presupuesto en
+    models.py) y manda directo a la pantalla de edición del borrador nuevo,
+    para completar los datos generales que arrancan en blanco."""
+    db = _db()
+    nuevo_id = copiar_presupuesto(db, presupuesto_id)
+    if nuevo_id is None:
+        return "<h3>❌ Presupuesto no encontrado</h3>", 404
+    return redirect(f"/modulo/presupuestos/{nuevo_id}/editar")
 
 
 @presupuestos_bp.route("/<int:presupuesto_id>/estado", methods=["POST"])
@@ -330,13 +380,14 @@ def vista_eliminar_presupuesto(presupuesto_id):
 @presupuestos_bp.route("/<int:presupuesto_id>/tareas", methods=["POST"])
 def vista_crear_tarea(presupuesto_id):
     db = _db()
-    nombre = (request.form.get("nombre") or "").strip()
+    tipo_tarea = (request.form.get("tipo") or "").strip()
+    nombre = (request.form.get("nombre") or "").strip() or tipo_tarea
     tipos = tuple(t for t in ("FABRICACION", "MONTAJE") if request.form.get(f"tipo_{t.lower()}"))
-    if nombre and tipos:
+    if tipo_tarea and nombre and tipos:
         orden = int(request.form.get("orden") or 0)
-        tarea_id = crear_tarea(db, presupuesto_id, nombre, orden=orden)
+        tarea_id = crear_tarea(db, presupuesto_id, nombre, orden=orden, tipo=tipo_tarea)
         try:
-            crear_secciones_tarea(db, tarea_id, obtener_config(db), tipos=tipos)
+            crear_secciones_tarea(db, tarea_id, obtener_config(db), tipos=tipos, nombre_tarea=tipo_tarea)
         except ValueError:
             eliminar_tarea(db, tarea_id)
     return redirect(f"/modulo/presupuestos/{presupuesto_id}")
@@ -362,23 +413,45 @@ _CAMPOS_POR_RUBRO_JS = json.dumps({
         {"name": "perfil_id", "label": "ID Perfil (Suministros)", "type": "number"},
         {"name": "cantidad", "label": "Cantidad", "type": "number"},
         {"name": "largo_mm", "label": "Largo (mm)", "type": "number"},
-        {"name": "precio_unitario_kg", "label": "Precio unitario ($/kg)", "type": "number"},
+        {"name": "precio_unitario_kg", "label": "Precio unitario (USD/KG)", "type": "number"},
     ],
     "materiales_porcentaje": [
         {"name": "descripcion", "label": "Descripción (elemento)", "type": "text"},
         {"name": "porcentaje", "label": "% sobre peso de materiales", "type": "number"},
-        {"name": "precio_unitario_kg", "label": "Valor unitario ($/kg)", "type": "number"},
+        {"name": "precio_unitario_kg", "label": "Valor unitario (USD/KG)", "type": "number"},
     ],
     "materiales_no_listado": [
         {"name": "descripcion", "label": "Descripción", "type": "text"},
         {"name": "cantidad", "label": "Cantidad", "type": "number"},
         {"name": "unidad", "label": "Unidad", "type": "text"},
-        {"name": "precio_unitario", "label": "Precio unitario", "type": "number"},
+        {"name": "precio_unitario", "label": "Precio unitario (USD)", "type": "number"},
+    ],
+    "materiales_chapa": [
+        {"name": "descripcion", "label": "Descripción", "type": "text"},
+        {"name": "perfil_id", "label": "Tipo", "type": "number"},
+        {"name": "cantidad", "label": "Cantidad", "type": "number"},
+        {"name": "largo_mm", "label": "Largo (mm)", "type": "number"},
+        {"name": "precio_unitario_m2", "label": "USD/M2", "type": "number"},
+    ],
+    "materiales_tornillos": [
+        {"name": "descripcion", "label": "Descripción", "type": "text"},
+        {"name": "precio_unitario", "label": "USD/UNIDAD", "type": "number"},
+    ],
+    "materiales_grating": [
+        {"name": "descripcion", "label": "Descripción", "type": "text"},
+        {"name": "perfil_id", "label": "Tipo", "type": "number"},
+        {"name": "cantidad", "label": "Cantidad", "type": "number"},
+        {"name": "m2", "label": "M2", "type": "number"},
+        {"name": "precio_unitario_m2", "label": "USD/M2", "type": "number"},
+    ],
+    "materiales_fijaciones": [
+        {"name": "descripcion", "label": "Descripción", "type": "text"},
+        {"name": "precio_unitario", "label": "USD/UNIDAD", "type": "number"},
     ],
     "bulones": [{"name": "porcentaje", "label": "% sobre materiales", "type": "number"}],
     "pintura": [
         {"name": "esquema_id", "label": "ID Esquema de pintura", "type": "number"},
-        {"name": "precio_unitario_m2", "label": "Precio unitario ($/m2)", "type": "number"},
+        {"name": "precio_unitario_m2", "label": "Precio unitario (USD/M2)", "type": "number"},
     ],
     "fletes": [
         {"name": "descripcion", "label": "Descripción", "type": "text"},
@@ -418,6 +491,11 @@ _CAMPOS_POR_RUBRO_JS = json.dumps({
 
 _RUBROS_POR_SECCION_JS = json.dumps(RUBROS_POR_SECCION, ensure_ascii=False)
 _TIPOS_SECCION_JS = json.dumps(list(TIPOS_SECCION), ensure_ascii=False)
+_TAREAS_MODO_CHAPA_JS = json.dumps(list(TAREAS_MODO_CHAPA), ensure_ascii=False)
+_TAREAS_MODO_GRATING_JS = json.dumps(list(TAREAS_MODO_GRATING), ensure_ascii=False)
+_MATERIALES_TEMPLATE_POR_TAREA_JS = json.dumps(
+    {k: list(v) for k, v in MATERIALES_TEMPLATE_POR_TAREA.items()}, ensure_ascii=False
+)
 
 
 @presupuestos_bp.route("/<int:presupuesto_id>", methods=["GET"])
@@ -441,7 +519,7 @@ def vista_detalle_presupuesto(presupuesto_id):
     if not tareas:
         tabs_tareas_html = ""
     _tareas_info_js = json.dumps(
-        {str(t["id"]): {"nombre": t["nombre"], "orden": t["orden"]} for t in tareas}, ensure_ascii=False
+        {str(t["id"]): {"nombre": t["nombre"], "orden": t["orden"], "tipo": t.get("tipo") or t["nombre"]} for t in tareas}, ensure_ascii=False
     )
     _tareas_ids_js = json.dumps([t["id"] for t in tareas])
 
@@ -450,11 +528,16 @@ def vista_detalle_presupuesto(presupuesto_id):
         f'<input type="checkbox" name="tipo_{tipo.lower()}" value="1" checked style="width:auto;margin:0;"> {tipo.title()}</label>'
         for tipo in TIPOS_SECCION
     )
+    opciones_tareas_seleccionables = "".join(
+        f'<option value="{nombre}">{nombre}</option>' for nombre in TAREAS_SELECCIONABLES
+    )
 
     return f"""
     <html>
     <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.css">
+    <script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
     <style>{_ESTILO_BASE}</style>
     </head>
     <body>
@@ -465,18 +548,24 @@ def vista_detalle_presupuesto(presupuesto_id):
                 <a href="/modulo/presupuestos" class="btn btn-secondary">⬅️ Volver al listado</a>
                 <a href="/modulo/presupuestos/{presupuesto_id}/editar" class="btn">✏️ Editar datos</a>
                 <a href="/modulo/presupuestos/{presupuesto_id}/resumen" class="btn">📊 Resumen y reportes</a>
+                <form method="post" action="/modulo/presupuestos/{presupuesto_id}/copiar" style="display:inline;">
+                    <button type="submit" class="btn btn-secondary">📋 Copiar presupuesto</button>
+                </form>
             </div>
         </div>
 
         <div class="card">
             <div class="grid3">
+                <div><span class="muted">N° de presupuesto</span><br><b>{presupuesto['numero_presupuesto'] or '-'}</b></div>
                 <div><span class="muted">Cliente</span><br><b>{presupuesto['cliente'] or '-'}</b></div>
                 <div><span class="muted">Planta</span><br><b>{presupuesto['planta'] or '-'}</b></div>
-                <div><span class="muted">Título</span><br><b>{presupuesto['titulo'] or '-'}</b></div>
             </div>
             <div class="grid3" style="margin-top:8px;">
+                <div><span class="muted">Título</span><br><b>{presupuesto['titulo'] or '-'}</b></div>
                 <div><span class="muted">Fecha</span><br><b>{presupuesto['fecha'] or '-'}</b></div>
                 <div><span class="muted">Tipo de cambio ref.</span><br><b>{presupuesto['tipo_cambio_referencia'] or '-'}</b></div>
+            </div>
+            <div class="grid3" style="margin-top:8px;">
                 <div><span class="muted">Estado actual</span><br>{_badge_estado(presupuesto['estado'])}</div>
             </div>
             <form method="post" action="/modulo/presupuestos/{presupuesto_id}/estado" style="margin-top:12px;display:flex;gap:8px;align-items:center;">
@@ -495,20 +584,39 @@ def vista_detalle_presupuesto(presupuesto_id):
 
         <div class="card">
             <h3 style="margin-top:0;">Tareas</h3>
-            <div class="tabs-tareas">{tabs_tareas_html}</div>
+            <div class="tabs-tareas" style="align-items:flex-start;flex-wrap:wrap;">
+                {tabs_tareas_html}
+                <button type="button" class="btn btn-sm" title="Agregar tarea" style="margin-left:2px;" onclick="document.getElementById('form-agregar-tarea').classList.toggle('oculto');">+</button>
+                <div id="form-agregar-tarea" class="oculto" style="flex-basis:100%;margin-top:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;">
+                    <form method="post" action="/modulo/presupuestos/{presupuesto_id}/tareas" onsubmit="return validarSeccionesTarea(this);">
+                        <div class="grid2">
+                            <div>
+                                <label>Tipo de tarea</label>
+                                <select name="tipo" required>
+                                    <option value="">-- Seleccionar --</option>
+                                    {opciones_tareas_seleccionables}
+                                </select>
+                            </div>
+                            <div>
+                                <label>Nombre (manual)</label>
+                                <input type="text" name="nombre" placeholder="Ej: Escalera Oeste">
+                            </div>
+                        </div>
+                        <label>Secciones que aplican</label>
+                        <div style="margin-bottom:10px;">{checkboxes_tipos}</div>
+                        <label>Orden</label>
+                        <input type="number" name="orden" value="0">
+                        <button type="submit" class="btn">Agregar tarea</button>
+                    </form>
+                </div>
+            </div>
             <div id="tarea-contenido" class="muted">{"Seleccioná una pestaña para ver el detalle de la tarea." if tareas else "Este presupuesto todavía no tiene tareas cargadas."}</div>
-            <details style="margin-top:10px;">
-                <summary style="cursor:pointer;font-weight:700;color:#4338ca;">+ Agregar tarea</summary>
-                <form method="post" action="/modulo/presupuestos/{presupuesto_id}/tareas" style="margin-top:10px;" onsubmit="return validarSeccionesTarea(this);">
-                    <label>Nombre de la tarea (ej: Estructura metálica, Chapeado, Correas, Zinguería...)</label>
-                    <input type="text" name="nombre" required>
-                    <label>Secciones que aplican</label>
-                    <div style="margin-bottom:10px;">{checkboxes_tipos}</div>
-                    <label>Orden</label>
-                    <input type="number" name="orden" value="0">
-                    <button type="submit" class="btn">Agregar tarea</button>
-                </form>
-            </details>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0;">RESUMEN</h3>
+            <div class="muted" style="margin-bottom:8px;">REPORTE POR CATEGORIA</div>
+            <div id="resumen-tareas-presupuesto" class="muted">Cargando...</div>
         </div>
     </div>
 
@@ -522,13 +630,26 @@ def vista_detalle_presupuesto(presupuesto_id):
     let EQUIPOS = [];
     let ESQUEMAS = [];
     let PERFILES = [];
+    let PERFIL_POR_ID = {{}};
+    let FAMILIAS_PERFIL = [];
     const seccionTipoPorId = {{}};
     const ordenItemsPorSeccion = {{}};   // seccionId -> [itemId, itemId, ...] en el mismo orden que devuelve el recálculo
     const debounceTimers = {{}};         // clave -> timeoutId
     const AUTOSAVE_DEBOUNCE_MS = 650;
     const TAREAS_INFO = {_tareas_info_js};   // tareaId (string) -> {{nombre, orden}}
     const TAREAS_IDS = {_tareas_ids_js};     // [tareaId, ...] en orden
+    const TAREAS_MODO_CHAPA = {_TAREAS_MODO_CHAPA_JS};   // nombres de tarea que usan materiales por m2 (chapa/tornillos)
+    const TAREAS_MODO_GRATING = {_TAREAS_MODO_GRATING_JS};   // nombres de tarea que usan materiales Grating (m2 + kg/m2 automatico/fijaciones)
+    const MATERIALES_TEMPLATE_POR_TAREA = {_MATERIALES_TEMPLATE_POR_TAREA_JS};   // nombre de tarea -> lineas de perfil preseleccionadas
     let tareaActivaId = null;
+
+    function modoMaterialesTarea(tareaId) {{
+        const info = TAREAS_INFO[String(tareaId)] || {{}};
+        const tipo = info.tipo || info.nombre || "";
+        if (TAREAS_MODO_CHAPA.includes(tipo)) return "chapa";
+        if (TAREAS_MODO_GRATING.includes(tipo)) return "grating";
+        return "perfil";
+    }}
 
     function seleccionarTarea(tareaId) {{
         tareaActivaId = tareaId;
@@ -558,6 +679,13 @@ def vista_detalle_presupuesto(presupuesto_id):
             EQUIPOS = (equipos || {{}}).equipos || [];
             ESQUEMAS = (esquemas || {{}}).esquemas || [];
             PERFILES = (perfiles || {{}}).perfiles || [];
+            PERFIL_POR_ID = {{}};
+            const familiasSet = new Set();
+            PERFILES.forEach(p => {{
+                PERFIL_POR_ID[p.id] = p;
+                if (p.categoria) familiasSet.add(p.categoria);
+            }});
+            FAMILIAS_PERFIL = Array.from(familiasSet).sort();
         }});
     }}
     cargarCatalogos().then(() => {{
@@ -567,14 +695,50 @@ def vista_detalle_presupuesto(presupuesto_id):
     function fmtMoney(v) {{
         return "$ " + (Number(v) || 0).toLocaleString("es-AR", {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
     }}
+    function fmtPct(v) {{
+        return ((Number(v) || 0) * 100).toFixed(2) + "%";
+    }}
     function fmtNum(v, dec) {{
         return (Number(v) || 0).toLocaleString("es-AR", {{minimumFractionDigits: dec, maximumFractionDigits: dec}});
     }}
+
+    function cargarResumenTareasPresupuesto() {{
+        const cont = document.getElementById("resumen-tareas-presupuesto");
+        if (!cont) return;
+        fetch(`${{API}}/presupuestos/${{PRESUPUESTO_ID}}/resumen`)
+            .then(r => r.json())
+            .then(({{ tareas, total_fabricacion, total_montaje, total_presupuesto, error }}) => {{
+                if (error) {{ cont.innerHTML = `<span style="color:#dc2626;">${{error}}</span>`; return; }}
+                if (!tareas || !tareas.length) {{ cont.innerHTML = "<div class='sin-datos'>Este presupuesto todavía no tiene tareas.</div>"; return; }}
+                let filas = tareas.map(t => `<tr>
+                    <td>${{t.nombre}}</td>
+                    <td>${{fmtMoney(t.precio_venta_fabricacion)}}</td>
+                    <td>${{fmtMoney(t.precio_venta_montaje)}}</td>
+                    <td><b>${{fmtMoney(t.precio_venta_tarea)}}</b></td>
+                </tr>`).join("");
+                cont.innerHTML = `<table>
+                    <tr><th>Tarea</th><th>Fabricación</th><th>Montaje</th><th>Total tarea</th></tr>
+                    ${{filas}}
+                    <tr style="font-weight:800;background:#eef2ff;">
+                        <td>GRAN TOTAL</td>
+                        <td>${{fmtMoney(total_fabricacion)}}</td>
+                        <td>${{fmtMoney(total_montaje)}}</td>
+                        <td>${{fmtMoney(total_presupuesto)}}</td>
+                    </tr>
+                </table>`;
+            }});
+    }}
+    cargarResumenTareasPresupuesto();
+
 
     function clavePorRubro(rubro, tipoItem) {{
         if (rubro === "materiales") {{
             if (tipoItem === "porcentaje") return "materiales_porcentaje";
             if (tipoItem === "no_listado") return "materiales_no_listado";
+            if (tipoItem === "chapa") return "materiales_chapa";
+            if (tipoItem === "tornillos") return "materiales_tornillos";
+            if (tipoItem === "grating") return "materiales_grating";
+            if (tipoItem === "fijaciones") return "materiales_fijaciones";
             return "materiales_perfil";
         }}
         return rubro;
@@ -606,8 +770,7 @@ def vista_detalle_presupuesto(presupuesto_id):
     function leerDatosDeItem(itemId) {{
         const fila = document.querySelector(`tr[data-item-id="${{itemId}}"]`);
         const rubro = fila ? fila.getAttribute("data-rubro") : null;
-        const tipoItemSel = document.getElementById(`tipoitem-${{itemId}}`);
-        const tipoItem = tipoItemSel ? tipoItemSel.value : (fila ? (fila.getAttribute("data-tipo-item") || null) : null);
+        const tipoItem = fila ? (fila.getAttribute("data-tipo-item") || null) : null;
         const clave = clavePorRubro(rubro, tipoItem || "perfil");
         const campos = CAMPOS_POR_RUBRO[clave] || [];
         const datos = {{}};
@@ -662,15 +825,6 @@ def vista_detalle_presupuesto(presupuesto_id):
             }});
     }}
 
-    function cambiarTipoItemMaterial(itemId, seccionId, tareaId, nuevoTipo) {{
-        // Cambia perfil <-> porcentaje: re-renderiza toda la fila (columnas distintas) y guarda.
-        const fila = document.querySelector(`tr[data-item-id="${{itemId}}"]`);
-        if (!fila) return;
-        const itemFalso = {{ id: itemId, rubro: "materiales", tipo_item: nuevoTipo, datos: {{}}, subtotal: 0 }};
-        fila.outerHTML = filaMaterialHtml(seccionId, seccionTipoPorId[seccionId], tareaId, itemFalso);
-        guardarItemInmediato(itemId, tareaId);
-    }}
-
 
     function autocompletarTarifaEquipo(itemId, selectEl) {{
         const tarifaEl = document.getElementById(`campo-${{itemId}}-tarifa_dia`);
@@ -693,16 +847,22 @@ def vista_detalle_presupuesto(presupuesto_id):
 
     function campoControlHtml(itemId, campo, valorActual, seccionTipo, rubro, tareaId) {{
         const val = (valorActual === undefined || valorActual === null) ? "" : valorActual;
-        let evt = `oninput="programarAutosaveItem(${{itemId}}, ${{tareaId}})" onblur="guardarItemInmediato(${{itemId}}, ${{tareaId}})"`;
+        let evt = `oninput="programarAutosaveItem(${{itemId}}, ${{tareaId}})"`;
         if (rubro === "mano_obra" && (campo.name === "operarios" || campo.name === "dias")) {{
-            evt = `oninput="programarAutosaveItem(${{itemId}}, ${{tareaId}}); sincronizarConsumibles(_seccionDeItem(${{itemId}}), ${{tareaId}})" onblur="guardarItemInmediato(${{itemId}}, ${{tareaId}}); sincronizarConsumibles(_seccionDeItem(${{itemId}}), ${{tareaId}})"`;
+            evt = `oninput="programarAutosaveItem(${{itemId}}, ${{tareaId}}); sincronizarConsumibles(_seccionDeItem(${{itemId}}), ${{tareaId}})"`;
         }}
         if (campo.name === "perfil_id") {{
-            const opciones = PERFILES.map(p => `<option value="${{p.id}}" ${{String(p.id) === String(val) ? "selected" : ""}}>${{p.label}}</option>`).join("");
-            return `<select id="campo-${{itemId}}-${{campo.name}}" onchange="guardarItemInmediato(${{itemId}}, ${{tareaId}})">
-                <option value="">-- Elegir --</option>
-                ${{opciones}}
-            </select>`;
+            const familiaActual = (val && PERFIL_POR_ID[val]) ? (PERFIL_POR_ID[val].categoria || "") : "";
+            const modoFamilias = modoMaterialesTarea(tareaId);
+            const familiasDisponibles = familiasParaModo(modoFamilias);
+            const opcionesFamilia = familiasDisponibles.map(f => `<option value="${{f}}" ${{f === familiaActual ? "selected" : ""}}>${{f}}</option>`).join("");
+            return `<div style="display:flex;gap:4px;flex-wrap:nowrap;align-items:center;">
+                <select id="familia-${{itemId}}" style="width:150px;min-width:150px;flex:0 0 auto;" onchange="actualizarOpcionesPerfil(${{itemId}}, ${{tareaId}})">
+                    <option value="">Todas las familias</option>
+                    ${{opcionesFamilia}}
+                </select>
+                <select id="campo-${{itemId}}-perfil_id" data-valor-inicial="${{val || ''}}" style="width:280px;min-width:280px;flex:0 0 auto;" onchange="guardarItemInmediato(${{itemId}}, ${{tareaId}}); actualizarKgm2Grating(${{itemId}})"></select>
+            </div>`;
         }}
         if (campo.name === "equipo_id") {{
             const opciones = EQUIPOS.map(e => `<option value="${{e.id}}" data-tarifa="${{e.tarifa_dia_default || 0}}" ${{String(e.id) === String(val) ? "selected" : ""}}>${{e.nombre}}</option>`).join("");
@@ -737,7 +897,10 @@ def vista_detalle_presupuesto(presupuesto_id):
         if (rubro === "consumibles" && (campo.name === "operarios" || campo.name === "dias")) {{
             soloLectura = `readonly title='Se sincroniza automáticamente con Mano de obra'`;
         }}
-        return `<input type="${{campo.type}}" step="any" id="campo-${{itemId}}-${{campo.name}}" value="${{valorInicial}}" ${{evt}} ${{soloLectura}}>`;
+        let anchoEstilo = "";
+        if (campo.name === "descripcion") anchoEstilo = `style="width:230px;min-width:230px;"`;
+        if (campo.name === "porcentaje") anchoEstilo = `style="width:46px;min-width:46px;"`;
+        return `<input type="${{campo.type}}" step="any" id="campo-${{itemId}}-${{campo.name}}" value="${{valorInicial}}" ${{anchoEstilo}} ${{evt}} ${{soloLectura}}>`;
     }}
 
     function _seccionDeItem(itemId) {{
@@ -759,7 +922,88 @@ def vista_detalle_presupuesto(presupuesto_id):
         let cambio = false;
         if (opMano && opCons && opCons.value !== opMano.value) {{ opCons.value = opMano.value; cambio = true; }}
         if (diasMano && diasCons && diasCons.value !== diasMano.value) {{ diasCons.value = diasMano.value; cambio = true; }}
-        if (cambio && consId) guardarItemInmediato(parseInt(consId), tareaId);
+        if (cambio && consId) programarAutosaveItem(parseInt(consId), tareaId);
+    }}
+
+    // ─────────────────────────────────────────────────────────────
+    // Combobox de perfil con autocompletado (Tom Select) + filtro por
+    // familia (IPN/UPN/W/...). El <select id="campo-{{id}}-perfil_id">
+    // sigue guardando el mismo valor de siempre (perfil_id); Tom Select
+    // solo mejora el componente visual, no cambia el dato ni la fórmula.
+    // ─────────────────────────────────────────────────────────────
+
+    function esFamiliaChapa(nombre) {{
+        return (nombre || "").toUpperCase().startsWith("CH ");
+    }}
+
+    function esFamiliaGrating(nombre) {{
+        return (nombre || "").toUpperCase().startsWith("GRA ");
+    }}
+
+    function familiasParaModo(modo) {{
+        if (modo === "chapa") return FAMILIAS_PERFIL.filter(f => esFamiliaChapa(f));
+        if (modo === "grating") return FAMILIAS_PERFIL.filter(f => esFamiliaGrating(f));
+        return FAMILIAS_PERFIL.filter(f => !esFamiliaChapa(f) && !esFamiliaGrating(f));
+    }}
+
+    function perfilesParaModo(modo) {{
+        if (modo === "chapa") return PERFILES.filter(p => esFamiliaChapa(p.categoria));
+        if (modo === "grating") return PERFILES.filter(p => esFamiliaGrating(p.categoria));
+        return PERFILES.filter(p => !esFamiliaChapa(p.categoria) && !esFamiliaGrating(p.categoria));
+    }}
+
+    function inicializarCombosPerfil(contenedor) {{
+        const raiz = contenedor || document;
+        raiz.querySelectorAll('select[id^="campo-"][id$="-perfil_id"]').forEach(sel => {{
+            if (sel.tomselect) return; // ya inicializado
+            const itemId = sel.id.replace("campo-", "").replace("-perfil_id", "");
+            const valorInicial = sel.getAttribute("data-valor-inicial") || "";
+            const familiaSel = document.getElementById(`familia-${{itemId}}`);
+            const familia = familiaSel ? familiaSel.value : "";
+            const modo = modoMaterialesTarea(tareaActivaId);
+            const opciones = perfilesParaModo(modo).filter(p => !familia || p.categoria === familia);
+            const ts = new TomSelect(sel, {{
+                options: opciones,
+                valueField: "id",
+                labelField: "label",
+                searchField: ["label"],
+                maxOptions: 200,
+                placeholder: "-- Elegir perfil --",
+                score: function (search) {{
+                    const s = search.toLowerCase();
+                    return function (item) {{
+                        return item.label.toLowerCase().includes(s) ? 1 : 0;
+                    }};
+                }},
+            }});
+            if (valorInicial) ts.setValue(String(valorInicial), true);
+            actualizarKgm2Grating(itemId);
+        }});
+    }}
+
+    function actualizarKgm2Grating(itemId) {{
+        const kgm2Span = document.getElementById(`kgm2-item-${{itemId}}`);
+        if (!kgm2Span) return;
+        const sel = document.getElementById(`campo-${{itemId}}-perfil_id`);
+        const val = sel ? sel.value : null;
+        const perfil = (val && PERFIL_POR_ID[val]) ? PERFIL_POR_ID[val] : null;
+        kgm2Span.textContent = fmtNum(perfil ? (perfil.kg_m || 0) : 0, 2);
+    }}
+
+    function actualizarOpcionesPerfil(itemId, tareaId) {{
+        const sel = document.getElementById(`campo-${{itemId}}-perfil_id`);
+        if (!sel || !sel.tomselect) return;
+        const ts = sel.tomselect;
+        const familiaSel = document.getElementById(`familia-${{itemId}}`);
+        const familia = familiaSel ? familiaSel.value : "";
+        const modo = modoMaterialesTarea(tareaId);
+        const opciones = perfilesParaModo(modo).filter(p => !familia || p.categoria === familia);
+        ts.clear(true);
+        ts.clearOptions();
+        ts.addOptions(opciones);
+        ts.refreshOptions(false);
+        guardarItemInmediato(itemId, tareaId);
+        actualizarKgm2Grating(itemId);
     }}
 
     function campoInputHtml(itemId, campo, valorActual, seccionTipo, rubro, tareaId) {{
@@ -771,15 +1015,18 @@ def vista_detalle_presupuesto(presupuesto_id):
         </div>`;
     }}
 
-    function camposItemHtml(itemId, rubro, tipoItem, datos, seccionTipo, tareaId) {{
+    function camposItemHtml(itemId, rubro, tipoItem, datos, seccionTipo, tareaId, extraHtml) {{
         const clave = clavePorRubro(rubro, tipoItem || "perfil");
         const campos = CAMPOS_POR_RUBRO[clave] || [];
-        return `<div style="display:flex;gap:8px;flex-wrap:wrap;">${{campos.map(c => campoInputHtml(itemId, c, (datos || {{}})[c.name], seccionTipo, rubro, tareaId)).join("")}}</div>`;
+        return `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">${{campos.map(c => campoInputHtml(itemId, c, (datos || {{}})[c.name], seccionTipo, rubro, tareaId)).join("")}}${{extraHtml || ""}}</div>`;
     }}
 
     function filaItemHtml(seccionId, seccionTipo, tareaId, item) {{
+        const extraPintura = item.rubro === "pintura"
+            ? `<div><label style="font-size:11px;color:#475569;display:block;">M2 totales</label><span id="m2-item-${{item.id}}" style="font-weight:700;">${{fmtNum(item.m2 || 0, 2)}}</span></div>`
+            : "";
         return `<tr data-item-id="${{item.id}}" data-rubro="${{item.rubro}}" data-tipo-item="${{item.tipo_item || ''}}" data-seccion-id="${{seccionId}}">
-            <td style="width:70%;" data-celda-campos>${{camposItemHtml(item.id, item.rubro, item.tipo_item, item.datos, seccionTipo, tareaId)}}</td>
+            <td style="width:70%;" data-celda-campos>${{camposItemHtml(item.id, item.rubro, item.tipo_item, item.datos, seccionTipo, tareaId, extraPintura)}}</td>
             <td style="width:15%;text-align:right;font-weight:700;"><span id="subtotal-item-${{item.id}}">${{fmtMoney(item.subtotal)}}</span></td>
             <td style="width:15%;">
                 <button type="button" class="btn btn-icon btn-danger" onclick="eliminarLinea(${{item.id}}, ${{tareaId}})">✕</button>
@@ -790,34 +1037,93 @@ def vista_detalle_presupuesto(presupuesto_id):
     function filaMaterialHtml(seccionId, seccionTipo, tareaId, item) {{
         const tipoItem = item.tipo_item || "perfil";
         const datos = item.datos || {{}};
-        const descCtl = campoControlHtml(item.id, {{name: "descripcion", label: "Descripción", type: "text"}}, datos.descripcion, seccionTipo, "materiales", tareaId);
+        const descripcionInicial = (tipoItem === "porcentaje" && !datos.descripcion) ? "Placas" : datos.descripcion;
+        const descCtl = campoControlHtml(item.id, {{name: "descripcion", label: "Descripción", type: "text"}}, descripcionInicial, seccionTipo, "materiales", tareaId);
         let celdas;
         if (tipoItem === "porcentaje") {{
             celdas = `
                 <td class="muted" style="text-align:center;">–</td>
                 <td class="muted" style="text-align:center;">–</td>
                 <td class="muted" style="text-align:center;">–</td>
-                <td>${{campoControlHtml(item.id, {{name: "precio_unitario_kg", label: "$/kg", type: "number"}}, datos.precio_unitario_kg, seccionTipo, "materiales", tareaId)}}</td>
+                <td>${{campoControlHtml(item.id, {{name: "precio_unitario_kg", label: "USD/KG", type: "number"}}, datos.precio_unitario_kg, seccionTipo, "materiales", tareaId)}}</td>
                 <td style="display:flex;align-items:center;gap:4px;">${{campoControlHtml(item.id, {{name: "porcentaje", label: "%", type: "number"}}, datos.porcentaje, seccionTipo, "materiales", tareaId)}}<span style="font-size:11px;color:#475569;">%</span></td>`;
         }} else {{
             celdas = `
                 <td>${{campoControlHtml(item.id, {{name: "perfil_id", label: "Perfil", type: "text"}}, datos.perfil_id, seccionTipo, "materiales", tareaId)}}</td>
                 <td>${{campoControlHtml(item.id, {{name: "cantidad", label: "Cantidad", type: "number"}}, datos.cantidad, seccionTipo, "materiales", tareaId)}}</td>
                 <td>${{campoControlHtml(item.id, {{name: "largo_mm", label: "Largo (mm)", type: "number"}}, datos.largo_mm, seccionTipo, "materiales", tareaId)}}</td>
-                <td>${{campoControlHtml(item.id, {{name: "precio_unitario_kg", label: "$/kg", type: "number"}}, datos.precio_unitario_kg, seccionTipo, "materiales", tareaId)}}</td>
+                <td>${{campoControlHtml(item.id, {{name: "precio_unitario_kg", label: "USD/KG", type: "number"}}, datos.precio_unitario_kg, seccionTipo, "materiales", tareaId)}}</td>
                 <td class="muted" style="text-align:center;">–</td>`;
         }}
         return `<tr data-item-id="${{item.id}}" data-rubro="materiales" data-tipo-item="${{tipoItem}}" data-seccion-id="${{seccionId}}">
-            <td>
-                <select id="tipoitem-${{item.id}}" onchange="cambiarTipoItemMaterial(${{item.id}}, ${{seccionId}}, ${{tareaId}}, this.value)">
-                    <option value="perfil" ${{tipoItem === "perfil" ? "selected" : ""}}>Perfil</option>
-                    <option value="porcentaje" ${{tipoItem === "porcentaje" ? "selected" : ""}}>Placas</option>
-                </select>
-            </td>
             <td>${{descCtl}}</td>
             ${{celdas}}
             <td style="text-align:right;"><span id="kg-item-${{item.id}}">${{fmtNum(item.peso || 0, 1)}}</span></td>
             <td style="text-align:right;"><span id="m2-item-${{item.id}}">${{tipoItem === "perfil" ? fmtNum(item.m2 || 0, 2) : "–"}}</span></td>
+            <td style="text-align:right;font-weight:700;"><span id="subtotal-item-${{item.id}}">${{fmtMoney(item.subtotal)}}</span></td>
+            <td><button type="button" class="btn btn-icon btn-danger" onclick="eliminarLinea(${{item.id}}, ${{tareaId}})">✕</button></td>
+        </tr>`;
+    }}
+
+    function filaMaterialChapaHtml(seccionId, seccionTipo, tareaId, item) {{
+        const tipoItem = item.tipo_item || "chapa";
+        const datos = item.datos || {{}};
+        if (tipoItem === "tornillos") {{
+            const descCtl = campoControlHtml(item.id, {{name: "descripcion", label: "Descripción", type: "text"}}, datos.descripcion || "Tornillos", seccionTipo, "materiales", tareaId);
+            return `<tr data-item-id="${{item.id}}" data-rubro="materiales" data-tipo-item="tornillos" data-seccion-id="${{seccionId}}">
+                <td>${{descCtl}}</td>
+                <td class="muted" style="text-align:center;">–</td>
+                <td style="text-align:right;" title="4 unidades por m2 de chapa (automático)"><span id="cant-item-${{item.id}}">${{fmtNum(item.cantidad || 0, 0)}}</span></td>
+                <td class="muted" style="text-align:center;">–</td>
+                <td>${{campoControlHtml(item.id, {{name: "precio_unitario", label: "USD/UNIDAD", type: "number"}}, datos.precio_unitario, seccionTipo, "materiales", tareaId)}}</td>
+                <td class="muted" style="text-align:center;">–</td>
+                <td style="text-align:right;font-weight:700;"><span id="subtotal-item-${{item.id}}">${{fmtMoney(item.subtotal)}}</span></td>
+                <td><button type="button" class="btn btn-icon btn-danger" onclick="eliminarLinea(${{item.id}}, ${{tareaId}})">✕</button></td>
+            </tr>`;
+        }}
+        const descCtl = campoControlHtml(item.id, {{name: "descripcion", label: "Descripción", type: "text"}}, datos.descripcion, seccionTipo, "materiales", tareaId);
+        return `<tr data-item-id="${{item.id}}" data-rubro="materiales" data-tipo-item="chapa" data-seccion-id="${{seccionId}}">
+            <td>${{descCtl}}</td>
+            <td>${{campoControlHtml(item.id, {{name: "perfil_id", label: "Tipo", type: "text"}}, datos.perfil_id, seccionTipo, "materiales", tareaId)}}</td>
+            <td>${{campoControlHtml(item.id, {{name: "cantidad", label: "Cantidad", type: "number"}}, datos.cantidad, seccionTipo, "materiales", tareaId)}}</td>
+            <td>${{campoControlHtml(item.id, {{name: "largo_mm", label: "Largo (mm)", type: "number"}}, datos.largo_mm, seccionTipo, "materiales", tareaId)}}</td>
+            <td>${{campoControlHtml(item.id, {{name: "precio_unitario_m2", label: "USD/M2", type: "number"}}, datos.precio_unitario_m2, seccionTipo, "materiales", tareaId)}}</td>
+            <td style="text-align:right;"><span id="m2-item-${{item.id}}">${{fmtNum(item.m2 || 0, 2)}}</span></td>
+            <td style="text-align:right;font-weight:700;"><span id="subtotal-item-${{item.id}}">${{fmtMoney(item.subtotal)}}</span></td>
+            <td><button type="button" class="btn btn-icon btn-danger" onclick="eliminarLinea(${{item.id}}, ${{tareaId}})">✕</button></td>
+        </tr>`;
+    }}
+
+    function filaMaterialGratingHtml(seccionId, seccionTipo, tareaId, item) {{
+        const tipoItem = item.tipo_item || "grating";
+        const datos = item.datos || {{}};
+        if (tipoItem === "fijaciones") {{
+            const descCtl = campoControlHtml(item.id, {{name: "descripcion", label: "Descripción", type: "text"}}, datos.descripcion || "Fijaciones", seccionTipo, "materiales", tareaId);
+            return `<tr data-item-id="${{item.id}}" data-rubro="materiales" data-tipo-item="fijaciones" data-seccion-id="${{seccionId}}">
+                <td>${{descCtl}}</td>
+                <td class="muted" style="text-align:center;">–</td>
+                <td style="text-align:right;" title="4 unidades por m2 de grating (automático)"><span id="cant-item-${{item.id}}">${{fmtNum(item.cantidad || 0, 0)}}</span></td>
+                <td class="muted" style="text-align:center;">–</td>
+                <td class="muted" style="text-align:center;">–</td>
+                <td>${{campoControlHtml(item.id, {{name: "precio_unitario", label: "USD/UNIDAD", type: "number"}}, datos.precio_unitario, seccionTipo, "materiales", tareaId)}}</td>
+                <td class="muted" style="text-align:center;">–</td>
+                <td class="muted" style="text-align:center;">–</td>
+                <td style="text-align:right;font-weight:700;"><span id="subtotal-item-${{item.id}}">${{fmtMoney(item.subtotal)}}</span></td>
+                <td><button type="button" class="btn btn-icon btn-danger" onclick="eliminarLinea(${{item.id}}, ${{tareaId}})">✕</button></td>
+            </tr>`;
+        }}
+        const descCtl = campoControlHtml(item.id, {{name: "descripcion", label: "Descripción", type: "text"}}, datos.descripcion, seccionTipo, "materiales", tareaId);
+        const perfilGrating = (datos.perfil_id && PERFIL_POR_ID[datos.perfil_id]) ? PERFIL_POR_ID[datos.perfil_id] : null;
+        const kgM2Inicial = perfilGrating ? (perfilGrating.kg_m || 0) : 0;
+        return `<tr data-item-id="${{item.id}}" data-rubro="materiales" data-tipo-item="grating" data-seccion-id="${{seccionId}}">
+            <td>${{descCtl}}</td>
+            <td>${{campoControlHtml(item.id, {{name: "perfil_id", label: "Tipo", type: "text"}}, datos.perfil_id, seccionTipo, "materiales", tareaId)}}</td>
+            <td>${{campoControlHtml(item.id, {{name: "cantidad", label: "Cantidad", type: "number"}}, datos.cantidad, seccionTipo, "materiales", tareaId)}}</td>
+            <td>${{campoControlHtml(item.id, {{name: "m2", label: "M2", type: "number"}}, datos.m2, seccionTipo, "materiales", tareaId)}}</td>
+            <td style="text-align:right;" title="Automático, según el Tipo elegido"><span id="kgm2-item-${{item.id}}">${{fmtNum(kgM2Inicial, 2)}}</span></td>
+            <td>${{campoControlHtml(item.id, {{name: "precio_unitario_m2", label: "USD/M2", type: "number"}}, datos.precio_unitario_m2, seccionTipo, "materiales", tareaId)}}</td>
+            <td style="text-align:right;"><span id="m2-item-${{item.id}}">${{fmtNum(item.m2 || 0, 2)}}</span></td>
+            <td style="text-align:right;"><span id="kg-item-${{item.id}}">${{fmtNum(item.peso || 0, 1)}}</span></td>
             <td style="text-align:right;font-weight:700;"><span id="subtotal-item-${{item.id}}">${{fmtMoney(item.subtotal)}}</span></td>
             <td><button type="button" class="btn btn-icon btn-danger" onclick="eliminarLinea(${{item.id}}, ${{tareaId}})">✕</button></td>
         </tr>`;
@@ -829,7 +1135,7 @@ def vista_detalle_presupuesto(presupuesto_id):
             <td>${{campoControlHtml(item.id, {{name: "descripcion", label: "Descripción", type: "text"}}, datos.descripcion, seccionTipo, "materiales", tareaId)}}</td>
             <td>${{campoControlHtml(item.id, {{name: "cantidad", label: "Cantidad", type: "number"}}, datos.cantidad, seccionTipo, "materiales", tareaId)}}</td>
             <td>${{campoControlHtml(item.id, {{name: "unidad", label: "Unidad", type: "text"}}, datos.unidad, seccionTipo, "materiales", tareaId)}}</td>
-            <td>${{campoControlHtml(item.id, {{name: "precio_unitario", label: "Precio unitario", type: "number"}}, datos.precio_unitario, seccionTipo, "materiales", tareaId)}}</td>
+            <td>${{campoControlHtml(item.id, {{name: "precio_unitario", label: "Precio unitario (USD)", type: "number"}}, datos.precio_unitario, seccionTipo, "materiales", tareaId)}}</td>
             <td style="text-align:right;font-weight:700;"><span id="subtotal-item-${{item.id}}">${{fmtMoney(item.subtotal)}}</span></td>
             <td><button type="button" class="btn btn-icon btn-danger" onclick="eliminarLinea(${{item.id}}, ${{tareaId}})">✕</button></td>
         </tr>`;
@@ -840,41 +1146,119 @@ def vista_detalle_presupuesto(presupuesto_id):
         ordenItemsPorSeccion[seccionId][rubro] = items.map(it => it.id);
 
         if (rubro === "materiales") {{
+            const modo = modoMaterialesTarea(tareaId);
+            const noListadoItems = items.filter(it => it.tipo_item === "no_listado");
+            const filasNoListado = noListadoItems.map(it => filaMaterialNoListadoHtml(seccionId, seccionTipo, tareaId, it)).join("");
+            const botonAgregarNoListado = `<div style="margin-top:6px;">
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="agregarLinea(${{seccionId}}, ${{tareaId}}, 'materiales', 'no_listado')">+ Agregar material no listado</button>
+                </div>`;
+            const totSubtotalNoListado = noListadoItems.reduce((acc, it) => acc + (it.subtotal || 0), 0);
+            const tablaNoListadoHtml = `<div style="margin-top:6px;padding-top:5px;border-top:1px dashed #cbd5e1;">
+                    <h4 style="font-size:12px;">materiales no listados</h4>
+                    <div style="overflow-x:auto;">
+                    <table class="tabla-materiales">
+                        <thead><tr>
+                            <th>Descripción</th><th>Cantidad</th><th>Unidad</th><th>Precio unitario (USD)</th><th>Precio total</th><th></th>
+                        </tr></thead>
+                        <tbody>${{filasNoListado || '<tr><td colspan="6" class="muted">Sin líneas todavía.</td></tr>'}}</tbody>
+                        <tfoot><tr style="font-weight:700;background:#f8fafc;">
+                            <td colspan="4" style="text-align:right;">Subtotal:</td>
+                            <td style="text-align:right;"><span id="tot-subtotal-nolistado-${{seccionId}}">${{fmtMoney(totSubtotalNoListado)}}</span></td>
+                            <td></td>
+                        </tr></tfoot>
+                    </table>
+                    </div>
+                    ${{botonAgregarNoListado}}
+                </div>`;
+
+            if (modo === "chapa") {{
+                const chapaItems = items.filter(it => (it.tipo_item || "chapa") === "chapa");
+                const tornillosItems = items.filter(it => it.tipo_item === "tornillos");
+                // Tornillos siempre al final (depende del m2 total de la sección) y ya
+                // viene autocreado (una única línea, sin botón "Agregar").
+                const filas = chapaItems.concat(tornillosItems).map(it => filaMaterialChapaHtml(seccionId, seccionTipo, tareaId, it)).join("");
+                const totalesChapa = chapaItems.concat(tornillosItems);
+                const totM2Chapa = totalesChapa.reduce((acc, it) => acc + (it.m2 || 0), 0);
+                const totSubtotalChapa = totalesChapa.reduce((acc, it) => acc + (it.subtotal || 0), 0);
+                return `<div class="rubro-block">
+                <h4>materiales</h4>
+                <div style="overflow-x:auto;">
+                <table class="tabla-materiales">
+                    <thead><tr>
+                        <th>Descripción</th><th>Tipo</th><th>Cantidad</th><th>Largo (mm)</th><th>USD/M2</th>
+                        <th>Total m2</th><th>Subtotal</th><th></th>
+                    </tr></thead>
+                    <tbody>${{filas || '<tr><td colspan="8" class="muted">Sin líneas todavía.</td></tr>'}}</tbody>
+                    <tfoot><tr style="font-weight:700;background:#f8fafc;">
+                        <td colspan="5" style="text-align:right;">Subtotales:</td>
+                        <td style="text-align:right;"><span id="tot-m2-chapa-${{seccionId}}">${{fmtNum(totM2Chapa, 2)}}</span></td>
+                        <td style="text-align:right;"><span id="tot-subtotal-chapa-${{seccionId}}">${{fmtMoney(totSubtotalChapa)}}</span></td>
+                        <td></td>
+                    </tr></tfoot>
+                </table>
+                </div>
+                <div style="margin-top:6px;">
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="agregarLinea(${{seccionId}}, ${{tareaId}}, 'materiales', 'chapa')">+ Chapa</button>
+                </div>
+                ${{tablaNoListadoHtml}}
+            </div>`;
+            }}
+
+            if (modo === "grating") {{
+                const gratingItems = items.filter(it => (it.tipo_item || "grating") === "grating");
+                const fijacionesItems = items.filter(it => it.tipo_item === "fijaciones");
+                // Fijaciones siempre al final (depende del m2 total de la sección) y ya
+                // viene autocreada (una única línea, sin botón "Agregar").
+                const filas = gratingItems.concat(fijacionesItems).map(it => filaMaterialGratingHtml(seccionId, seccionTipo, tareaId, it)).join("");
+                return `<div class="rubro-block">
+                <h4>materiales</h4>
+                <div style="overflow-x:auto;">
+                <table class="tabla-materiales">
+                    <thead><tr>
+                        <th>Descripción</th><th>Tipo</th><th>Cantidad</th><th>M2</th><th>KG/M2</th><th>USD/M2</th>
+                        <th>Total m2</th><th>Total kg</th><th>Subtotal</th><th></th>
+                    </tr></thead>
+                    <tbody>${{filas || '<tr><td colspan="10" class="muted">Sin líneas todavía.</td></tr>'}}</tbody>
+                </table>
+                </div>
+                <div style="margin-top:6px;">
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="agregarLinea(${{seccionId}}, ${{tareaId}}, 'materiales', 'grating')">+ Grating</button>
+                </div>
+                ${{tablaNoListadoHtml}}
+            </div>`;
+            }}
+
             const perfilItems = items.filter(it => (it.tipo_item || "perfil") === "perfil");
             const placasItems = items.filter(it => it.tipo_item === "porcentaje");
-            const noListadoItems = items.filter(it => it.tipo_item === "no_listado");
             // Placas siempre se muestra al final de la tabla (depende del total de la sección)
             // y ya viene autocreada (una única línea, sin botón "Agregar").
             const filas = perfilItems.concat(placasItems).map(it => filaMaterialHtml(seccionId, seccionTipo, tareaId, it)).join("");
-            const filasNoListado = noListadoItems.map(it => filaMaterialNoListadoHtml(seccionId, seccionTipo, tareaId, it)).join("");
+            const totalesMateriales = perfilItems.concat(placasItems);
+            const totKgMateriales = totalesMateriales.reduce((acc, it) => acc + (it.peso || 0), 0);
+            const totM2Materiales = totalesMateriales.reduce((acc, it) => acc + (it.m2 || 0), 0);
+            const totSubtotalMateriales = totalesMateriales.reduce((acc, it) => acc + (it.subtotal || 0), 0);
             return `<div class="rubro-block">
                 <h4>materiales</h4>
                 <div style="overflow-x:auto;">
                 <table class="tabla-materiales">
                     <thead><tr>
-                        <th>Tipo</th><th>Descripción</th><th>Perfil</th><th>Cantidad</th><th>Largo (mm)</th><th>$/kg</th>
-                        <th>% Placas</th><th>Total (kg)</th><th>m2</th><th>Subtotal</th><th></th>
+                        <th>Descripción</th><th>Perfil</th><th>Cantidad</th><th>Largo (mm)</th><th>USD/KG</th>
+                        <th>% Placas</th><th>Total (kg)</th><th>Total m2</th><th>Subtotal</th><th></th>
                     </tr></thead>
-                    <tbody>${{filas || '<tr><td colspan="11" class="muted">Sin líneas todavía.</td></tr>'}}</tbody>
+                    <tbody>${{filas || '<tr><td colspan="10" class="muted">Sin líneas todavía.</td></tr>'}}</tbody>
+                    <tfoot><tr style="font-weight:700;background:#f8fafc;">
+                        <td colspan="6" style="text-align:right;">Subtotales:</td>
+                        <td style="text-align:right;"><span id="tot-kg-materiales-${{seccionId}}">${{fmtNum(totKgMateriales, 1)}}</span></td>
+                        <td style="text-align:right;"><span id="tot-m2-materiales-${{seccionId}}">${{fmtNum(totM2Materiales, 2)}}</span></td>
+                        <td style="text-align:right;"><span id="tot-subtotal-materiales-${{seccionId}}">${{fmtMoney(totSubtotalMateriales)}}</span></td>
+                        <td></td>
+                    </tr></tfoot>
                 </table>
                 </div>
                 <div style="margin-top:6px;">
                     <button type="button" class="btn btn-sm btn-secondary" onclick="agregarLinea(${{seccionId}}, ${{tareaId}}, 'materiales', 'perfil')">+ Perfil</button>
                 </div>
-                <div style="margin-top:6px;padding-top:5px;border-top:1px dashed #cbd5e1;">
-                    <h4 style="font-size:12px;">materiales no listados</h4>
-                    <div style="overflow-x:auto;">
-                    <table class="tabla-materiales">
-                        <thead><tr>
-                            <th>Descripción</th><th>Cantidad</th><th>Unidad</th><th>Precio unitario</th><th>Precio total</th><th></th>
-                        </tr></thead>
-                        <tbody>${{filasNoListado || '<tr><td colspan="6" class="muted">Sin líneas todavía.</td></tr>'}}</tbody>
-                    </table>
-                    </div>
-                    <div style="margin-top:6px;">
-                        <button type="button" class="btn btn-sm btn-secondary" onclick="agregarLinea(${{seccionId}}, ${{tareaId}}, 'materiales', 'no_listado')">+ Agregar material no listado</button>
-                    </div>
-                </div>
+                ${{tablaNoListadoHtml}}
             </div>`;
         }}
 
@@ -896,36 +1280,6 @@ def vista_detalle_presupuesto(presupuesto_id):
         </div>`;
     }}
 
-    function bloqueManoObraConsumiblesHtml(seccionId, seccionTipo, tareaId, itemsManoObra, itemsConsumibles) {{
-        ordenItemsPorSeccion[seccionId] = ordenItemsPorSeccion[seccionId] || {{}};
-        ordenItemsPorSeccion[seccionId]["mano_obra"] = itemsManoObra.map(it => it.id);
-        ordenItemsPorSeccion[seccionId]["consumibles"] = itemsConsumibles.map(it => it.id);
-        const filasManoObra = itemsManoObra.map(it => filaItemHtml(seccionId, seccionTipo, tareaId, it)).join("");
-        const filasConsumibles = itemsConsumibles.map(it => filaItemHtml(seccionId, seccionTipo, tareaId, it)).join("");
-        return `<div class="rubro-block">
-            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;">
-                <div style="flex:1 1 260px;min-width:220px;">
-                    <h4>mano de obra</h4>
-                    <table>${{filasManoObra || '<tr><td class="muted">Sin líneas todavía.</td></tr>'}}</table>
-                </div>
-                <div style="flex:1 1 260px;min-width:220px;">
-                    <h4>consumibles</h4>
-                    <table>${{filasConsumibles || '<tr><td class="muted">Sin líneas todavía.</td></tr>'}}</table>
-                </div>
-                <div style="flex:0 0 120px;display:flex;flex-direction:column;gap:4px;justify-content:center;">
-                    <div class="mini-resultado indicador" style="padding:5px 8px;">
-                        <b style="font-size:11px;">USD/KG</b>
-                        <div id="indic-usdkg-${{seccionId}}" style="font-weight:700;">–</div>
-                    </div>
-                    <div class="mini-resultado indicador" style="padding:5px 8px;">
-                        <b style="font-size:11px;">KG/HH</b>
-                        <div id="indic-kghh-${{seccionId}}" style="font-weight:700;">–</div>
-                    </div>
-                </div>
-            </div>
-        </div>`;
-    }}
-
     function renderSeccionCompleta(tareaId, seccion) {{
         seccionTipoPorId[seccion.id] = seccion.tipo;
         const chipClase = seccion.tipo === "FABRICACION" ? "chip-fab" : "chip-mon";
@@ -937,13 +1291,18 @@ def vista_detalle_presupuesto(presupuesto_id):
         if (seccion.tipo === "FABRICACION") {{
             // Orden fijo pedido (Excel de referencia): materiales, ingeniería, bulones,
             // pintura, [mano de obra + consumibles combinados con indicadores], subcontratos, fletes.
-            bloquesRubros = ["materiales", "ingenieria", "bulones", "pintura"]
+            // Tareas en modo "chapa" (ver TAREAS_MODO_CHAPA) no usan ingeniería ni bulones.
+            // Tareas en modo "grating" (ver TAREAS_MODO_GRATING) no usan bulones ni pintura (va galvanizado), pero sí ingeniería.
+            const modo = modoMaterialesTarea(tareaId);
+            const primerBloque = modo === "chapa"
+                ? ["materiales", "pintura"]
+                : modo === "grating"
+                    ? ["materiales", "ingenieria"]
+                    : ["materiales", "ingenieria", "bulones", "pintura"];
+            bloquesRubros = primerBloque
                 .map(rubro => rubroBlockHtml(seccion.id, seccion.tipo, tareaId, rubro, itemsPorRubro[rubro] || []))
                 .join("");
-            bloquesRubros += bloqueManoObraConsumiblesHtml(
-                seccion.id, seccion.tipo, tareaId, itemsPorRubro["mano_obra"] || [], itemsPorRubro["consumibles"] || []
-            );
-            bloquesRubros += ["subcontratos", "fletes"]
+            bloquesRubros += ["mano_obra", "consumibles", "subcontratos", "fletes"]
                 .map(rubro => rubroBlockHtml(seccion.id, seccion.tipo, tareaId, rubro, itemsPorRubro[rubro] || []))
                 .join("");
         }} else {{
@@ -953,7 +1312,7 @@ def vista_detalle_presupuesto(presupuesto_id):
                 .join("");
         }}
 
-        return `<div class="seccion-wrap" id="seccion-wrap-${{seccion.id}}">
+        return `<div class="seccion-wrap seccion-wrap-${{seccion.tipo.toLowerCase()}}" id="seccion-wrap-${{seccion.id}}">
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
                 <span class="chip ${{chipClase}}">${{seccion.tipo}}</span>
                 <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
@@ -1013,17 +1372,17 @@ def vista_detalle_presupuesto(presupuesto_id):
     function panelStickyHtml(tareaId, tipos) {{
         let bloques = "";
         if (tipos.includes("FABRICACION")) {{
-            bloques += `<div class="mini-resultado" id="mini-fab-${{tareaId}}"><b>Fabricación</b><div class="muted">Sin calcular.</div></div>`;
+            bloques += `<div class="mini-resultado mini-fab" id="mini-fab-${{tareaId}}"><b>Fabricación</b><div class="muted">Sin calcular.</div></div>`;
         }}
         if (tipos.includes("MONTAJE")) {{
-            bloques += `<div class="mini-resultado" id="mini-mon-${{tareaId}}"><b>Montaje</b><div class="muted">Sin calcular.</div></div>`;
+            bloques += `<div class="mini-resultado mini-mon" id="mini-mon-${{tareaId}}"><b>Montaje</b><div class="muted">Sin calcular.</div></div>`;
         }}
-        bloques += `<div class="mini-resultado" id="mini-tarea-${{tareaId}}" style="background:#eef2ff;border-color:#c7d2fe;"><b>Total tarea</b><div class="muted">Sin calcular.</div></div>`;
-        bloques += `<div class="mini-resultado" id="mini-presupuesto-${{tareaId}}" style="background:#fff7ed;border-color:#fdba74;"><b>Total presupuesto</b><div class="muted">Sin calcular.</div></div>`;
-        bloques += `<div class="mini-resultado indicador" id="mini-indicador-${{tareaId}}"><b>$/kg y USD/kg</b><div class="muted">Sin calcular.</div></div>`;
+        const nombreTarea = (TAREAS_INFO[String(tareaId)] || {{}}).nombre || ("Tarea " + tareaId);
+        bloques += `<div class="mini-resultado" id="mini-tarea-${{tareaId}}" style="background:#eef2ff;border-color:#c7d2fe;"><b>Total ${{nombreTarea}}</b><div class="muted">Sin calcular.</div></div>`;
+        bloques += `<div class="mini-resultado indicador" id="mini-indicador-${{tareaId}}"><b>Indicadores</b><div class="muted">Sin calcular.</div></div>`;
         return `<div class="panel-sticky">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-                <b style="font-size:13px;">📊 Resultado en vivo</b>
+                <b style="font-size:13px;">📊 Resumen</b>
                 <span class="guardando-badge" id="guardando-${{tareaId}}">💾 Guardando…</span>
             </div>
             <div class="grid-paneles">${{bloques}}</div>
@@ -1043,6 +1402,10 @@ def vista_detalle_presupuesto(presupuesto_id):
     function actualizarSubtotalesItems(seccionId, itemsResultado) {{
         const ordenPorRubro = ordenItemsPorSeccion[seccionId] || {{}};
         const consumido = {{}};
+        const totales = {{
+            materialesKg: 0, materialesM2: 0, materialesSubtotal: 0,
+            noListadoSubtotal: 0, chapaM2: 0, chapaSubtotal: 0,
+        }};
         (itemsResultado || []).forEach(itemRes => {{
             const rubro = itemRes.rubro;
             const orden = ordenPorRubro[rubro] || [];
@@ -1054,9 +1417,32 @@ def vista_detalle_presupuesto(presupuesto_id):
             if (span) span.textContent = fmtMoney(itemRes.subtotal);
             const kgSpan = document.getElementById(`kg-item-${{itemId}}`);
             if (kgSpan && itemRes.peso !== undefined) kgSpan.textContent = fmtNum(itemRes.peso, 1);
+            const kgm2Span = document.getElementById(`kgm2-item-${{itemId}}`);
+            if (kgm2Span && itemRes.peso !== undefined && itemRes.m2) kgm2Span.textContent = fmtNum(itemRes.peso / itemRes.m2, 2);
             const m2Span = document.getElementById(`m2-item-${{itemId}}`);
             if (m2Span && itemRes.m2 !== undefined) m2Span.textContent = fmtNum(itemRes.m2, 2);
+            const cantSpan = document.getElementById(`cant-item-${{itemId}}`);
+            if (cantSpan && itemRes.cantidad !== undefined) cantSpan.textContent = fmtNum(itemRes.cantidad, 0);
+
+            if (rubro === "materiales" && itemRes.tipo_item === "no_listado") {{
+                totales.noListadoSubtotal += itemRes.subtotal || 0;
+            }} else if (rubro === "materiales" && (itemRes.tipo_item === "chapa" || itemRes.tipo_item === "tornillos")) {{
+                totales.chapaM2 += itemRes.m2 || 0;
+                totales.chapaSubtotal += itemRes.subtotal || 0;
+            }} else if (rubro === "materiales" && (itemRes.tipo_item === "perfil" || itemRes.tipo_item === "porcentaje" || !itemRes.tipo_item)) {{
+                totales.materialesKg += itemRes.peso || 0;
+                totales.materialesM2 += itemRes.m2 || 0;
+                totales.materialesSubtotal += itemRes.subtotal || 0;
+            }}
         }});
+
+        const setTxt = (id, texto) => {{ const el = document.getElementById(id); if (el) el.textContent = texto; }};
+        setTxt(`tot-kg-materiales-${{seccionId}}`, fmtNum(totales.materialesKg, 1));
+        setTxt(`tot-m2-materiales-${{seccionId}}`, fmtNum(totales.materialesM2, 2));
+        setTxt(`tot-subtotal-materiales-${{seccionId}}`, fmtMoney(totales.materialesSubtotal));
+        setTxt(`tot-subtotal-nolistado-${{seccionId}}`, fmtMoney(totales.noListadoSubtotal));
+        setTxt(`tot-m2-chapa-${{seccionId}}`, fmtNum(totales.chapaM2, 2));
+        setTxt(`tot-subtotal-chapa-${{seccionId}}`, fmtMoney(totales.chapaSubtotal));
     }}
 
     function refrescarCalculos(tareaId) {{
@@ -1069,41 +1455,46 @@ def vista_detalle_presupuesto(presupuesto_id):
                     const tipo = seccionTipoPorId[seccionId];
                     const itemsResultado = tipo === "FABRICACION" ? resultado.fabricacion.items : resultado.montaje.items;
                     actualizarSubtotalesItems(seccionId, itemsResultado);
-                    if (tipo === "FABRICACION" && resultado.fabricacion.indicador_mano_obra) {{
-                        const ind = resultado.fabricacion.indicador_mano_obra;
-                        const usdEl = document.getElementById(`indic-usdkg-${{seccionId}}`);
-                        if (usdEl) usdEl.textContent = fmtNum(ind.usd_por_kg, 3);
-                        const kgEl = document.getElementById(`indic-kghh-${{seccionId}}`);
-                        if (kgEl) kgEl.textContent = fmtNum(ind.kg_por_hh, 2);
-                    }}
                 }});
                 const miniFab = document.getElementById(`mini-fab-${{tareaId}}`);
                 if (miniFab) miniFab.innerHTML = miniCascadaHtml("Fabricación", resultado.fabricacion.cascada);
                 const miniMon = document.getElementById(`mini-mon-${{tareaId}}`);
                 if (miniMon) miniMon.innerHTML = miniCascadaHtml("Montaje", resultado.montaje.cascada);
                 const miniTarea = document.getElementById(`mini-tarea-${{tareaId}}`);
-                if (miniTarea) miniTarea.innerHTML = `<b>Total tarea</b><div class="fila total"><span>Precio venta</span><span>${{fmtMoney(resultado.precio_venta_tarea)}}</span></div>`;
+                const nombreTarea = (TAREAS_INFO[String(tareaId)] || {{}}).nombre || ("Tarea " + tareaId);
+                const cf = resultado.fabricacion.cascada, cm = resultado.montaje.cascada;
+                const cascadaTarea = {{
+                    costo_directo: (cf.costo_directo || 0) + (cm.costo_directo || 0),
+                    gg: (cf.gg || 0) + (cm.gg || 0),
+                    beneficio: (cf.beneficio || 0) + (cm.beneficio || 0),
+                    impuestos: (cf.impuestos || 0) + (cm.impuestos || 0),
+                    precio_venta: resultado.precio_venta_tarea,
+                }};
+                if (miniTarea) miniTarea.innerHTML = miniCascadaHtml("Total " + nombreTarea, cascadaTarea);
             }});
         fetch(`${{API}}/presupuestos/${{PRESUPUESTO_ID}}/recalcular`)
             .then(r => r.json())
             .then(({{ totales, error }}) => {{
                 if (error) return;
-                const miniPres = document.getElementById(`mini-presupuesto-${{tareaId}}`);
-                if (miniPres) miniPres.innerHTML = `<b>Total presupuesto</b><div class="fila total"><span>Precio venta</span><span>${{fmtMoney(totales.precio_venta_presupuesto)}}</span></div>`;
                 const cont = document.getElementById("totales-presupuesto");
                 if (cont) cont.innerHTML = `<div class="resultado-box"><div class="fila" style="font-weight:800;"><span>TOTAL PRESUPUESTO</span><span>${{fmtMoney(totales.precio_venta_presupuesto)}}</span></div></div>`;
+                cargarResumenTareasPresupuesto();
             }});
-        fetch(`${{API}}/presupuestos/${{PRESUPUESTO_ID}}/indicador-kg`)
+        fetch(`${{API}}/tareas/${{tareaId}}/indicador`)
             .then(r => r.json())
             .then((datos) => {{
                 if (datos.error) return;
                 const miniInd = document.getElementById(`mini-indicador-${{tareaId}}`);
                 if (!miniInd) return;
                 const sinTipoCambio = !datos.tipo_cambio_referencia ? '<div class="muted">Sin tipo de cambio ref.</div>' : "";
-                miniInd.innerHTML = `<b>$/kg y USD/kg</b>
-                    <div class="fila"><span>Peso total</span><span>${{fmtNum(datos.peso_total_kg, 1)}} kg</span></div>
-                    <div class="fila"><span>$/kg</span><span>${{fmtMoney(datos.costo_por_kg)}}</span></div>
-                    <div class="fila"><span>USD/kg</span><span>${{fmtNum(datos.costo_por_kg_usd, 4)}}</span></div>
+                const modoTareaInd = modoMaterialesTarea(tareaId);
+                const filasInd = modoTareaInd === "chapa"
+                    ? `<div class="fila"><span>m2/día (montaje)</span><span>${{fmtNum(datos.m2_por_dia_montaje, 2)}}</span></div>
+                       <div class="fila"><span>USD/m2 (total)</span><span>${{fmtNum(datos.usd_por_m2_total, 2)}}</span></div>`
+                    : `<div class="fila"><span>KG/HH</span><span>${{fmtNum(datos.kg_por_hh, 2)}}</span></div>
+                       <div class="fila"><span>USD/kg</span><span>${{fmtNum(datos.costo_por_kg_usd, 4)}}</span></div>`;
+                miniInd.innerHTML = `<b>Indicadores</b>
+                    ${{filasInd}}
                     ${{sinTipoCambio}}`;
             }});
     }}
@@ -1123,10 +1514,9 @@ def vista_detalle_presupuesto(presupuesto_id):
 
     function cargarTarea(tareaId) {{
         const cont = document.getElementById("tarea-contenido");
-        const wrapPrevio = document.querySelector(".tarea-scroll-wrap");
         const mismaTarea = cont.dataset.tareaActual === String(tareaId);
-        const scrollPrevio = (mismaTarea && wrapPrevio) ? wrapPrevio.scrollTop : 0;
-        cont.innerHTML = "Cargando...";
+        const scrollYPrevio = window.scrollY;
+        if (!mismaTarea) cont.innerHTML = "Cargando...";
         fetch(`${{API}}/tareas/${{tareaId}}`)
             .then(r => r.json())
             .then(({{ tarea, error }}) => {{
@@ -1134,8 +1524,14 @@ def vista_detalle_presupuesto(presupuesto_id):
 
                 // Autocrear la línea única de los rubros "de una sola línea" (sin botón
                 // "Agregar línea": el cuadro vacío para completar aparece directo).
+                // Las tareas en modo "chapa" (ver TAREAS_MODO_CHAPA) no usan ingeniería ni bulones.
+                const modoTarea = modoMaterialesTarea(tareaId);
                 const RUBROS_AUTO_UNA_LINEA = {{
-                    FABRICACION: ["bulones", "pintura", "fletes", "mano_obra", "consumibles", "ingenieria"],
+                    FABRICACION: modoTarea === "chapa"
+                        ? ["pintura", "fletes", "mano_obra", "consumibles"]
+                        : modoTarea === "grating"
+                            ? ["fletes", "mano_obra", "consumibles", "ingenieria"]
+                            : ["bulones", "pintura", "fletes", "mano_obra", "consumibles", "ingenieria"],
                     MONTAJE: ["mano_obra", "consumibles", "ingeniero", "tecnico_hys"],
                 }};
                 const DATOS_DEFAULT_POR_RUBRO = {{ bulones: {{"porcentaje": 0.05}} }};
@@ -1150,13 +1546,53 @@ def vista_detalle_presupuesto(presupuesto_id):
                             }}));
                         }}
                     }});
-                    if (s.tipo === "FABRICACION") {{
+                    if (s.tipo === "FABRICACION" && modoTarea === "chapa") {{
+                        const hayTornillos = (s.items || []).some(it => it.rubro === "materiales" && it.tipo_item === "tornillos");
+                        if (!hayTornillos) {{
+                            creaciones.push(fetch(`${{API}}/secciones/${{s.id}}/items`, {{
+                                method: "POST", headers: {{"Content-Type": "application/json"}},
+                                body: JSON.stringify({{ rubro: "materiales", datos: {{"descripcion": "Tornillos"}}, tipo_item: "tornillos" }})
+                            }}));
+                        }}
+                    }} else if (s.tipo === "FABRICACION" && modoTarea === "grating") {{
+                        const hayFijaciones = (s.items || []).some(it => it.rubro === "materiales" && it.tipo_item === "fijaciones");
+                        if (!hayFijaciones) {{
+                            creaciones.push(fetch(`${{API}}/secciones/${{s.id}}/items`, {{
+                                method: "POST", headers: {{"Content-Type": "application/json"}},
+                                body: JSON.stringify({{ rubro: "materiales", datos: {{"descripcion": "Fijaciones"}}, tipo_item: "fijaciones" }})
+                            }}));
+                        }}
+                    }} else if (s.tipo === "FABRICACION") {{
                         const hayPlacas = (s.items || []).some(it => it.rubro === "materiales" && it.tipo_item === "porcentaje");
                         if (!hayPlacas) {{
                             creaciones.push(fetch(`${{API}}/secciones/${{s.id}}/items`, {{
                                 method: "POST", headers: {{"Content-Type": "application/json"}},
-                                body: JSON.stringify({{ rubro: "materiales", datos: {{"porcentaje": 0.15}}, tipo_item: "porcentaje" }})
+                                body: JSON.stringify({{ rubro: "materiales", datos: {{"porcentaje": 0.15, "descripcion": "Placas"}}, tipo_item: "porcentaje" }})
                             }}));
+                        }}
+                        const infoTarea = TAREAS_INFO[String(tareaId)] || {{}};
+                        const tipoTarea = infoTarea.tipo || infoTarea.nombre || "";
+                        const plantilla = MATERIALES_TEMPLATE_POR_TAREA[tipoTarea];
+                        const hayPerfiles = (s.items || []).some(it => it.rubro === "materiales" && it.tipo_item === "perfil");
+                        if (plantilla && !hayPerfiles) {{
+                            plantilla.forEach(linea => {{
+                                const perfil = PERFILES.find(p => (p.label || "").trim().toLowerCase() === linea.catalogo_descripcion.trim().toLowerCase());
+                                if (!perfil) return;
+                                creaciones.push(fetch(`${{API}}/secciones/${{s.id}}/items`, {{
+                                    method: "POST", headers: {{"Content-Type": "application/json"}},
+                                    body: JSON.stringify({{
+                                        rubro: "materiales",
+                                        tipo_item: "perfil",
+                                        datos: {{
+                                            descripcion: linea.descripcion,
+                                            perfil_id: perfil.id,
+                                            cantidad: linea.cantidad || 0,
+                                            largo_mm: linea.largo_mm || 0,
+                                            precio_unitario_kg: linea.precio_unitario_kg,
+                                        }},
+                                    }})
+                                }}));
+                            }});
                         }}
                     }}
                 }});
@@ -1185,8 +1621,8 @@ def vista_detalle_presupuesto(presupuesto_id):
                     <div style="padding:6px;">${{secciones}}</div>
                 </div>`;
                 cont.dataset.tareaActual = String(tareaId);
-                const wrapNuevo = document.querySelector(".tarea-scroll-wrap");
-                if (wrapNuevo) wrapNuevo.scrollTop = scrollPrevio;
+                window.scrollTo(window.scrollX, scrollYPrevio);
+                inicializarCombosPerfil(cont);
                 (tarea.secciones || []).forEach(s => sincronizarConsumibles(s.id, tareaId));
                 refrescarCalculos(tareaId);
             }})
@@ -1237,6 +1673,8 @@ def vista_resumen_presupuesto(presupuesto_id):
             <div>
                 <a href="/modulo/presupuestos/{presupuesto_id}" class="btn btn-secondary">⬅️ Volver al presupuesto</a>
                 <a href="/modulo/presupuestos/{presupuesto_id}/resumen/export.csv" class="btn">⬇ Exportar recursos (CSV)</a>
+                <a href="/modulo/presupuestos/{presupuesto_id}/resumen/reporte-explosion-insumos.xlsx" class="btn">⬇ Explosión de insumos (Excel)</a>
+                <a href="/modulo/presupuestos/{presupuesto_id}/resumen/reporte-prevision-fondos.xlsx" class="btn">⬇ Previsión de fondos (Excel)</a>
             </div>
         </div>
 
@@ -1247,13 +1685,8 @@ def vista_resumen_presupuesto(presupuesto_id):
 
         <div class="card">
             <h3 style="margin-top:0;">Reporte cruzado por categoría</h3>
-            <div class="muted" style="margin-bottom:8px;">Cruza todas las tareas del presupuesto (igual a la hoja "Resumen" del Excel original).</div>
+            <div class="muted" style="margin-bottom:8px;">REPORTE POR CATEGORIA</div>
             <div id="reporte-categorias" class="muted">Cargando...</div>
-        </div>
-
-        <div class="card">
-            <h3 style="margin-top:0;">Indicador de costo</h3>
-            <div id="indicador-kg" class="muted">Cargando...</div>
         </div>
 
         <div class="card">
@@ -1321,21 +1754,6 @@ def vista_resumen_presupuesto(presupuesto_id):
             }});
     }}
 
-    function cargarIndicadorKg() {{
-        const cont = document.getElementById("indicador-kg");
-        fetch(`${{API}}/presupuestos/${{PRESUPUESTO_ID}}/indicador-kg`)
-            .then(r => r.json())
-            .then(({{ peso_total_kg, costo_por_kg, costo_por_kg_usd, tipo_cambio_referencia, error }}) => {{
-                if (error) {{ cont.innerHTML = `<span style="color:#dc2626;">${{error}}</span>`; return; }}
-                const sinTipoCambio = !tipo_cambio_referencia ? '<div class="muted">⚠️ El presupuesto no tiene tipo de cambio de referencia cargado: el USD/kg no se puede calcular.</div>' : '';
-                cont.innerHTML = `<div class="resultado-box">
-                    <div class="fila"><span>Peso total de materiales</span><span>${{fmtNum(peso_total_kg, 2)}} kg</span></div>
-                    <div class="fila"><span>Costo por kg ($/kg)</span><span>${{fmtMoney(costo_por_kg)}}</span></div>
-                    <div class="fila"><span>Costo por kg (USD/kg)</span><span>${{fmtNum(costo_por_kg_usd, 4)}}</span></div>
-                </div>${{sinTipoCambio}}`;
-            }});
-    }}
-
     function cargarResumenRecursos() {{
         const cont = document.getElementById("resumen-recursos");
         fetch(`${{API}}/presupuestos/${{PRESUPUESTO_ID}}/resumen-recursos`)
@@ -1371,7 +1789,6 @@ def vista_resumen_presupuesto(presupuesto_id):
 
     cargarResumenTareas();
     cargarReporteCategorias();
-    cargarIndicadorKg();
     cargarResumenRecursos();
     </script>
     </body>
@@ -1413,3 +1830,33 @@ def vista_exportar_resumen_recursos_csv(presupuesto_id):
     csv_bytes = BytesIO(buffer.getvalue().encode("utf-8-sig"))
     nombre_archivo = f"resumen_recursos_presupuesto_{presupuesto_id}.csv"
     return send_file(csv_bytes, mimetype="text/csv", as_attachment=True, download_name=nombre_archivo)
+
+
+_XLSX_MIMETYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@presupuestos_bp.route("/<int:presupuesto_id>/resumen/reporte-explosion-insumos.xlsx", methods=["GET"])
+def vista_reporte_explosion_insumos_xlsx(presupuesto_id):
+    """Sección 5.2 — Reporte 1: una pestaña por tarea + pestaña "Resumen"."""
+    db = _db()
+    presupuesto = obtener_presupuesto(db, presupuesto_id)
+    if not presupuesto:
+        return "<h3>❌ Presupuesto no encontrado</h3>", 404
+
+    buffer = generar_reporte_explosion_insumos(db, presupuesto_id)
+    nombre_archivo = f"explosion_insumos_presupuesto_{presupuesto_id}.xlsx"
+    return send_file(buffer, mimetype=_XLSX_MIMETYPE, as_attachment=True, download_name=nombre_archivo)
+
+
+@presupuestos_bp.route("/<int:presupuesto_id>/resumen/reporte-prevision-fondos.xlsx", methods=["GET"])
+def vista_reporte_prevision_fondos_xlsx(presupuesto_id):
+    """Sección 5.3 — Reporte 2: previsión de fondos para Odoo."""
+    db = _db()
+    presupuesto = obtener_presupuesto(db, presupuesto_id)
+    if not presupuesto:
+        return "<h3>❌ Presupuesto no encontrado</h3>", 404
+
+    obra_referencia = _obtener_obra_referencia(db, presupuesto, presupuesto_id)
+    buffer = generar_reporte_prevision_fondos(db, presupuesto_id, obra_referencia)
+    nombre_archivo = f"prevision_fondos_presupuesto_{presupuesto_id}.xlsx"
+    return send_file(buffer, mimetype=_XLSX_MIMETYPE, as_attachment=True, download_name=nombre_archivo)
