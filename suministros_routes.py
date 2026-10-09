@@ -921,13 +921,13 @@ def articulos():
     db = get_db()
     _ensure_tables(db)
     rows = db.execute(
-        "SELECT id, COALESCE(codigo,''), descripcion, COALESCE(unidad,'u'), COALESCE(categoria,''), activo, COALESCE(kg_per_m,0), COALESCE(area_cm2,0) "
+        "SELECT id, COALESCE(codigo,''), descripcion, COALESCE(unidad,'u'), COALESCE(categoria,''), activo, COALESCE(kg_per_m,0), COALESCE(m2_per_m,0) "
         "FROM articulos_sum ORDER BY descripcion"
     ).fetchall()
 
     filas = "".join(
         "<tr>"
-        "<td>{id}</td><td>{cod}</td><td><b>{desc}</b></td><td>{unid}</td><td style='text-align:right'>{kgm}</td><td style='text-align:right'>{area}</td><td>{cat}</td>"
+        "<td>{id}</td><td>{cod}</td><td><b>{desc}</b></td><td>{unid}</td><td style='text-align:right'>{kgm}</td><td style='text-align:right'>{m2m}</td><td>{cat}</td>"
         "<td>{act}</td>"
         "<td>"
         "<a class='b bl sm' href='/modulo/suministros/articulos/{id}/editar'>Editar</a>"
@@ -936,7 +936,7 @@ def articulos():
         "</form></td></tr>".format(
             id=int(r[0]), cod=_e(r[1]), desc=_e(r[2]), unid=_e(r[3]),
             kgm="{:.3f}".format(float(r[6])) if r[6] else "—",
-            area="{:.3f}".format(float(r[7])) if r[7] else "—",
+            m2m="{:.4f}".format(float(r[7])) if r[7] else "—",
             cat=_e(r[4]), act="Si" if r[5] else "No",
             cls="rd" if r[5] else "gn", txt="Desactivar" if r[5] else "Activar")
         for r in rows
@@ -952,7 +952,7 @@ def articulos():
         "<a class='b gr' href='/modulo/suministros'>Dashboard</a>"
         "<div class='card' style='margin-top:12px'>"
         "<table class='hl'><thead><tr>"
-        "<th>ID</th><th>Codigo</th><th>Descripcion</th><th>Unidad</th><th>Kg/m</th><th>Seccion cm2</th><th>Categoria</th><th>Activo</th><th>Acciones</th>"
+        "<th>ID</th><th>Codigo</th><th>Descripcion</th><th>Unidad</th><th>Kg/m</th><th>M2/m</th><th>Categoria</th><th>Activo</th><th>Acciones</th>"
         "</tr></thead><tbody>{filas}</tbody></table></div>"
     ).format(filas=filas)
     return _page("Lista de Materiales", body)
@@ -973,15 +973,15 @@ def articulo_nuevo():
         except Exception:
             kg_per_m = None
         try:
-            area_cm2 = float((request.form.get("area_cm2") or "0").replace(",", "."))
+            m2_per_m = float((request.form.get("m2_per_m") or "0").replace(",", "."))
         except Exception:
-            area_cm2 = None
+            m2_per_m = None
         if not desc:
             error = "La descripcion es obligatoria."
         else:
             db.execute(
-                "INSERT INTO articulos_sum (codigo,descripcion,unidad,categoria,activo,kg_per_m,area_cm2) VALUES (?,?,?,?,1,?,?)",
-                (codigo, desc, unidad, categoria, kg_per_m if kg_per_m else None, area_cm2 if area_cm2 else None))
+                "INSERT INTO articulos_sum (codigo,descripcion,unidad,categoria,activo,kg_per_m,m2_per_m) VALUES (?,?,?,?,1,?,?)",
+                (codigo, desc, unidad, categoria, kg_per_m if kg_per_m else None, m2_per_m if m2_per_m else None))
             db.commit()
             # Si no tiene código, auto-asignar ART-XXXX
             if not codigo:
@@ -1001,7 +1001,7 @@ def articulo_nuevo():
         "<div><label>Unidad</label><input name='unidad' placeholder='u, kg, m, lt' value='u'></div>"
         "<div><label>Categoria</label><input name='categoria' placeholder='Ej: Acero'></div>"
         "<div><label>Kg/m (peso lineal)</label><input name='kg_per_m' type='number' step='0.001' min='0' placeholder='0'></div>"
-        "<div><label>Seccion cm2 del perfil</label><input name='area_cm2' type='number' step='0.001' min='0' placeholder='0'></div>"
+        "<div><label>M2/m (superficie lineal, para pintura)</label><input name='m2_per_m' type='number' step='0.0001' min='0' placeholder='0'></div>"
         "</div>"
         "<div style='margin-top:10px'><button class='b tl'>Guardar</button></div>"
         "</form></div>"
@@ -1014,7 +1014,7 @@ def articulo_editar(art_id):
     db = get_db()
     _ensure_tables(db)
     row = db.execute(
-        "SELECT id, COALESCE(codigo,''), descripcion, COALESCE(unidad,'u'), COALESCE(categoria,''), COALESCE(kg_per_m,0), COALESCE(area_cm2,0) "
+        "SELECT id, COALESCE(codigo,''), descripcion, COALESCE(unidad,'u'), COALESCE(categoria,''), COALESCE(kg_per_m,0), COALESCE(m2_per_m,0) "
         "FROM articulos_sum WHERE id=?", (art_id,)
     ).fetchone()
     if not row:
@@ -1030,15 +1030,15 @@ def articulo_editar(art_id):
         except Exception:
             kg_per_m = None
         try:
-            area_cm2 = float((request.form.get("area_cm2") or "0").replace(",", "."))
+            m2_per_m = float((request.form.get("m2_per_m") or "0").replace(",", "."))
         except Exception:
-            area_cm2 = None
+            m2_per_m = None
         if not desc:
             error = "La descripcion es obligatoria."
         else:
             db.execute(
-                "UPDATE articulos_sum SET codigo=?,descripcion=?,unidad=?,categoria=?,kg_per_m=?,area_cm2=? WHERE id=?",
-                (codigo, desc, unidad, categoria, kg_per_m if kg_per_m else None, area_cm2 if area_cm2 else None, art_id))
+                "UPDATE articulos_sum SET codigo=?,descripcion=?,unidad=?,categoria=?,kg_per_m=?,m2_per_m=? WHERE id=?",
+                (codigo, desc, unidad, categoria, kg_per_m if kg_per_m else None, m2_per_m if m2_per_m else None, art_id))
             # Si no tiene código, auto-asignar ART-XXXX
             if not codigo:
                 db.execute("UPDATE articulos_sum SET codigo=? WHERE id=? AND (codigo IS NULL OR codigo='')",
@@ -1056,13 +1056,13 @@ def articulo_editar(art_id):
         "<div><label>Unidad</label><input name='unidad' value='{unid}'></div>"
         "<div><label>Categoria</label><input name='categoria' value='{cat}'></div>"
         "<div><label>Kg/m (peso lineal)</label><input name='kg_per_m' type='number' step='0.001' min='0' value='{kgm}'></div>"
-        "<div><label>Seccion cm2 del perfil</label><input name='area_cm2' type='number' step='0.001' min='0' value='{area}'></div>"
+        "<div><label>M2/m (superficie lineal, para pintura)</label><input name='m2_per_m' type='number' step='0.0001' min='0' value='{m2m}'></div>"
         "</div>"
         "<div style='margin-top:10px'><button class='b tl'>Guardar</button></div>"
         "</form></div>"
     ).format(
         id=art_id, desc=_e(row[2]), cod=_e(row[1]), unid=_e(row[3]), cat=_e(row[4]),
-        area=float(row[6]) if row[6] else 0,
+        m2m=float(row[6]) if row[6] else 0,
         kgm=float(row[5]) if row[5] else 0,
         err="<div class='err'>{}</div>".format(_e(error)) if error else "")
     return _page("Editar articulo", body)
@@ -1096,7 +1096,7 @@ def articulos_autocodigos():
 @suministros_bp.route("/articulos/importar", methods=["GET", "POST"])
 def articulos_importar():
     """Importa artículos desde CSV (sep ';' o ',') o Excel (.xlsx).
-    Si el artículo ya existe, actualiza la sección en cm2 en vez de omitirlo.
+    Si el artículo ya existe, actualiza sus datos (kg/m, m2/m, etc.) en vez de omitirlo.
     """
     db = get_db()
     _ensure_tables(db)
@@ -1125,13 +1125,13 @@ def articulos_importar():
                             d = {headers[i]: str(row[i] or "").strip() for i in range(len(headers)) if i < len(row)}
                             desc = d.get("descripcion", "").strip()
                             if desc:
-                                    rows_to_insert.append((
+                                rows_to_insert.append((
                                     d.get("codigo", "").strip(),
                                     desc,
                                     d.get("unidad", "u").strip() or "u",
                                     d.get("categoria", "").strip(),
                                     d.get("kg_per_m", "").strip().replace(",", "."),
-                                        (d.get("area_cm2", "") or d.get("m2_per_m", "")).strip().replace(",", ".")))
+                                    d.get("m2_per_m", "").strip().replace(",", ".")))
                 elif fname.endswith(".csv") or fname.endswith(".txt"):
                     content = f.read().decode("utf-8-sig", errors="replace")
                     # Detectar separador
@@ -1148,7 +1148,7 @@ def articulos_importar():
                                 (row.get("unidad") or "u").strip() or "u",
                                 (row.get("categoria") or "").strip(),
                                 (row.get("kg_per_m") or "").strip().replace(",", "."),
-                                ((row.get("area_cm2") or row.get("m2_per_m") or "").strip().replace(",", "."))))
+                                (row.get("m2_per_m") or "").strip().replace(",", ".")))
                 else:
                     error = "Formato no soportado. Usa .xlsx, .csv o .txt"
             except Exception as ex:
@@ -1157,7 +1157,7 @@ def articulos_importar():
             if not error and rows_to_insert:
                 inserted = 0
                 updated = 0
-                for cod, desc, unid, cat, kgm_txt, area_txt in rows_to_insert:
+                for cod, desc, unid, cat, kgm_txt, m2m_txt in rows_to_insert:
                     exists = db.execute(
                         "SELECT id FROM articulos_sum WHERE LOWER(TRIM(descripcion))=LOWER(TRIM(?))", (desc,)
                     ).fetchone()
@@ -1166,9 +1166,9 @@ def articulos_importar():
                     except Exception:
                         kgm_val = None
                     try:
-                        area_val = float(area_txt) if area_txt else None
+                        m2m_val = float(m2m_txt) if m2m_txt else None
                     except Exception:
-                        area_val = None
+                        m2m_val = None
                     if exists:
                         db.execute(
                             """
@@ -1180,15 +1180,15 @@ def articulos_importar():
                                 unidad = CASE WHEN TRIM(COALESCE(?, '')) != '' THEN ? ELSE unidad END,
                                 categoria = CASE WHEN TRIM(COALESCE(?, '')) != '' THEN ? ELSE categoria END,
                                 kg_per_m = CASE WHEN ? IS NOT NULL THEN ? ELSE kg_per_m END,
-                                area_cm2 = CASE WHEN ? IS NOT NULL THEN ? ELSE area_cm2 END
+                                m2_per_m = CASE WHEN ? IS NOT NULL THEN ? ELSE m2_per_m END
                             WHERE id = ?
                             """,
-                            (cod, cod, unid, unid, cat, cat, kgm_val, kgm_val, area_val, area_val, int(exists[0])))
+                            (cod, cod, unid, unid, cat, cat, kgm_val, kgm_val, m2m_val, m2m_val, int(exists[0])))
                         updated += 1
                     else:
                         db.execute(
-                            "INSERT INTO articulos_sum (codigo,descripcion,unidad,categoria,activo,kg_per_m,area_cm2) VALUES (?,?,?,?,1,?,?)",
-                            (cod, desc, unid, cat, kgm_val, area_val))
+                            "INSERT INTO articulos_sum (codigo,descripcion,unidad,categoria,activo,kg_per_m,m2_per_m) VALUES (?,?,?,?,1,?,?)",
+                            (cod, desc, unid, cat, kgm_val, m2m_val))
                         inserted += 1
                 db.commit()
                 msg = "Se importaron {} articulos y se actualizaron {} existentes.".format(inserted, updated)
@@ -1199,12 +1199,12 @@ def articulos_importar():
         "<div class='card' style='font-size:13px;border-left:4px solid #f97316;max-width:600px'>"
         "<b>Formato requerido:</b><br>"
         "Columnas (la primera fila debe ser el encabezado):<br>"
-        "&nbsp;&nbsp;<code>descripcion ; codigo ; unidad ; categoria ; kg_per_m ; area_cm2</code><br><br>"
+        "&nbsp;&nbsp;<code>descripcion ; codigo ; unidad ; categoria ; kg_per_m ; m2_per_m</code><br><br>"
         "<b>Excel (.xlsx):</b> la primera fila debe contener los nombres de columna.<br>"
         "<b>CSV / TXT:</b> separador <code>;</code> o <code>,</code>. "
         "Guardarlo con codificacion UTF-8.<br><br>"
-        "Solo <b>descripcion</b> es obligatoria. Si el articulo ya existe, se actualiza su <b>area_cm2</b>.<br>"
-        "<b>kg_per_m</b> y <b>area_cm2</b> son opcionales. Tambien se acepta un encabezado legacy <b>m2_per_m</b> y se toma como reemplazo de <b>area_cm2</b>."
+        "Solo <b>descripcion</b> es obligatoria. Si el articulo ya existe, se actualizan sus datos (por ejemplo <b>m2_per_m</b>).<br>"
+        "<b>kg_per_m</b> y <b>m2_per_m</b> son opcionales (numericos, usados por Presupuestos)."
         "</div>")
 
     body = (
