@@ -17,6 +17,7 @@ referencia lógicamente a `articulos_sum.id` (sin FK dura, ver comentario en
 import json
 
 from .constants import ESTADOS_PRESUPUESTO, TIPOS_SECCION
+from .volcado_previsto import CAMPOS_ECONOMICOS
 
 # % default de FABRICACION fijos para ciertos tipos de tarea (no salen de
 # config_presupuestos, que sigue en 0 para el resto de las tareas). Cada tipo
@@ -181,12 +182,55 @@ def ensure_tablas_presupuestos(db):
     except Exception:
         pass
 
+    # Volcado del previsto a las OT. Las columnas FK son BIGINT (no INTEGER) para
+    # que coincidan con los PK que MySQL crea para tareas/presupuestos/ordenes_trabajo.
+    # Tarea sin OT = sin filas en tarea_ot_reparto. Sin UNIQUE(tarea_id, ot_id).
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS tarea_ot_reparto (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tarea_id BIGINT NOT NULL,
+        ot_id BIGINT NOT NULL,
+        porcentaje REAL NOT NULL CHECK (porcentaje >= 0 AND porcentaje <= 100),
+        FOREIGN KEY (tarea_id) REFERENCES tareas(id),
+        FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)
+    )
+    """)
+
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS volcados_previsto (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        presupuesto_id BIGINT NOT NULL,
+        fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+        usuario TEXT,
+        nota TEXT,
+        FOREIGN KEY (presupuesto_id) REFERENCES presupuestos(id)
+    )
+    """)
+
+    # Lo escrito en cada OT en ese volcado: historial y base para detectar ediciones manuales.
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS volcados_previsto_lineas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        volcado_id BIGINT NOT NULL,
+        ot_id BIGINT NOT NULL,
+        rubro TEXT NOT NULL,
+        monto REAL DEFAULT 0,
+        FOREIGN KEY (volcado_id) REFERENCES volcados_previsto(id),
+        FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)
+    )
+    """)
+
     # Índices para los filtros/joins más frecuentes del futuro CRUD.
     db.execute("CREATE INDEX IF NOT EXISTS idx_tareas_presupuesto_id ON tareas(presupuesto_id)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_tarea_secciones_tarea_id ON tarea_secciones(tarea_id)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_items_costo_tarea_seccion_id ON items_costo(tarea_seccion_id)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_items_costo_perfil_id ON items_costo(perfil_id)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_presupuestos_ot_id ON presupuestos(ot_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_tarea_ot_reparto_tarea_id ON tarea_ot_reparto(tarea_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_tarea_ot_reparto_ot_id ON tarea_ot_reparto(ot_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_volcados_previsto_presupuesto_id ON volcados_previsto(presupuesto_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_volcados_lineas_volcado_id ON volcados_previsto_lineas(volcado_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_volcados_lineas_ot_id ON volcados_previsto_lineas(ot_id)")
 
     db.commit()
 
@@ -508,6 +552,12 @@ def eliminar_presupuesto(db, presupuesto_id):
     (no hay FKs duras en SQLite/MySQL acá, así que la cascada se hace a mano)."""
     for tarea in listar_tareas(db, presupuesto_id):
         _eliminar_tarea_sin_commit(db, tarea["id"])
+    # Historial de volcados (FK a presupuestos): líneas primero, después la cabecera.
+    db.execute(
+        "DELETE FROM volcados_previsto_lineas WHERE volcado_id IN (SELECT id FROM volcados_previsto WHERE presupuesto_id = ?)",
+        (presupuesto_id,),
+    )
+    db.execute("DELETE FROM volcados_previsto WHERE presupuesto_id = ?", (presupuesto_id,))
     db.execute("DELETE FROM presupuestos WHERE id = ?", (presupuesto_id,))
     db.commit()
 
@@ -591,6 +641,7 @@ def _eliminar_tarea_sin_commit(db, tarea_id):
     for seccion in listar_secciones_tarea(db, tarea_id):
         db.execute("DELETE FROM items_costo WHERE tarea_seccion_id = ?", (seccion["id"],))
         db.execute("DELETE FROM tarea_secciones WHERE id = ?", (seccion["id"],))
+    db.execute("DELETE FROM tarea_ot_reparto WHERE tarea_id = ?", (tarea_id,))
     db.execute("DELETE FROM tareas WHERE id = ?", (tarea_id,))
 
 
@@ -598,6 +649,119 @@ def eliminar_tarea(db, tarea_id):
     """Borrado en cascada: items_costo -> tarea_secciones -> tarea."""
     _eliminar_tarea_sin_commit(db, tarea_id)
     db.commit()
+
+
+# ───────────────────────────────────────────────────────────────────
+# reparto tarea -> OT (tarea sin filas = "Sin OT (nivel obra)")
+# ───────────────────────────────────────────────────────────────────
+
+def listar_reparto_tareas(db, tarea_ids):
+    """{tarea_id: [{"ot_id", "porcentaje"}]} en orden de carga; las tareas sin filas no aparecen."""
+    tarea_ids = list(tarea_ids)
+    if not tarea_ids:
+        return {}
+    placeholders = ",".join("?" for _ in tarea_ids)
+    rows = db.execute(
+        f"SELECT tarea_id, ot_id, porcentaje FROM tarea_ot_reparto WHERE tarea_id IN ({placeholders}) ORDER BY id",
+        tuple(tarea_ids),
+    ).fetchall()
+    reparto = {}
+    for tarea_id, ot_id, porcentaje in rows:
+        reparto.setdefault(tarea_id, []).append({"ot_id": ot_id, "porcentaje": float(porcentaje)})
+    return reparto
+
+
+def reemplazar_reparto_tareas(db, reparto_por_tarea):
+    """reparto_por_tarea: {tarea_id: [{"ot_id", "porcentaje"}]}. Reemplaza el reparto de
+    cada tarea indicada (lista vacía = sin OT) en una sola transacción."""
+    try:
+        for tarea_id, filas in reparto_por_tarea.items():
+            db.execute("DELETE FROM tarea_ot_reparto WHERE tarea_id = ?", (tarea_id,))
+            for fila in filas:
+                db.execute(
+                    "INSERT INTO tarea_ot_reparto (tarea_id, ot_id, porcentaje) VALUES (?, ?, ?)",
+                    (tarea_id, fila["ot_id"], fila["porcentaje"]),
+                )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
+# ───────────────────────────────────────────────────────────────────
+# volcado del previsto a las OT (historial en volcados_previsto[_lineas])
+# ───────────────────────────────────────────────────────────────────
+
+def _lineas_de_volcado(db, volcado_id):
+    rows = db.execute(
+        "SELECT ot_id, rubro, monto FROM volcados_previsto_lineas WHERE volcado_id = ? ORDER BY id",
+        (volcado_id,),
+    ).fetchall()
+    lineas = {}
+    for ot_id, rubro, monto in rows:
+        lineas.setdefault(ot_id, {})[rubro] = float(monto or 0)
+    return lineas
+
+
+def listar_volcados(db, presupuesto_id):
+    """Volcados del presupuesto, el más nuevo primero: {id, fecha, usuario, nota, lineas: {ot_id: {campo: monto}}}."""
+    rows = db.execute(
+        "SELECT id, fecha, usuario, nota FROM volcados_previsto WHERE presupuesto_id = ? ORDER BY id DESC",
+        (presupuesto_id,),
+    ).fetchall()
+    return [
+        {"id": r[0], "fecha": r[1], "usuario": r[2], "nota": r[3], "lineas": _lineas_de_volcado(db, r[0])}
+        for r in rows
+    ]
+
+
+def obtener_ultimo_volcado(db, presupuesto_id):
+    row = db.execute(
+        "SELECT id, fecha, usuario, nota FROM volcados_previsto WHERE presupuesto_id = ? ORDER BY id DESC LIMIT 1",
+        (presupuesto_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return {"id": row[0], "fecha": row[1], "usuario": row[2], "nota": row[3], "lineas": _lineas_de_volcado(db, row[0])}
+
+
+def aplicar_volcado_previsto(db, presupuesto_id, usuario, nota, por_ot):
+    """Escribe los campos base de previsto en `economico_presupuesto` (misma tabla y columnas
+    que edita el módulo económico; el resto se recalcula allí como siempre) y registra el
+    volcado, todo en una sola transacción. por_ot: {ot_id: {campo: Decimal}}.
+    Devuelve el id del volcado."""
+    try:
+        cursor = db.execute(
+            "INSERT INTO volcados_previsto (presupuesto_id, usuario, nota) VALUES (?, ?, ?)",
+            (presupuesto_id, usuario, nota),
+        )
+        volcado_id = cursor.lastrowid
+
+        asignaciones = ", ".join(f"{campo} = ?" for campo in CAMPOS_ECONOMICOS)
+        columnas = ", ".join(CAMPOS_ECONOMICOS)
+        marcas = ", ".join("?" for _ in CAMPOS_ECONOMICOS)
+        for ot_id, valores in por_ot.items():
+            montos = [float(valores[campo]) for campo in CAMPOS_ECONOMICOS]
+            if db.execute("SELECT id FROM economico_presupuesto WHERE ot_id = ?", (ot_id,)).fetchone():
+                db.execute(
+                    f"UPDATE economico_presupuesto SET {asignaciones}, updated_at = CURRENT_TIMESTAMP WHERE ot_id = ?",
+                    (*montos, ot_id),
+                )
+            else:
+                db.execute(
+                    f"INSERT INTO economico_presupuesto (ot_id, {columnas}) VALUES (?, {marcas})",
+                    (ot_id, *montos),
+                )
+            for campo, monto in zip(CAMPOS_ECONOMICOS, montos):
+                db.execute(
+                    "INSERT INTO volcados_previsto_lineas (volcado_id, ot_id, rubro, monto) VALUES (?, ?, ?, ?)",
+                    (volcado_id, ot_id, campo, monto),
+                )
+        db.commit()
+        return volcado_id
+    except Exception:
+        db.rollback()
+        raise
 
 
 # ─────────────────────────────────────────────────────────────────

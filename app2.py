@@ -21,6 +21,8 @@ from presupuestos import presupuestos_bp
 import presupuestos.routes  # noqa: F401 - registra las rutas API del blueprint
 import presupuestos.views  # noqa: F401 - registra las pantallas HTML del blueprint
 import presupuestos.config_views  # noqa: F401 - registra la pantalla de Configuración (separada de la carga)
+import presupuestos.reparto_views  # noqa: F401 - registra el mapeo Tarea -> OT
+import presupuestos.volcado_views  # noqa: F401 - registra el volcado del previsto a las OT y su historial
 from db_utils import (
     get_db,
     _resolver_ot_id_para_obra,

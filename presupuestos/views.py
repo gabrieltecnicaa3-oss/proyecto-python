@@ -1789,6 +1789,10 @@ def vista_resumen_presupuesto(presupuesto_id):
         return "<h3>❌ Presupuesto no encontrado</h3>", 404
 
     botones_odoo = _ODOO_PEDIDO_BOTONES_HTML if presupuesto.get("estado") == "adjudicado" else ""
+    boton_reparto = (
+        f'<a href="/modulo/presupuestos/{presupuesto_id}/reparto" class="btn">🧩 Mapeo Tarea → OT</a>'
+        if presupuesto.get("estado") == "adjudicado" else ""
+    )
     dialogo_odoo = (
         _ODOO_PEDIDO_DIALOGO_HTML + "<script>" + _ODOO_PEDIDO_JS.replace("__PRESUPUESTO_ID__", str(presupuesto_id)) + "</script>"
         if botones_odoo else ""
@@ -1810,6 +1814,7 @@ def vista_resumen_presupuesto(presupuesto_id):
                 <a href="/modulo/presupuestos/{presupuesto_id}/resumen/reporte-explosion-insumos.xlsx" class="btn">⬇ Explosión de insumos (Excel)</a>
                 <a href="/modulo/presupuestos/{presupuesto_id}/resumen/reporte-prevision-fondos.xlsx" class="btn">⬇ Previsión de fondos (Excel)</a>
                 {botones_odoo}
+                {boton_reparto}
             </div>
         </div>
 {dialogo_odoo}
