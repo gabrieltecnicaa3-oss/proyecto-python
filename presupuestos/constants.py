@@ -23,6 +23,16 @@ TAREAS_MODO_CHAPA = ("Chapeado",)
 # oculta bulones (no aplica a Grating), pero sí usan ingeniería.
 TAREAS_MODO_GRATING = ("Grating",)
 
+
+def modo_materiales_tarea(tipo, nombre):
+    for valor in (tipo, nombre):
+        normalizado = str(valor or "").strip().casefold()
+        if normalizado in (t.casefold() for t in TAREAS_MODO_CHAPA):
+            return "chapa"
+        if normalizado in (t.casefold() for t in TAREAS_MODO_GRATING):
+            return "grating"
+    return "perfil"
+
 # Tareas estándar que se autocrean (Fabricación + Montaje, en 0) al crear un
 # presupuesto nuevo: cubren el flujo habitual, y después se completan o se
 # dejan sin usar según lo que requiera cada proyecto.

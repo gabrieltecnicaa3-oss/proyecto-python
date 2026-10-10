@@ -25,6 +25,7 @@ from . import presupuestos_bp
 from .routes import _db, _todos_los_resultados_tarea, _resumen_recursos_con_nombres
 from .constants import ESTADOS_PRESUPUESTO, TIPOS_SECCION, RUBROS_POR_SECCION, TAREAS_ESTANDAR, TAREAS_MODO_CHAPA, TAREAS_MODO_GRATING, MATERIALES_TEMPLATE_POR_TAREA, TAREAS_SELECCIONABLES
 from .calculo_presupuesto import calcular_presupuesto
+from .constants import modo_materiales_tarea
 from .reportes_excel import generar_reporte_explosion_insumos, generar_reporte_prevision_fondos
 from .reportes_odoo_pedido import (
     armar_pedido_odoo,
@@ -587,7 +588,10 @@ def vista_detalle_presupuesto(presupuesto_id):
     if not tareas:
         tabs_tareas_html = ""
     _tareas_info_js = json.dumps(
-        {str(t["id"]): {"nombre": t["nombre"], "orden": t["orden"], "tipo": t.get("tipo") or t["nombre"]} for t in tareas}, ensure_ascii=False
+        {str(t["id"]): {
+            "nombre": t["nombre"], "orden": t["orden"], "tipo": t.get("tipo") or t["nombre"],
+            "modo_materiales": modo_materiales_tarea(t.get("tipo"), t["nombre"]),
+        } for t in tareas}, ensure_ascii=False
     )
     _tareas_ids_js = json.dumps([t["id"] for t in tareas])
 
@@ -713,10 +717,7 @@ def vista_detalle_presupuesto(presupuesto_id):
 
     function modoMaterialesTarea(tareaId) {{
         const info = TAREAS_INFO[String(tareaId)] || {{}};
-        const tipo = info.tipo || info.nombre || "";
-        if (TAREAS_MODO_CHAPA.includes(tipo)) return "chapa";
-        if (TAREAS_MODO_GRATING.includes(tipo)) return "grating";
-        return "perfil";
+        return info.modo_materiales || "perfil";
     }}
 
     function seleccionarTarea(tareaId) {{
@@ -934,7 +935,7 @@ def vista_detalle_presupuesto(presupuesto_id):
                     <option value="">Todas las familias</option>
                     ${{opcionesFamilia}}
                 </select>
-                <select id="campo-${{itemId}}-perfil_id" data-valor-inicial="${{val || ''}}" style="width:280px;min-width:280px;flex:0 0 auto;" onchange="guardarItemInmediato(${{itemId}}, ${{tareaId}}); actualizarKgm2Grating(${{itemId}})"></select>
+                <select id="campo-${{itemId}}-perfil_id" data-tarea-id="${{tareaId}}" data-valor-inicial="${{val || ''}}" style="width:280px;min-width:280px;flex:0 0 auto;" onchange="guardarItemInmediato(${{itemId}}, ${{tareaId}}); actualizarKgm2Grating(${{itemId}})"></select>
             </div>`;
         }}
         if (campo.name === "equipo_id") {{
@@ -1006,11 +1007,11 @@ def vista_detalle_presupuesto(presupuesto_id):
     // ─────────────────────────────────────────────────────────────
 
     function esFamiliaChapa(nombre) {{
-        return (nombre || "").toUpperCase().startsWith("CH ");
+        return /^(CH|CHAPAS?)(\\s|$)/.test((nombre || "").trim().toUpperCase());
     }}
 
     function esFamiliaGrating(nombre) {{
-        return (nombre || "").toUpperCase().startsWith("GRA ");
+        return /^(GRA|GRATING)(\\s|$)/.test((nombre || "").trim().toUpperCase());
     }}
 
     function familiasParaModo(modo) {{
@@ -1033,7 +1034,7 @@ def vista_detalle_presupuesto(presupuesto_id):
             const valorInicial = sel.getAttribute("data-valor-inicial") || "";
             const familiaSel = document.getElementById(`familia-${{itemId}}`);
             const familia = familiaSel ? familiaSel.value : "";
-            const modo = modoMaterialesTarea(tareaActivaId);
+            const modo = modoMaterialesTarea(sel.getAttribute("data-tarea-id"));
             const opciones = perfilesParaModo(modo).filter(p => !familia || p.categoria === familia);
             const ts = new TomSelect(sel, {{
                 options: opciones,
@@ -1049,7 +1050,9 @@ def vista_detalle_presupuesto(presupuesto_id):
                     }};
                 }},
             }});
-            if (valorInicial) ts.setValue(String(valorInicial), true);
+            if (valorInicial && opciones.some(p => String(p.id) === String(valorInicial))) {{
+                ts.setValue(String(valorInicial), true);
+            }}
             actualizarKgm2Grating(itemId);
         }});
     }}

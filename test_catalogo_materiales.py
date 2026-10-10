@@ -4,7 +4,9 @@ import sqlite3
 import unittest
 from unittest.mock import patch
 
-from catalogo_materiales import CATALOGO_PATH, sincronizar_catalogo_materiales
+from catalogo_materiales import (
+    CATALOGO_PATH, LPN_PULGADAS_A_MM, sincronizar_catalogo_materiales,
+)
 
 
 class CatalogoMaterialesTests(unittest.TestCase):
@@ -78,7 +80,7 @@ class CatalogoMaterialesTests(unittest.TestCase):
         ).fetchone()[0], 9)
         self.assertEqual(self.db.execute(
             "SELECT COUNT(*) FROM catalogo_materiales_versiones"
-        ).fetchone()[0], 1)
+        ).fetchone()[0], 2)
         self.assertEqual(self.db.execute(
             "SELECT COUNT(*) FROM articulos_sum"
         ).fetchone()[0], 1155)
@@ -115,6 +117,120 @@ class CatalogoMaterialesTests(unittest.TestCase):
         ).fetchone()[0], 0)
         self.assertEqual(self.db.execute(
             "SELECT COUNT(*) FROM articulos_sum WHERE m2_per_m=9"
+        ).fetchone()[0], 1155)
+
+    def test_elimina_lpn_pulgadas_y_reasigna_todas_las_referencias(self):
+        import json
+        from articulos_seed import ARTICULOS_SEED
+
+        sincronizar_catalogo_materiales(self.db)
+        self.db.execute("PRAGMA foreign_keys = ON")
+        for tabla in ("items_op", "items_oc"):
+            self.db.execute(f"""
+                CREATE TABLE {tabla} (
+                    articulo_id INTEGER REFERENCES articulos_sum(id)
+                )
+            """)
+        self.db.execute("""
+            CREATE TABLE items_costo (
+                id INTEGER PRIMARY KEY,
+                perfil_id INTEGER REFERENCES articulos_sum(id), datos TEXT
+            )
+        """)
+        self.db.execute("""
+            DELETE FROM catalogo_materiales_versiones
+            WHERE version = 'lpn-pulgadas-a-mm-v1'
+        """)
+        anteriores = []
+        for cod, desc, unidad, categoria, activo, kg in ARTICULOS_SEED:
+            if desc not in LPN_PULGADAS_A_MM:
+                continue
+            anterior = self.db.execute("""
+                INSERT INTO articulos_sum (descripcion, unidad, categoria, activo, kg_per_m)
+                VALUES (?, ?, ?, ?, ?)
+            """, (desc, unidad, categoria, activo, kg)).lastrowid
+            nuevo, kg_mm = self.db.execute(
+                "SELECT id, kg_per_m FROM articulos_sum WHERE descripcion = ?",
+                (LPN_PULGADAS_A_MM[desc],),
+            ).fetchone()
+            self.assertEqual(kg, kg_mm)
+            anteriores.append((anterior, nuevo))
+            for tabla in ("items_op", "items_oc"):
+                self.db.execute(f"INSERT INTO {tabla} VALUES (?)", (anterior,))
+            self.db.execute(
+                "INSERT INTO items_costo (perfil_id, datos) VALUES (?, ?)",
+                (anterior, json.dumps({"perfil_id": str(anterior), "cantidad": 3})),
+            )
+        self.assertEqual(len(anteriores), 24)
+        self.db.execute(
+            "INSERT INTO items_costo (datos) VALUES (?)",
+            (json.dumps({"perfil_id": anteriores[0][0]}),),
+        )
+        self.db.commit()
+        sincronizar_catalogo_materiales(self.db)
+
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM articulos_sum"
+        ).fetchone()[0], 1155)
+        for tabla in ("items_op", "items_oc"):
+            self.assertEqual(
+                [r[0] for r in self.db.execute(f"SELECT articulo_id FROM {tabla}")],
+                [nuevo for _, nuevo in anteriores],
+            )
+        items = self.db.execute("SELECT perfil_id, datos FROM items_costo ORDER BY id").fetchall()
+        for (perfil_id, datos), (_, nuevo) in zip(items, anteriores):
+            self.assertEqual(perfil_id, nuevo)
+            self.assertEqual(json.loads(datos), {"perfil_id": nuevo, "cantidad": 3})
+        self.assertEqual(json.loads(items[-1][1])["perfil_id"], anteriores[0][1])
+        self.assertEqual(self.db.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+    def test_eliminacion_lpn_fallida_revierte_referencias(self):
+        sincronizar_catalogo_materiales(self.db)
+        self.db.execute("""
+            DELETE FROM catalogo_materiales_versiones
+            WHERE version = 'lpn-pulgadas-a-mm-v1'
+        """)
+        anterior = self.db.execute("""
+            INSERT INTO articulos_sum (descripcion) VALUES ('LPN 2"x 1/8"')
+        """).lastrowid
+        self.db.execute("CREATE TABLE items_op (articulo_id INTEGER)")
+        self.db.execute("INSERT INTO items_op VALUES (?)", (anterior,))
+        self.db.execute("""
+            CREATE TRIGGER impedir_borrado BEFORE DELETE ON articulos_sum
+            BEGIN SELECT RAISE(ABORT, 'no borrar'); END
+        """)
+        self.db.commit()
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "no borrar"):
+            sincronizar_catalogo_materiales(self.db)
+        self.assertEqual(self.db.execute(
+            "SELECT articulo_id FROM items_op"
+        ).fetchone()[0], anterior)
+        self.assertIsNotNone(self.db.execute(
+            "SELECT id FROM articulos_sum WHERE id = ?", (anterior,)
+        ).fetchone())
+        self.assertIsNone(self.db.execute("""
+            SELECT version FROM catalogo_materiales_versiones
+            WHERE version = 'lpn-pulgadas-a-mm-v1'
+        """).fetchone())
+
+    def test_eliminacion_lpn_admite_ordenes_compra_legacy_sin_articulo_id(self):
+        sincronizar_catalogo_materiales(self.db)
+        self.db.execute("""
+            DELETE FROM catalogo_materiales_versiones
+            WHERE version = 'lpn-pulgadas-a-mm-v1'
+        """)
+        self.db.execute("CREATE TABLE items_oc (id INTEGER PRIMARY KEY, descripcion TEXT)")
+        self.db.execute("INSERT INTO items_oc VALUES (1, 'Compra historica')")
+        self.db.execute("""
+            INSERT INTO articulos_sum (descripcion) VALUES ('LPN 2"x 1/8"')
+        """)
+        self.db.commit()
+        sincronizar_catalogo_materiales(self.db)
+        self.assertEqual(self.db.execute(
+            "SELECT * FROM items_oc"
+        ).fetchall(), [(1, "Compra historica")])
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM articulos_sum"
         ).fetchone()[0], 1155)
 
 

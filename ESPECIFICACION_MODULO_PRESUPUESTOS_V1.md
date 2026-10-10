@@ -166,13 +166,23 @@ por versión del archivo. Conserva IDs, códigos y estado activo de los artícul
 existentes; actualiza unidad, categoría, kg/m y m²/m por descripción (ignorando
 mayúsculas y espacios exteriores), y agrega los faltantes. No elimina artículos
 adicionales ni modifica referencias de pedidos, compras o presupuestos.
-Los nombres distintos, incluidos posibles LPN expresados en pulgadas, no se
-fusionan automáticamente: requieren verificar la equivalencia antes de reasignar
-referencias. Los cambios manuales posteriores no se sobrescriben al recargar.
+Los 24 nombres históricos de LPN en pulgadas se reemplazan por sus equivalentes
+verificados en milímetros: se reasignan `items_op.articulo_id`,
+`items_oc.articulo_id` e `items_costo.perfil_id` (incluido el JSON `datos`) antes
+de eliminar las filas en pulgadas. Esta migración se ejecuta una sola vez y
+revierte las reasignaciones si falla. Otros nombres distintos no se fusionan.
+Los cambios manuales posteriores no se sobrescriben al recargar.
 
 **`catalogo_perfiles`** (módulo de Compras): `id`, `nombre`, `kg_m`, `m2_m`. El módulo de Presupuestos solo la referencia por FK desde `items_costo.datos.perfil_id`. Debe poder expandirse desde Compras sin que Presupuestos requiera cambios.
 
 ### 2.4 Generalización — familias de materiales
+
+En la pestaña Grating, tanto el selector de familias como el selector de
+materiales muestran exclusivamente Grating (`GRA ...` o `Grating ...`).
+En Chapeado muestran exclusivamente chapas (`CH ...`, `Chapa ...` o
+`Chapas ...`). Se reconoce el tipo de tarea y, para tareas antiguas, su nombre,
+sin distinguir mayúsculas ni espacios exteriores. El modo se conserva si la
+tarea tiene un nombre personalizado y un tipo reconocido.
 
 El rubro `materiales` no se limita a Perfiles. Cada familia tiene su propia unidad base y su propio catálogo:
 

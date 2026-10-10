@@ -1,5 +1,6 @@
 """Tests de valores por defecto independientes por presupuesto."""
 import sqlite3
+from presupuestos.constants import modo_materiales_tarea
 
 from presupuestos.models import (
     actualizar_config,
@@ -95,6 +96,20 @@ def test_migracion_legacy_rellena_defaults_sin_pisar_presupuestos_existentes():
         "SELECT tarifa_dh_taller_default FROM presupuestos ORDER BY id"
     ).fetchall()
     assert valores == [(0.0,), (456.0,)]
+
+
+def test_modo_materiales_reconoce_tipos_y_nombres_legacy():
+    casos = [
+        ("Grating", "Escalones", "grating"),
+        ("Chapeado", "Cubierta", "chapa"),
+        ("", " grating ", "grating"),
+        ("FABRICACION", " CHAPEADO ", "chapa"),
+        ("Estructura", "Grating", "grating"),
+        (" chapeado ", "Otro nombre", "chapa"),
+        ("", "Estructura Metálica", "perfil"),
+    ]
+    for tipo, nombre, esperado in casos:
+        assert modo_materiales_tarea(tipo, nombre) == esperado
 
 
 if __name__ == "__main__":
