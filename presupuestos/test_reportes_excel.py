@@ -58,7 +58,6 @@ class ReportesExcelTests(unittest.TestCase):
             ("Grua", 4, "Días", 5000, 20000),
             ("Director de obra", 5, "Días", 3000, 15000),
             ("Técnico H y S", 2, "Días", 2500, 5000),
-            ("TOTAL MANO DE OBRA — FABRICACIÓN", 6, "Operarios-día", None, 6000),
             ("TOTAL RECURSOS", None, None, None, 58000),
         ]
         for nombre in ("Tarea 1", "Tarea 2"):
@@ -76,16 +75,14 @@ class ReportesExcelTests(unittest.TestCase):
             self.assertIn("$", ws.cell(fila, 4).number_format)
             self.assertIn("$", ws.cell(fila, 5).number_format)
 
-    def test_tarifas_distintas_se_muestran_separadas(self):
+    def test_tarifas_distintas_se_consolidan_con_unitario_ponderado(self):
         wb = self._workbook([self._resultado(), self._resultado(1200)])
         filas = self._recursos(wb["Resumen"])
         self.assertEqual([f for f in filas if f[0] == "Fabricación"], [
-            ("Fabricación", 6, "Operarios-día", 1000, 6000),
-            ("Fabricación", 6, "Operarios-día", 1200, 7200),
+            ("Fabricación", 12, "Operarios-día", 1100, 13200),
         ])
         self.assertEqual(filas[-1][-1], 117200)
-        self.assertEqual(filas[-2],
-                         ("TOTAL MANO DE OBRA — FABRICACIÓN", 12, "Operarios-día", None, 13200))
+        self.assertEqual(len(filas), 6)
 
     def test_sin_tareas_y_dias_cero(self):
         wb = self._workbook([])
@@ -95,8 +92,7 @@ class ReportesExcelTests(unittest.TestCase):
             {"rubro": "ingeniero", "datos": {"dias": 0, "tarifa_dia": 3000}},
         ], pcts)
         wb = self._workbook([resultado])
-        self.assertEqual(self._recursos(wb["Resumen"])[0],
-                         ("Director de obra", 0, "Días", 3000, 0))
+        self.assertEqual(self._recursos(wb["Resumen"])[0][0], "Sin recursos cargados.")
 
     def test_total_fabricacion_104_operarios_dia_desde_base_de_datos(self):
         ensure_tablas_presupuestos(self.db)
@@ -125,9 +121,10 @@ class ReportesExcelTests(unittest.TestCase):
         wb = load_workbook(generar_reporte_explosion_insumos(self.db, presupuesto_id))
         self.addCleanup(wb.close)
         filas = self._recursos(wb["Resumen"])
-        self.assertEqual(next(f for f in filas if f[0] == "TOTAL MANO DE OBRA — FABRICACIÓN"),
-                         ("TOTAL MANO DE OBRA — FABRICACIÓN", 104, "Operarios-día",
-                          None, 13340000))
+        fabricacion = next(f for f in filas if f[0] == "Fabricación")
+        self.assertEqual(fabricacion[:3], ("Fabricación", 104, "Operarios-día"))
+        self.assertAlmostEqual(fabricacion[3], 13340000 / 104)
+        self.assertEqual(fabricacion[4], 13340000)
         self.assertEqual(next(f for f in filas if f[0] == "Montaje"),
                          ("Montaje", 12, "Operarios-día", 190000, 2280000))
         for nombre in ("Director de obra", "Técnico H y S"):
@@ -137,9 +134,26 @@ class ReportesExcelTests(unittest.TestCase):
         for nombre, esperado in (("Estructura", 60), ("Cubierta", 44)):
             filas_tarea = self._recursos(wb[nombre])
             self.assertEqual(next(f[1] for f in filas_tarea
-                                  if f[0] == "TOTAL MANO DE OBRA — FABRICACIÓN"), esperado)
+                                  if f[0] == "Fabricación"), esperado)
             self.assertEqual(next(f for f in filas_tarea if f[0] == "Director de obra"),
                              ("Director de obra", 0.5, "Días", 160000, 80000))
+
+    def test_lineas_vacias_no_duplican_recursos_y_equipos_se_conservan(self):
+        pcts = {"gg_pct": 0, "beneficio_pct": 0, "imp_pct": 0}
+        vacio = calcular_tarea([
+            {"rubro": "mano_obra", "datos": {}},
+        ], pcts, [
+            {"rubro": rubro, "datos": {}}
+            for rubro in ("mano_obra", "ingeniero", "tecnico_hys", "equipo")
+        ], pcts)
+        wb = self._workbook([vacio, self._resultado(), vacio])
+        filas = self._recursos(wb["Resumen"])
+        self.assertEqual([f[0] for f in filas], [
+            "Fabricación", "Montaje", "Grua", "Director de obra",
+            "Técnico H y S", "TOTAL RECURSOS",
+        ])
+        self.assertEqual(filas[0][1], 6)
+        self.assertEqual(filas[-1][-1], 58000)
 
 
 if __name__ == "__main__":

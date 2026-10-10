@@ -338,15 +338,17 @@ Al pie de cada tarea y del Resumen se incluye `RECURSOS` con columnas
 `Recurso | Cantidad | Unidad | Precio unitario ($) | Total ($)`.
 Incluye mano de obra de Fabricación y Montaje (operarios-día), equipos,
 Director de obra (rubro interno `ingeniero`) y Técnico H y S (días).
-Se agrupan por recurso y tarifa guardada;
-tarifas distintas se muestran en filas separadas. Los importes son costos
+Cada recurso aparece una sola vez (los equipos se agrupan por ID).
+Las líneas con cantidad y subtotal cero no se muestran. El precio unitario es
+el total dividido por la cantidad: con tarifas diferentes, representa el
+promedio ponderado, sin alterar las tarifas guardadas. Los importes son costos
 directos en pesos, sin conversión adicional a dólar ni GG, beneficio o impuestos.
 El total usa los subtotales del motor y cierra con `TOTAL RECURSOS`; no incluye
 consumibles ni otros conceptos de la tabla de explosión.
-La fila `TOTAL MANO DE OBRA — FABRICACIÓN` suma los operarios-día
+La fila `Fabricación` suma los operarios-día
 (`operarios × días`) de todas las líneas de fabricación de las tareas incluidas,
-incluso con tarifas diferentes. Muestra el costo total de esa mano de obra,
-sin precio unitario único ni duplicar su costo en `TOTAL RECURSOS`.
+incluso con tarifas diferentes. No se agrega otra fila de subtotal de
+fabricación que repita el recurso.
 
 ## 5.3 Reporte 2 — Previsión de fondos para Odoo (Excel)
 

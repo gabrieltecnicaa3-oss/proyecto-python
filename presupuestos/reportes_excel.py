@@ -72,7 +72,7 @@ def _nombres_equipos(db, equipo_ids):
 
 
 def _escribir_tabla_recursos(ws, db, resultados):
-    """Agrupa cantidades por recurso y tarifa; usa subtotales del motor."""
+    """Agrupa por recurso; el unitario es total dividido por cantidad."""
     recursos = {}
     for tarea in resultados:
         for seccion in ("fabricacion", "montaje"):
@@ -84,21 +84,21 @@ def _escribir_tabla_recursos(ws, db, resultados):
                     nombre = "Fabricación" if seccion == "fabricacion" else "Montaje"
                     unidad = "Operarios-día"
                     cantidad = float(datos.get("operarios") or 0) * float(datos.get("dias") or 0)
-                    tarifa = float(datos.get("tarifa_dh") or 0)
                 elif seccion == "montaje" and rubro in ("equipo", "ingeniero", "tecnico_hys"):
                     nombre = {"equipo": "Equipo", "ingeniero": "Director de obra",
                               "tecnico_hys": "Técnico H y S"}[rubro]
                     unidad = "Días"
                     cantidad = float(datos.get("dias") or 0)
-                    tarifa = float(datos.get("tarifa_dia") or 0)
                     if rubro == "equipo":
                         equipo_id = datos.get("equipo_id")
                 else:
                     continue
-                clave = (seccion, rubro, equipo_id, tarifa)
+                if cantidad == 0 and float(item["subtotal"]) == 0:
+                    continue
+                clave = (seccion, rubro, equipo_id)
                 entrada = recursos.setdefault(clave, {
                     "nombre": nombre, "unidad": unidad, "equipo_id": equipo_id,
-                    "rubro": rubro, "tarifa": tarifa, "cantidad": 0.0, "total": 0.0,
+                    "rubro": rubro, "cantidad": 0.0, "total": 0.0,
                 })
                 entrada["cantidad"] += cantidad
                 entrada["total"] += float(item["subtotal"])
@@ -124,26 +124,11 @@ def _escribir_tabla_recursos(ws, db, resultados):
                     f"Equipo #{equipo_id}" if equipo_id else "(sin equipo asociado)"
                 )
             ws.append([nombre, recurso["cantidad"], recurso["unidad"],
-                       recurso["tarifa"], recurso["total"]])
+                       recurso["total"] / recurso["cantidad"] if recurso["cantidad"] else None,
+                       recurso["total"]])
             ws.cell(ws.max_row, 2).number_format = "0.00"
             for col in (4, 5):
                 ws.cell(ws.max_row, col).number_format = '"$" #,##0.00'
-        mano_obra_fabricacion = [
-            recurso for clave, recurso in recursos.items()
-            if clave[0] == "fabricacion" and recurso["rubro"] == "mano_obra"
-        ]
-        if mano_obra_fabricacion:
-            ws.append([
-                "TOTAL MANO DE OBRA — FABRICACIÓN",
-                sum(r["cantidad"] for r in mano_obra_fabricacion),
-                "Operarios-día", None,
-                sum(r["total"] for r in mano_obra_fabricacion),
-            ])
-            for celda in ws[ws.max_row]:
-                celda.font = _FONT_TOTAL
-                celda.fill = _FILL_TOTAL
-            ws.cell(ws.max_row, 2).number_format = "0.00"
-            ws.cell(ws.max_row, 5).number_format = '"$" #,##0.00'
         ws.append(["TOTAL RECURSOS", None, None, None,
                    sum(r["total"] for r in recursos.values())])
         for celda in ws[ws.max_row]:
