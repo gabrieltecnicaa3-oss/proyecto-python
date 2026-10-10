@@ -1348,7 +1348,7 @@ def vista_detalle_presupuesto(presupuesto_id):
             botonesAgregar = `<button type="button" class="btn btn-sm btn-secondary" onclick="agregarLinea(${{seccionId}}, ${{tareaId}}, '${{rubro}}', null)">+ Agregar línea</button>`;
         }}
         return `<div class="rubro-block">
-            <h4>${{rubro.replace(/_/g, " ")}}</h4>
+            <h4>${{rubro === "ingeniero" ? "Director de obra" : rubro.replace(/_/g, " ")}}</h4>
             <table>
                 ${{filas || '<tr><td class="muted">Sin líneas todavía.</td></tr>'}}
             </table>

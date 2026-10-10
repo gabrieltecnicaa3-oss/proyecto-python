@@ -86,7 +86,7 @@ def _escribir_tabla_recursos(ws, db, resultados):
                     cantidad = float(datos.get("operarios") or 0) * float(datos.get("dias") or 0)
                     tarifa = float(datos.get("tarifa_dh") or 0)
                 elif seccion == "montaje" and rubro in ("equipo", "ingeniero", "tecnico_hys"):
-                    nombre = {"equipo": "Equipo", "ingeniero": "Ingeniero",
+                    nombre = {"equipo": "Equipo", "ingeniero": "Director de obra",
                               "tecnico_hys": "Técnico H y S"}[rubro]
                     unidad = "Días"
                     cantidad = float(datos.get("dias") or 0)
@@ -128,6 +128,22 @@ def _escribir_tabla_recursos(ws, db, resultados):
             ws.cell(ws.max_row, 2).number_format = "0.00"
             for col in (4, 5):
                 ws.cell(ws.max_row, col).number_format = '"$" #,##0.00'
+        mano_obra_fabricacion = [
+            recurso for clave, recurso in recursos.items()
+            if clave[0] == "fabricacion" and recurso["rubro"] == "mano_obra"
+        ]
+        if mano_obra_fabricacion:
+            ws.append([
+                "TOTAL MANO DE OBRA — FABRICACIÓN",
+                sum(r["cantidad"] for r in mano_obra_fabricacion),
+                "Operarios-día", None,
+                sum(r["total"] for r in mano_obra_fabricacion),
+            ])
+            for celda in ws[ws.max_row]:
+                celda.font = _FONT_TOTAL
+                celda.fill = _FILL_TOTAL
+            ws.cell(ws.max_row, 2).number_format = "0.00"
+            ws.cell(ws.max_row, 5).number_format = '"$" #,##0.00'
         ws.append(["TOTAL RECURSOS", None, None, None,
                    sum(r["total"] for r in recursos.values())])
         for celda in ws[ws.max_row]:
