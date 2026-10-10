@@ -32,6 +32,30 @@ PCTS_FABRICACION_POR_TIPO_TAREA = {
 # Migración (idempotente)
 # ─────────────────────────────────────────────────────────────────
 
+def _crear_tabla_con_fks(db, nombre, columnas, claves_foraneas):
+    """CREATE TABLE con FOREIGN KEY; si el motor la rechaza (MySQL exige tipos idénticos
+    a los de la clave referenciada) crea la tabla igual sin las claves: la cascada de
+    borrado ya se hace a mano en este módulo."""
+    try:
+        db.execute(f"CREATE TABLE IF NOT EXISTS {nombre} ({columnas}, {claves_foraneas})")
+    except Exception:
+        db.execute(f"CREATE TABLE IF NOT EXISTS {nombre} ({columnas})")
+
+
+def _crear_indice(db, nombre, tabla, columna):
+    """MySQL no soporta `CREATE INDEX IF NOT EXISTS`: se prueba esa forma y, si falla,
+    la plana (que falla sola si el índice ya existe)."""
+    for sql in (
+        f"CREATE INDEX IF NOT EXISTS {nombre} ON {tabla}({columna})",
+        f"CREATE INDEX {nombre} ON {tabla}({columna})",
+    ):
+        try:
+            db.execute(sql)
+            return
+        except Exception:
+            continue
+
+
 def ensure_tablas_presupuestos(db):
     """Crea las tablas del módulo si no existen. Seguro de llamar en cada request."""
 
@@ -69,45 +93,42 @@ def ensure_tablas_presupuestos(db):
         except Exception:
             pass
 
-    db.execute("""
-    CREATE TABLE IF NOT EXISTS tareas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        presupuesto_id INTEGER NOT NULL,
+    _crear_tabla_con_fks(
+        db, "tareas",
+        """id INTEGER PRIMARY KEY AUTOINCREMENT,
+        presupuesto_id BIGINT NOT NULL,
         nombre TEXT NOT NULL,
         tipo TEXT,
-        orden INTEGER DEFAULT 0,
-        FOREIGN KEY (presupuesto_id) REFERENCES presupuestos(id)
+        orden INTEGER DEFAULT 0""",
+        "FOREIGN KEY (presupuesto_id) REFERENCES presupuestos(id)",
     )
-    """)
     try:
         db.execute("ALTER TABLE tareas ADD COLUMN tipo TEXT")
     except Exception:
         pass
 
-    db.execute("""
-    CREATE TABLE IF NOT EXISTS tarea_secciones (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tarea_id INTEGER NOT NULL,
+    _crear_tabla_con_fks(
+        db, "tarea_secciones",
+        """id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tarea_id BIGINT NOT NULL,
         tipo TEXT NOT NULL,
         gg_pct REAL,
         beneficio_pct REAL,
-        imp_pct REAL,
-        FOREIGN KEY (tarea_id) REFERENCES tareas(id)
+        imp_pct REAL""",
+        "FOREIGN KEY (tarea_id) REFERENCES tareas(id)",
     )
-    """)
 
-    db.execute("""
-    CREATE TABLE IF NOT EXISTS items_costo (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tarea_seccion_id INTEGER NOT NULL,
+    _crear_tabla_con_fks(
+        db, "items_costo",
+        """id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tarea_seccion_id BIGINT NOT NULL,
         rubro TEXT NOT NULL,
         tipo_item TEXT,
         perfil_id INTEGER,
         datos TEXT NOT NULL,
-        subtotal REAL DEFAULT 0,
-        FOREIGN KEY (tarea_seccion_id) REFERENCES tarea_secciones(id)
+        subtotal REAL DEFAULT 0""",
+        "FOREIGN KEY (tarea_seccion_id) REFERENCES tarea_secciones(id)",
     )
-    """)
     # perfil_id no lleva FOREIGN KEY dura: referencia lógica a articulos_sum(id)
     # (catálogo de Compras), que puede no existir todavía cuando se corre esta
     # migración de forma aislada.
@@ -185,52 +206,50 @@ def ensure_tablas_presupuestos(db):
     # Volcado del previsto a las OT. Las columnas FK son BIGINT (no INTEGER) para
     # que coincidan con los PK que MySQL crea para tareas/presupuestos/ordenes_trabajo.
     # Tarea sin OT = sin filas en tarea_ot_reparto. Sin UNIQUE(tarea_id, ot_id).
-    db.execute("""
-    CREATE TABLE IF NOT EXISTS tarea_ot_reparto (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+    _crear_tabla_con_fks(
+        db, "tarea_ot_reparto",
+        """id INTEGER PRIMARY KEY AUTOINCREMENT,
         tarea_id BIGINT NOT NULL,
         ot_id BIGINT NOT NULL,
-        porcentaje REAL NOT NULL CHECK (porcentaje >= 0 AND porcentaje <= 100),
-        FOREIGN KEY (tarea_id) REFERENCES tareas(id),
-        FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)
+        porcentaje REAL NOT NULL CHECK (porcentaje >= 0 AND porcentaje <= 100)""",
+        "FOREIGN KEY (tarea_id) REFERENCES tareas(id), FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)",
     )
-    """)
 
-    db.execute("""
-    CREATE TABLE IF NOT EXISTS volcados_previsto (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+    _crear_tabla_con_fks(
+        db, "volcados_previsto",
+        """id INTEGER PRIMARY KEY AUTOINCREMENT,
         presupuesto_id BIGINT NOT NULL,
         fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
         usuario TEXT,
-        nota TEXT,
-        FOREIGN KEY (presupuesto_id) REFERENCES presupuestos(id)
+        nota TEXT""",
+        "FOREIGN KEY (presupuesto_id) REFERENCES presupuestos(id)",
     )
-    """)
 
     # Lo escrito en cada OT en ese volcado: historial y base para detectar ediciones manuales.
-    db.execute("""
-    CREATE TABLE IF NOT EXISTS volcados_previsto_lineas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+    _crear_tabla_con_fks(
+        db, "volcados_previsto_lineas",
+        """id INTEGER PRIMARY KEY AUTOINCREMENT,
         volcado_id BIGINT NOT NULL,
         ot_id BIGINT NOT NULL,
         rubro TEXT NOT NULL,
-        monto REAL DEFAULT 0,
-        FOREIGN KEY (volcado_id) REFERENCES volcados_previsto(id),
-        FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)
+        monto REAL DEFAULT 0""",
+        "FOREIGN KEY (volcado_id) REFERENCES volcados_previsto(id), FOREIGN KEY (ot_id) REFERENCES ordenes_trabajo(id)",
     )
-    """)
 
     # Índices para los filtros/joins más frecuentes del futuro CRUD.
-    db.execute("CREATE INDEX IF NOT EXISTS idx_tareas_presupuesto_id ON tareas(presupuesto_id)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_tarea_secciones_tarea_id ON tarea_secciones(tarea_id)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_items_costo_tarea_seccion_id ON items_costo(tarea_seccion_id)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_items_costo_perfil_id ON items_costo(perfil_id)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_presupuestos_ot_id ON presupuestos(ot_id)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_tarea_ot_reparto_tarea_id ON tarea_ot_reparto(tarea_id)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_tarea_ot_reparto_ot_id ON tarea_ot_reparto(ot_id)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_volcados_previsto_presupuesto_id ON volcados_previsto(presupuesto_id)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_volcados_lineas_volcado_id ON volcados_previsto_lineas(volcado_id)")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_volcados_lineas_ot_id ON volcados_previsto_lineas(ot_id)")
+    for nombre, tabla, columna in (
+        ("idx_tareas_presupuesto_id", "tareas", "presupuesto_id"),
+        ("idx_tarea_secciones_tarea_id", "tarea_secciones", "tarea_id"),
+        ("idx_items_costo_tarea_seccion_id", "items_costo", "tarea_seccion_id"),
+        ("idx_items_costo_perfil_id", "items_costo", "perfil_id"),
+        ("idx_presupuestos_ot_id", "presupuestos", "ot_id"),
+        ("idx_tarea_ot_reparto_tarea_id", "tarea_ot_reparto", "tarea_id"),
+        ("idx_tarea_ot_reparto_ot_id", "tarea_ot_reparto", "ot_id"),
+        ("idx_volcados_previsto_presupuesto_id", "volcados_previsto", "presupuesto_id"),
+        ("idx_volcados_lineas_volcado_id", "volcados_previsto_lineas", "volcado_id"),
+        ("idx_volcados_lineas_ot_id", "volcados_previsto_lineas", "ot_id"),
+    ):
+        _crear_indice(db, nombre, tabla, columna)
 
     db.commit()
 

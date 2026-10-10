@@ -6560,6 +6560,60 @@ def admin_fix_familias_categoria():
     })
 
 
+@app.route("/admin/aplicar-m2-per-m", methods=["GET", "POST"])
+def admin_aplicar_m2_per_m():
+    """Carga el M2/m de la Lista de Materiales desde materiales_m2_per_m.csv (incluido en el
+    despliegue). Solo actualiza artículos que ya existen (por descripción); no crea ni borra."""
+    if not _is_admin_session():
+        return _respuesta_sin_permiso()
+
+    from suministros_routes import _ensure_tables
+    db = get_db()
+    _ensure_tables(db)
+
+    valores = []
+    with open(os.path.join(APP_DIR, "materiales_m2_per_m.csv"), encoding="utf-8-sig", newline="") as archivo:
+        for fila in csv.DictReader(archivo, delimiter=";"):
+            descripcion = (fila.get("descripcion") or "").strip()
+            try:
+                valores.append((descripcion, float((fila.get("m2_per_m") or "").replace(",", "."))))
+            except ValueError:
+                continue
+
+    existentes, faltantes = [], []
+    for descripcion, m2 in valores:
+        fila_db = db.execute(
+            "SELECT id FROM articulos_sum WHERE LOWER(TRIM(descripcion)) = LOWER(TRIM(?))", (descripcion,)
+        ).fetchone()
+        (existentes if fila_db else faltantes).append((int(fila_db[0]) if fila_db else None, descripcion, m2))
+
+    aplicado = request.method == "POST"
+    if aplicado:
+        for art_id, _, m2 in existentes:
+            db.execute("UPDATE articulos_sum SET m2_per_m = ? WHERE id = ?", (m2, art_id))
+        db.commit()
+
+    boton = "" if aplicado else (
+        "<form method='post'><button type='submit' style='padding:10px 16px;font-weight:700;'>Aplicar M2/m</button></form>"
+    )
+    titulo = "M2/m aplicado" if aplicado else "Vista previa (todavía no se cambió nada)"
+    sin_match = ""
+    if faltantes:
+        sin_match = "<p>No existen en la lista (se ignoran):</p><ul>" + "".join(
+            f"<li>{html_lib.escape(d)}</li>" for _, d, _ in faltantes[:30]
+        ) + ("<li>...</li>" if len(faltantes) > 30 else "") + "</ul>"
+    return f"""
+    <html><body style="font-family:Arial;padding:16px;max-width:700px;">
+        <h2>{titulo}</h2>
+        <p>Artículos de la lista que {'se actualizaron' if aplicado else 'se van a actualizar'}: <b>{len(existentes)}</b></p>
+        <p>Filas del archivo sin artículo correspondiente: <b>{len(faltantes)}</b></p>
+        {sin_match}
+        {boton}
+        <p><a href="/modulo/suministros/articulos">Ir a la Lista de Materiales</a></p>
+    </body></html>
+    """
+
+
 # ======================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

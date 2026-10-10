@@ -77,6 +77,31 @@ def test_sugerir_sin_kg_devuelve_none():
     assert sugerir_porcentajes_por_kg({}) is None
 
 
+def test_migracion_tolera_motor_sin_fk_compatibles_ni_index_if_not_exists():
+    """Simula MySQL: rechaza FOREIGN KEY con tipos distintos y `CREATE INDEX IF NOT EXISTS`."""
+    class FalsoMySQL:
+        def __init__(self):
+            self._c = sqlite3.connect(":memory:")
+
+        def execute(self, sql, params=()):
+            if "FOREIGN KEY" in sql or "CREATE INDEX IF NOT EXISTS" in sql:
+                raise sqlite3.OperationalError("rechazado por el motor")
+            return self._c.execute(sql, params)
+
+        def __getattr__(self, nombre):
+            return getattr(self._c, nombre)
+
+    db = FalsoMySQL()
+    db.execute("CREATE TABLE ordenes_trabajo (id INTEGER PRIMARY KEY, obra TEXT)")
+    ensure_tablas_presupuestos(db)
+    ensure_tablas_presupuestos(db)  # idempotente: los índices ya existen y el CREATE plano falla sin romper
+    tablas = {r[0] for r in db._c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"presupuestos", "tareas", "tarea_secciones", "items_costo", "tarea_ot_reparto",
+            "volcados_previsto", "volcados_previsto_lineas"} <= tablas
+    indices = {r[0] for r in db._c.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    assert "idx_tarea_ot_reparto_ot_id" in indices and "idx_tareas_presupuesto_id" in indices
+
+
 def test_guardar_leer_reemplazar_y_cascada():
     db = _db()
     pid = crear_presupuesto(db, "Cliente")
