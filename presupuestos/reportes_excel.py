@@ -17,7 +17,6 @@ from .calculo_presupuesto import (
     calcular_totales_por_concepto,
     calcular_explosion_insumos,
     calcular_reporte_prevision_fondos,
-    calcular_resumen_recursos,
 )
 from .models import listar_tareas, listar_categorias_odoo
 from .routes import _calcular_resultado_tarea
@@ -72,39 +71,73 @@ def _nombres_equipos(db, equipo_ids):
     return {r[0]: r[1] for r in rows}
 
 
-def _escribir_tabla_recursos(ws, db, resumen_recursos):
-    """Agrega, al pie de la tabla de explosión de insumos (tarea o "Resumen"),
-    la tabla de recursos pedida por el usuario: mano de obra (operarios-día
-    Fabricación/Montaje) + equipos necesarios (días previstos), reusando
-    `calcular_resumen_recursos` (sección 5.3) sin recalcular nada."""
+def _escribir_tabla_recursos(ws, db, resultados):
+    """Agrupa cantidades por recurso y tarifa; usa subtotales del motor."""
+    recursos = {}
+    for tarea in resultados:
+        for seccion in ("fabricacion", "montaje"):
+            for item in tarea[seccion]["items"]:
+                rubro = item["rubro"]
+                datos = item.get("datos") or {}
+                equipo_id = None
+                if rubro == "mano_obra":
+                    nombre = "Fabricación" if seccion == "fabricacion" else "Montaje"
+                    unidad = "Operarios-día"
+                    cantidad = float(datos.get("operarios") or 0) * float(datos.get("dias") or 0)
+                    tarifa = float(datos.get("tarifa_dh") or 0)
+                elif seccion == "montaje" and rubro in ("equipo", "ingeniero", "tecnico_hys"):
+                    nombre = {"equipo": "Equipo", "ingeniero": "Ingeniero",
+                              "tecnico_hys": "Técnico H y S"}[rubro]
+                    unidad = "Días"
+                    cantidad = float(datos.get("dias") or 0)
+                    tarifa = float(datos.get("tarifa_dia") or 0)
+                    if rubro == "equipo":
+                        equipo_id = datos.get("equipo_id")
+                else:
+                    continue
+                clave = (seccion, rubro, equipo_id, tarifa)
+                entrada = recursos.setdefault(clave, {
+                    "nombre": nombre, "unidad": unidad, "equipo_id": equipo_id,
+                    "rubro": rubro, "tarifa": tarifa, "cantidad": 0.0, "total": 0.0,
+                })
+                entrada["cantidad"] += cantidad
+                entrada["total"] += float(item["subtotal"])
+
+    nombres_equipo = _nombres_equipos(
+        db, (r["equipo_id"] for r in recursos.values() if r["rubro"] == "equipo")
+    )
     ws.append([])
     ws.append(["RECURSOS"])
     ws[ws.max_row][0].font = _FONT_HEADER
     ws[ws.max_row][0].fill = _FILL_HEADER
 
-    ws.append(["Mano de obra", "Operarios-día"])
+    ws.append(["Recurso", "Cantidad", "Unidad", "Precio unitario ($)", "Total ($)"])
     for celda in ws[ws.max_row]:
         celda.font = _FONT_TOTAL
         celda.fill = _FILL_TOTAL
-    mano_obra = resumen_recursos["mano_obra"]
-    ws.append(["Fabricación", round(mano_obra["operarios_dia_taller"], 2)])
-    ws.append(["Montaje", round(mano_obra["operarios_dia_montaje"], 2)])
-
-    ws.append([])
-    ws.append(["Equipos necesarios", "Días previstos"])
-    for celda in ws[ws.max_row]:
-        celda.font = _FONT_TOTAL
-        celda.fill = _FILL_TOTAL
-    equipos = resumen_recursos["equipos"]
-    nombres_equipo = _nombres_equipos(db, (e["equipo_id"] for e in equipos))
-    if equipos:
-        for equipo in equipos:
-            nombre = nombres_equipo.get(equipo["equipo_id"]) or (
-                f"Equipo #{equipo['equipo_id']}" if equipo["equipo_id"] else "(sin equipo asociado)"
-            )
-            ws.append([nombre, round(equipo["dias"], 2)])
+    if recursos:
+        for recurso in recursos.values():
+            nombre = recurso["nombre"]
+            if recurso["rubro"] == "equipo":
+                equipo_id = recurso["equipo_id"]
+                nombre = nombres_equipo.get(equipo_id) or (
+                    f"Equipo #{equipo_id}" if equipo_id else "(sin equipo asociado)"
+                )
+            ws.append([nombre, recurso["cantidad"], recurso["unidad"],
+                       recurso["tarifa"], recurso["total"]])
+            ws.cell(ws.max_row, 2).number_format = "0.00"
+            for col in (4, 5):
+                ws.cell(ws.max_row, col).number_format = '"$" #,##0.00'
+        ws.append(["TOTAL RECURSOS", None, None, None,
+                   sum(r["total"] for r in recursos.values())])
+        for celda in ws[ws.max_row]:
+            celda.font = _FONT_TOTAL
+            celda.fill = _FILL_TOTAL
+        ws.cell(ws.max_row, 5).number_format = '"$" #,##0.00'
     else:
-        ws.append(["Sin equipos cargados en Montaje.", ""])
+        ws.append(["Sin recursos cargados."])
+    for col in (3, 4, 5):
+        ws.column_dimensions[get_column_letter(col)].width = 22
 
 
 def generar_reporte_explosion_insumos(db, presupuesto_id):
@@ -134,13 +167,13 @@ def generar_reporte_explosion_insumos(db, presupuesto_id):
 
         ws = wb.create_sheet(title=nombre_hoja)
         _escribir_tabla_explosion(ws, explosion["filas"])
-        _escribir_tabla_recursos(ws, db, calcular_resumen_recursos([resultado]))
+        _escribir_tabla_recursos(ws, db, [resultado])
 
     totales_presupuesto = calcular_totales_por_concepto(resultados_todas_tareas)
     explosion_total = calcular_explosion_insumos(totales_presupuesto)
     ws_resumen = wb.create_sheet(title="Resumen", index=0)
     _escribir_tabla_explosion(ws_resumen, explosion_total["filas"])
-    _escribir_tabla_recursos(ws_resumen, db, calcular_resumen_recursos(resultados_todas_tareas))
+    _escribir_tabla_recursos(ws_resumen, db, resultados_todas_tareas)
     wb.active = 0
 
     buffer = BytesIO()
