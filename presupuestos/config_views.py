@@ -149,7 +149,7 @@ def _pagina_configuracion(config, equipos, esquemas):
 
         <div class="card">
             <h3>Tarifas y porcentajes por defecto</h3>
-            <p class="muted">Se usan al crear una tarea nueva (secciones Fabricación/Montaje) y al precargar mano de obra/consumibles. No afectan tareas ya cargadas.</p>
+            <p class="muted">Se precargan en los presupuestos nuevos. Cada presupuesto conserva sus propios valores, así que los cambios posteriores no modifican los anteriores.</p>
             <form method="post">
                 <input type="hidden" name="_form" value="config">
                 <h4>Fabricación</h4>

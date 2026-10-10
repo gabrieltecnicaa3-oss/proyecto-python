@@ -19,13 +19,19 @@ import json
 from .constants import ESTADOS_PRESUPUESTO, TIPOS_SECCION
 from .volcado_previsto import CAMPOS_ECONOMICOS
 
-# % default de FABRICACION fijos para ciertos tipos de tarea (no salen de
-# config_presupuestos, que sigue en 0 para el resto de las tareas). Cada tipo
-# de tarea puede tener su propio set de %.
-PCTS_FABRICACION_POR_TIPO_TAREA = {
-    "Chapeado": {"gg_pct": 0.07, "beneficio_pct": 0.05, "imp_pct": 0.03},
-    "Grating": {"gg_pct": 0.05, "beneficio_pct": 0.05, "imp_pct": 0.03},
-}
+# Campos de defaults copiados desde config_presupuestos a cada presupuesto.
+CONFIG_CAMPOS_PRESUPUESTO = (
+    "gg_pct_default_fab",
+    "beneficio_pct_default_fab",
+    "imp_pct_default_fab",
+    "gg_pct_default_mon",
+    "beneficio_pct_default_mon",
+    "imp_pct_default_mon",
+    "tarifa_dh_taller_default",
+    "tarifa_dh_obra_default",
+    "tarifa_consumible_dh_taller_default",
+    "tarifa_consumible_dh_obra_default",
+)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -75,7 +81,17 @@ def ensure_tablas_presupuestos(db):
         ot_id INTEGER,
         tipo_cambio_referencia REAL,
         odoo_analitica_fab_id INTEGER,
-        odoo_analitica_mon_id INTEGER
+        odoo_analitica_mon_id INTEGER,
+        gg_pct_default_fab REAL,
+        beneficio_pct_default_fab REAL,
+        imp_pct_default_fab REAL,
+        gg_pct_default_mon REAL,
+        beneficio_pct_default_mon REAL,
+        imp_pct_default_mon REAL,
+        tarifa_dh_taller_default REAL,
+        tarifa_dh_obra_default REAL,
+        tarifa_consumible_dh_taller_default REAL,
+        tarifa_consumible_dh_obra_default REAL
     )
     """)
     # Migración para instalaciones existentes (creadas antes de agregar estas columnas).
@@ -87,6 +103,16 @@ def ensure_tablas_presupuestos(db):
         ("copiado_de_id", "INTEGER"),
         ("odoo_analitica_fab_id", "INTEGER"),
         ("odoo_analitica_mon_id", "INTEGER"),
+        ("gg_pct_default_fab", "REAL"),
+        ("beneficio_pct_default_fab", "REAL"),
+        ("imp_pct_default_fab", "REAL"),
+        ("gg_pct_default_mon", "REAL"),
+        ("beneficio_pct_default_mon", "REAL"),
+        ("imp_pct_default_mon", "REAL"),
+        ("tarifa_dh_taller_default", "REAL"),
+        ("tarifa_dh_obra_default", "REAL"),
+        ("tarifa_consumible_dh_taller_default", "REAL"),
+        ("tarifa_consumible_dh_obra_default", "REAL"),
     ):
         try:
             db.execute(f"ALTER TABLE presupuestos ADD COLUMN {_col} {_def}")
@@ -254,6 +280,16 @@ def ensure_tablas_presupuestos(db):
     db.commit()
 
     _asegurar_config_default(db)
+    config = obtener_config(db)
+    campos_pendientes = ", ".join(
+        f"{campo} = COALESCE({campo}, ?)" for campo in CONFIG_CAMPOS_PRESUPUESTO
+    )
+    db.execute(
+        f"UPDATE presupuestos SET {campos_pendientes} "
+        "WHERE " + " OR ".join(f"{campo} IS NULL" for campo in CONFIG_CAMPOS_PRESUPUESTO),
+        tuple(config[campo] for campo in CONFIG_CAMPOS_PRESUPUESTO),
+    )
+    db.commit()
     _asegurar_categorias_odoo_seed(db)
     _asegurar_split_traslado_movilidad(db)
     _asegurar_productos_odoo_seed(db)
@@ -451,17 +487,31 @@ def _asegurar_config_default(db):
 # presupuestos
 # ─────────────────────────────────────────────────────────────────
 
-def crear_presupuesto(db, cliente, planta="", titulo="", fecha=None, tipo_cambio_referencia=None, numero_presupuesto=None):
+def crear_presupuesto(
+    db, cliente, planta="", titulo="", fecha=None, tipo_cambio_referencia=None,
+    numero_presupuesto=None, config_presupuesto=None,
+):
     """Header del presupuesto: cliente, planta, fecha, titulo y numero_presupuesto
     (definidos por el usuario al crear "Nuevo presupuesto", numero_presupuesto es de
     carga manual, sin formato fijo). `obra_referencia` queda deprecado, se mantiene en
     el esquema solo por compatibilidad hacia atrás."""
+    config_default = obtener_config(db)
+    valores_config = {
+        campo: (config_presupuesto or {}).get(campo, config_default[campo])
+        for campo in CONFIG_CAMPOS_PRESUPUESTO
+    }
+    columnas_config = ", ".join(CONFIG_CAMPOS_PRESUPUESTO)
+    placeholders_config = ", ".join("?" for _ in CONFIG_CAMPOS_PRESUPUESTO)
     cursor = db.execute(
-        """
-        INSERT INTO presupuestos (cliente, planta, titulo, fecha, numero_presupuesto, estado, tipo_cambio_referencia)
-        VALUES (?, ?, ?, ?, ?, 'borrador', ?)
+        f"""
+        INSERT INTO presupuestos (
+            cliente, planta, titulo, fecha, numero_presupuesto, estado,
+            tipo_cambio_referencia, {columnas_config}
+        )
+        VALUES (?, ?, ?, ?, ?, 'borrador', ?, {placeholders_config})
         """,
-        (cliente, planta, titulo, fecha, numero_presupuesto, tipo_cambio_referencia),
+        (cliente, planta, titulo, fecha, numero_presupuesto, tipo_cambio_referencia)
+        + tuple(valores_config[campo] for campo in CONFIG_CAMPOS_PRESUPUESTO),
     )
     db.commit()
     return cursor.lastrowid
@@ -469,10 +519,11 @@ def crear_presupuesto(db, cliente, planta="", titulo="", fecha=None, tipo_cambio
 
 def obtener_presupuesto(db, presupuesto_id):
     row = db.execute(
-        """
+        f"""
         SELECT id, cliente, planta, titulo, fecha, estado, fecha_creacion,
                fecha_adjudicacion, ot_id, tipo_cambio_referencia, numero_presupuesto,
-               copiado_de_id, obra_referencia, odoo_analitica_fab_id, odoo_analitica_mon_id
+               copiado_de_id, obra_referencia, odoo_analitica_fab_id, odoo_analitica_mon_id,
+               {', '.join(CONFIG_CAMPOS_PRESUPUESTO)}
         FROM presupuestos WHERE id = ?
         """,
         (presupuesto_id,),
@@ -495,6 +546,7 @@ def obtener_presupuesto(db, presupuesto_id):
         "obra_referencia": row[12],
         "odoo_analitica_fab_id": row[13],
         "odoo_analitica_mon_id": row[14],
+        **{campo: row[15 + i] for i, campo in enumerate(CONFIG_CAMPOS_PRESUPUESTO)},
     }
 
 
@@ -541,16 +593,25 @@ def actualizar_estado_presupuesto(db, presupuesto_id, estado, fecha_adjudicacion
     db.commit()
 
 
-def actualizar_presupuesto(db, presupuesto_id, cliente=None, planta=None, titulo=None, fecha=None, tipo_cambio_referencia=None, numero_presupuesto=None):
+def actualizar_presupuesto(
+    db, presupuesto_id, cliente=None, planta=None, titulo=None, fecha=None,
+    tipo_cambio_referencia=None, numero_presupuesto=None, config_presupuesto=None,
+):
     """Actualiza los datos generales del header. Solo pisa los campos recibidos
     (None = no tocar), para permitir ediciones parciales desde el futuro form."""
     actual = obtener_presupuesto(db, presupuesto_id)
     if not actual:
         return
+    config_presupuesto = config_presupuesto or {}
+    valores_config = {
+        campo: config_presupuesto.get(campo, actual[campo])
+        for campo in CONFIG_CAMPOS_PRESUPUESTO
+    }
     db.execute(
-        """
+        f"""
         UPDATE presupuestos
-        SET cliente = ?, planta = ?, titulo = ?, fecha = ?, tipo_cambio_referencia = ?, numero_presupuesto = ?
+        SET cliente = ?, planta = ?, titulo = ?, fecha = ?, tipo_cambio_referencia = ?, numero_presupuesto = ?,
+            {', '.join(f'{campo} = ?' for campo in CONFIG_CAMPOS_PRESUPUESTO)}
         WHERE id = ?
         """,
         (
@@ -560,6 +621,7 @@ def actualizar_presupuesto(db, presupuesto_id, cliente=None, planta=None, titulo
             fecha if fecha is not None else actual["fecha"],
             tipo_cambio_referencia if tipo_cambio_referencia is not None else actual["tipo_cambio_referencia"],
             numero_presupuesto if numero_presupuesto is not None else actual["numero_presupuesto"],
+            *(valores_config[campo] for campo in CONFIG_CAMPOS_PRESUPUESTO),
             presupuesto_id,
         ),
     )
@@ -589,19 +651,29 @@ def copiar_presupuesto(db, presupuesto_id):
     cambio) arranca en blanco para que el usuario lo complete en la copia.
     Devuelve el id del presupuesto nuevo, o None si `presupuesto_id` no existe."""
     original = db.execute(
-        "SELECT cliente, obra_referencia FROM presupuestos WHERE id = ?",
+        f"SELECT cliente, obra_referencia, {', '.join(CONFIG_CAMPOS_PRESUPUESTO)} "
+        "FROM presupuestos WHERE id = ?",
         (presupuesto_id,),
     ).fetchone()
     if not original:
         return None
     cliente, obra_referencia = original[0], original[1]
+    config_original = {
+        campo: original[i + 2]
+        for i, campo in enumerate(CONFIG_CAMPOS_PRESUPUESTO)
+    }
 
+    columnas_config = ", ".join(CONFIG_CAMPOS_PRESUPUESTO)
+    placeholders_config = ", ".join("?" for _ in CONFIG_CAMPOS_PRESUPUESTO)
     cursor = db.execute(
-        """
-        INSERT INTO presupuestos (cliente, obra_referencia, estado, copiado_de_id)
-        VALUES (?, ?, 'borrador', ?)
+        f"""
+        INSERT INTO presupuestos (
+            cliente, obra_referencia, estado, copiado_de_id, {columnas_config}
+        )
+        VALUES (?, ?, 'borrador', ?, {placeholders_config})
         """,
-        (cliente, obra_referencia, presupuesto_id),
+        (cliente, obra_referencia, presupuesto_id)
+        + tuple(config_original[campo] for campo in CONFIG_CAMPOS_PRESUPUESTO),
     )
     nuevo_presupuesto_id = cursor.lastrowid
 
@@ -800,10 +872,7 @@ def crear_secciones_tarea(db, tarea_id, config_default, tipos=TIPOS_SECCION, nom
     una tarea no puede tener dos secciones del mismo tipo, pero sí puede tener
     solo una de las dos).
 
-    `nombre_tarea`: si la tarea tiene % fijos definidos en
-    PCTS_FABRICACION_POR_TIPO_TAREA (ej. "Chapeado", "Grating"), la sección
-    FABRICACION usa esos % en vez de los defaults de config_presupuestos
-    (MONTAJE sigue usando config)."""
+    Los valores se reciben desde los defaults guardados en el presupuesto."""
     existentes = {s["tipo"] for s in listar_secciones_tarea(db, tarea_id)}
     ids = {}
     for tipo in tipos:
@@ -813,15 +882,9 @@ def crear_secciones_tarea(db, tarea_id, config_default, tipos=TIPOS_SECCION, nom
         if tipo in existentes:
             raise ValueError(f"La tarea ya tiene una sección {tipo}.")
         sufijo = "fab" if tipo == "FABRICACION" else "mon"
-        pcts_fijos = PCTS_FABRICACION_POR_TIPO_TAREA.get(nombre_tarea)
-        if tipo == "FABRICACION" and pcts_fijos:
-            gg_pct = pcts_fijos["gg_pct"]
-            beneficio_pct = pcts_fijos["beneficio_pct"]
-            imp_pct = pcts_fijos["imp_pct"]
-        else:
-            gg_pct = config_default.get(f"gg_pct_default_{sufijo}", 0)
-            beneficio_pct = config_default.get(f"beneficio_pct_default_{sufijo}", 0)
-            imp_pct = config_default.get(f"imp_pct_default_{sufijo}", 0)
+        gg_pct = config_default.get(f"gg_pct_default_{sufijo}", 0)
+        beneficio_pct = config_default.get(f"beneficio_pct_default_{sufijo}", 0)
+        imp_pct = config_default.get(f"imp_pct_default_{sufijo}", 0)
         cursor = db.execute(
             """
             INSERT INTO tarea_secciones (tarea_id, tipo, gg_pct, beneficio_pct, imp_pct)
@@ -1028,18 +1091,7 @@ def eliminar_esquema_pintura(db, esquema_id):
 # config_presupuestos (fila única)
 # ─────────────────────────────────────────────────────────────────
 
-_CONFIG_CAMPOS = (
-    "gg_pct_default_fab",
-    "beneficio_pct_default_fab",
-    "imp_pct_default_fab",
-    "gg_pct_default_mon",
-    "beneficio_pct_default_mon",
-    "imp_pct_default_mon",
-    "tarifa_dh_taller_default",
-    "tarifa_dh_obra_default",
-    "tarifa_consumible_dh_taller_default",
-    "tarifa_consumible_dh_obra_default",
-)
+_CONFIG_CAMPOS = CONFIG_CAMPOS_PRESUPUESTO
 
 
 def obtener_config(db):
@@ -1050,6 +1102,13 @@ def obtener_config(db):
     if not row:
         return None
     return {"id": row[0], **{campo: row[i + 1] for i, campo in enumerate(_CONFIG_CAMPOS)}}
+
+
+def obtener_config_presupuesto(db, presupuesto_id):
+    presupuesto = obtener_presupuesto(db, presupuesto_id)
+    if not presupuesto:
+        return None
+    return {campo: presupuesto[campo] for campo in CONFIG_CAMPOS_PRESUPUESTO}
 
 
 def actualizar_config(db, **campos):

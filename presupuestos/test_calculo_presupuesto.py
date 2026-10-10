@@ -148,8 +148,8 @@ def test_equipo_ingeniero_tecnico_hys():
 
 
 def test_seccion_fabricacion_orden_de_acumuladores():
-    # bulones y placas deben usar SOLO lo acumulado hasta su
-    # posición en la lista, no el total final de la sección.
+    # Bulones y placas usan el total de materiales de la sección, sin importar
+    # la posición de sus líneas.
     items = [
         {"rubro": "materiales", "tipo_item": "perfil",
          "datos": {"perfil_id": 1, "cantidad": 10, "largo_mm": 6000, "precio_unitario_kg": 2.0}},
@@ -166,6 +166,21 @@ def test_seccion_fabricacion_orden_de_acumuladores():
     assert _close(items_resueltos[2]["subtotal"], 12.6)           # 0.02 * (600+30)
     assert _close(items_resueltos[3]["subtotal"], 360.0)          # 20 * 18 m2
     assert _close(resumen["costo_directo"], 600 + 30 + 12.6 + 360)
+
+
+def test_bulones_usa_todos_los_materiales_aunque_se_carguen_despues():
+    items = [
+        {"rubro": "bulones", "datos": {"porcentaje": 0.05}},
+        {"rubro": "materiales", "tipo_item": "perfil",
+         "datos": {"perfil_id": 1, "cantidad": 10, "largo_mm": 6000, "precio_unitario_kg": 2.0}},
+        {"rubro": "materiales", "tipo_item": "no_listado",
+         "datos": {"descripcion": "Accesorios", "cantidad": 2, "precio_unitario": 100.0}},
+    ]
+    perfiles = {1: {"kg_m": 5.0, "m2_m": 0.3}}
+    items_resueltos, _ = calcular_seccion_fabricacion(items, perfiles)
+
+    # 5% de (600 del perfil + 200 de materiales no listados).
+    assert _close(items_resueltos[0]["subtotal"], 40.0), items_resueltos[0]
 
 
 def test_seccion_fabricacion_chapa_y_tornillos():
@@ -316,6 +331,31 @@ def test_resumen_categorias_cruza_tareas_y_cierra_el_total():
     assert _close(resumen["total"], resultado["precio_venta_tarea"])
     suma_porcentajes = sum(c["porcentaje"] for c in resumen["categorias"])
     assert _close(suma_porcentajes, 1.0)
+
+
+def test_consumibles_fabricacion_no_se_clasifican_como_mano_obra_de_montaje():
+    cero = {"gg_pct": 0, "beneficio_pct": 0, "imp_pct": 0}
+    resultado = calcular_tarea(
+        [
+            {"rubro": "mano_obra", "datos": {"operarios": 1, "dias": 1, "tarifa_dh": 100}},
+            {"rubro": "consumibles", "datos": {"operarios": 1, "dias": 1, "tarifa_dh": 20}},
+        ],
+        cero,
+        [
+            {"rubro": "mano_obra", "datos": {"operarios": 1, "dias": 1, "tarifa_dh": 300}},
+            {"rubro": "consumibles", "datos": {"operarios": 1, "dias": 1, "tarifa_dh": 40}},
+        ],
+        cero,
+    )
+    por_nombre = {
+        categoria["nombre"]: categoria["monto"]
+        for categoria in calcular_resumen_categorias([resultado])["categorias"]
+    }
+
+    assert _close(por_nombre["Mano de obra taller"], 100.0)
+    assert _close(por_nombre["Consumibles taller"], 20.0)
+    assert _close(por_nombre["Mano de obra montaje"], 300.0)
+    assert _close(por_nombre["Consumibles montaje"], 40.0)
 
 
 def test_indicador_costo_kg():

@@ -36,6 +36,8 @@ from .models import (
     obtener_presupuesto,
     listar_presupuestos,
     actualizar_presupuesto,
+    obtener_config_presupuesto,
+    CONFIG_CAMPOS_PRESUPUESTO,
     actualizar_estado_presupuesto,
     eliminar_presupuesto,
     crear_tarea,
@@ -105,6 +107,18 @@ def api_obtener_config():
     try:
         db = _db()
         return jsonify(obtener_config(db)), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@presupuestos_bp.route("/api/presupuestos/<int:presupuesto_id>/config", methods=["GET"])
+def api_obtener_config_presupuesto(presupuesto_id):
+    try:
+        db = _db()
+        config = obtener_config_presupuesto(db, presupuesto_id)
+        if config is None:
+            return jsonify({"error": "Presupuesto no encontrado"}), 404
+        return jsonify(config), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -187,6 +201,9 @@ def api_crear_presupuesto():
             titulo=str(data.get("titulo") or "").strip(),
             fecha=data.get("fecha"),
             tipo_cambio_referencia=data.get("tipo_cambio_referencia"),
+            config_presupuesto={
+                campo: data[campo] for campo in CONFIG_CAMPOS_PRESUPUESTO if campo in data
+            },
         )
         return jsonify({"presupuesto": obtener_presupuesto(db, presupuesto_id)}), 201
     except Exception as e:
@@ -230,6 +247,10 @@ def api_actualizar_presupuesto(presupuesto_id):
             titulo=data.get("titulo"),
             fecha=data.get("fecha"),
             tipo_cambio_referencia=data.get("tipo_cambio_referencia"),
+            numero_presupuesto=data.get("numero_presupuesto"),
+            config_presupuesto={
+                campo: data[campo] for campo in CONFIG_CAMPOS_PRESUPUESTO if campo in data
+            },
         )
         return jsonify({"presupuesto": obtener_presupuesto(db, presupuesto_id)}), 200
     except Exception as e:
@@ -315,7 +336,10 @@ def api_crear_tarea(presupuesto_id):
         orden = int(data.get("orden") or 0)
         tarea_id = crear_tarea(db, presupuesto_id, nombre, orden=orden, tipo=tipo_tarea)
         try:
-            crear_secciones_tarea(db, tarea_id, obtener_config(db), tipos=tuple(tipos), nombre_tarea=tipo_tarea)
+            crear_secciones_tarea(
+                db, tarea_id, obtener_config_presupuesto(db, presupuesto_id),
+                tipos=tuple(tipos), nombre_tarea=tipo_tarea,
+            )
         except ValueError as ve:
             eliminar_tarea(db, tarea_id)
             return jsonify({"error": str(ve)}), 400
@@ -393,7 +417,10 @@ def api_agregar_seccion_tarea(tarea_id):
             return jsonify({"error": f"tipo debe ser uno de {TIPOS_SECCION}"}), 400
 
         try:
-            crear_secciones_tarea(db, tarea_id, obtener_config(db), tipos=(tipo,), nombre_tarea=(tarea.get("tipo") or tarea["nombre"]))
+            crear_secciones_tarea(
+                db, tarea_id, obtener_config_presupuesto(db, tarea["presupuesto_id"]),
+                tipos=(tipo,), nombre_tarea=(tarea.get("tipo") or tarea["nombre"]),
+            )
         except ValueError as ve:
             return jsonify({"error": str(ve)}), 400
 

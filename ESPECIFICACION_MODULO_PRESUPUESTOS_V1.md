@@ -71,9 +71,9 @@ Este ejemplo se usa como **test unitario real** en el paso 2 del plan de entrega
 | id | PK | |
 | tarea_id | FK | |
 | tipo | enum | FABRICACION / MONTAJE |
-| gg_pct | decimal | default de `config_presupuestos`, editable |
-| beneficio_pct | decimal | default de `config_presupuestos`, editable |
-| imp_pct | decimal | default de `config_presupuestos`, editable |
+| gg_pct | decimal | default del presupuesto, editable |
+| beneficio_pct | decimal | default del presupuesto, editable |
+| imp_pct | decimal | default del presupuesto, editable |
 
 Restricción: una tarea no puede tener dos secciones del mismo `tipo`, pero puede tener solo una de las dos (ej. "Chapeado" = solo MONTAJE). Al crear la tarea se eligen qué secciones tiene (checkbox Fabricación / checkbox Montaje, al menos una marcada); se puede agregar la sección faltante más adelante si hace falta.
 
@@ -134,13 +134,18 @@ Valores iniciales (cargar como seed, no hardcodear en el reporte):
 | BENEFICIO | FABRICACION | *(null — excluido)* |
 | BENEFICIO | MONTAJE | *(null — excluido)* |
 
-**`config_presupuestos`** (fila única de configuración global, editable desde UI)
+**`config_presupuestos`** (valores iniciales para presupuestos nuevos, editables desde UI)
 | Campo | Tipo |
 |---|---|
 | gg_pct_default_fab, beneficio_pct_default_fab, imp_pct_default_fab | decimal |
 | gg_pct_default_mon, beneficio_pct_default_mon, imp_pct_default_mon | decimal |
 | tarifa_dh_taller_default, tarifa_dh_obra_default | decimal |
 | tarifa_consumible_dh_taller_default, tarifa_consumible_dh_obra_default | decimal |
+
+Al crear un presupuesto, estos valores se copian a su propia configuración. Se
+pueden editar en los datos generales del presupuesto; los cambios globales
+posteriores solo sirven de base para presupuestos nuevos y no alteran los ya
+creados. Las secciones nuevas toman los porcentajes por defecto del presupuesto.
 
 ### 2.2 Rubros válidos por tipo de sección
 
@@ -254,7 +259,7 @@ indicador_usd_kg   = indicador_pesos_kg / tipo_cambio_referencia
    - **Panel de resultado fijo/sticky** (visible sin scrollear, igual que mirar la esquina del Excel mientras cargás datos): Costo Directo, GG, Beneficio, Impuestos, Precio de Venta — de la sección, de la tarea, y del presupuesto completo.
    - **Panel de indicadores instantáneos**, en el mismo sticky: $/kg y USD/kg (Sección 3.5), para que se vea de un vistazo si el precio está en mercado mientras se sigue cargando.
 4. **Resumen del presupuesto** — todas las tareas, total FAB + MON por tarea, gran total.
-5. **Configuración** — tarifas prefijadas (`config_presupuestos`), catálogo de equipos, catálogo de esquemas de pintura. Pantalla separada, no mezclar con la carga de presupuestos.
+5. **Configuración** — valores iniciales para presupuestos nuevos (`config_presupuestos`), catálogo de equipos y catálogo de esquemas de pintura. Cada presupuesto conserva y permite editar sus propios porcentajes y tarifas por defecto.
 
 ### 4.4 Patrón de guardado — autosave, no botón por rubro
 

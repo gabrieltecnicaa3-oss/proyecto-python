@@ -237,11 +237,9 @@ def calcular_seccion_fabricacion(items, perfiles_por_id=None, tipo_cambio_refere
     tipo_cambio_referencia: precio de los materiales/pintura está en USD, se
     multiplica por este valor para obtener el subtotal en $ (sección 3.6).
 
-    El orden de `items` importa para `bulones` (usa el subtotal de materiales
-    acumulado hasta ESE punto de la lista). "Placas" es la excepción: se
-    calcula sobre el peso TOTAL de todas las líneas materiales/perfil de la
-    sección (sin importar su posición), porque conceptualmente va al final:
-    a más materiales cargados, más kg de placas corresponden.
+    Bulones y los materiales porcentuales se calculan sobre los materiales de
+    toda la sección, sin depender de la posición de sus líneas. El orden solo
+    afecta el porcentaje informativo de ingeniería.
 
     Devuelve (items_resueltos, resumen). No muta la lista `items` original.
     """
@@ -271,6 +269,44 @@ def calcular_seccion_fabricacion(items, perfiles_por_id=None, tipo_cambio_refere
         elif item.get("rubro") == "materiales" and item.get("tipo_item") == "grating":
             perfil = perfiles_por_id.get((item.get("datos") or {}).get("perfil_id"), {})
             m2_total_materiales_grating += calcular_materiales_grating(item.get("datos") or {}, perfil, tipo_cambio_referencia)["m2"]
+
+    subtotal_total_materiales = 0.0
+    for item in items:
+        if item.get("rubro") != "materiales":
+            continue
+        datos = item.get("datos") or {}
+        tipo_item = item.get("tipo_item")
+        if tipo_item == "perfil":
+            perfil = perfiles_por_id.get(datos.get("perfil_id"), {})
+            subtotal_total_materiales += calcular_materiales_perfil(
+                datos, perfil, tipo_cambio_referencia
+            )["subtotal"]
+        elif tipo_item == "porcentaje":
+            subtotal_total_materiales += calcular_placas(
+                datos, peso_total_materiales_perfiles, tipo_cambio_referencia
+            )["subtotal"]
+        elif tipo_item == "no_listado":
+            subtotal_total_materiales += calcular_materiales_no_listado(
+                datos, tipo_cambio_referencia
+            )
+        elif tipo_item == "chapa":
+            perfil = perfiles_por_id.get(datos.get("perfil_id"), {})
+            subtotal_total_materiales += calcular_materiales_chapa(
+                datos, perfil, tipo_cambio_referencia
+            )["subtotal"]
+        elif tipo_item == "tornillos":
+            subtotal_total_materiales += calcular_tornillos(
+                datos, m2_total_materiales_chapa, tipo_cambio_referencia
+            )["subtotal"]
+        elif tipo_item == "grating":
+            perfil = perfiles_por_id.get(datos.get("perfil_id"), {})
+            subtotal_total_materiales += calcular_materiales_grating(
+                datos, perfil, tipo_cambio_referencia
+            )["subtotal"]
+        elif tipo_item == "fijaciones":
+            subtotal_total_materiales += calcular_fijaciones(
+                datos, m2_total_materiales_grating, tipo_cambio_referencia
+            )["subtotal"]
 
     items_resueltos = []
     acumulado_materiales_perfiles = 0.0
@@ -327,7 +363,7 @@ def calcular_seccion_fabricacion(items, perfiles_por_id=None, tipo_cambio_refere
             resultado["cantidad"] = calc["cantidad"]
             acumulado_materiales_total += calc["subtotal"]
         elif rubro == "bulones":
-            resultado["subtotal"] = calcular_bulones(datos, acumulado_materiales_total)
+            resultado["subtotal"] = calcular_bulones(datos, subtotal_total_materiales)
         elif rubro == "pintura":
             resultado["subtotal"] = calcular_pintura(datos, m2_total_materiales_pintura, tipo_cambio_referencia)
             resultado["m2"] = m2_total_materiales_pintura

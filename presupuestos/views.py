@@ -45,6 +45,8 @@ from .models import (
     crear_secciones_tarea,
     eliminar_tarea,
     obtener_config,
+    obtener_config_presupuesto,
+    CONFIG_CAMPOS_PRESUPUESTO,
     actualizar_analitica_odoo,
 )
 
@@ -243,6 +245,37 @@ def vista_listado():
 # 2) Datos generales: crear / editar
 # ─────────────────────────────────────────────────────────────────
 
+def _config_presupuesto_desde_form(form):
+    config = {}
+    for campo in CONFIG_CAMPOS_PRESUPUESTO:
+        valor = float(form.get(campo) or 0)
+        config[campo] = valor / 100 if "_pct_" in campo else valor
+    return config
+
+
+def _campo_config_presupuesto(campo, valor):
+    es_porcentaje = "_pct_" in campo
+    etiquetas = {
+        "gg_pct_default_fab": "Gastos generales",
+        "beneficio_pct_default_fab": "Beneficio",
+        "imp_pct_default_fab": "Impuestos",
+        "gg_pct_default_mon": "Gastos generales",
+        "beneficio_pct_default_mon": "Beneficio",
+        "imp_pct_default_mon": "Impuestos",
+        "tarifa_dh_taller_default": "Mano de obra de fabricación ($/día-hombre)",
+        "tarifa_dh_obra_default": "Mano de obra de montaje ($/día-hombre)",
+        "tarifa_consumible_dh_taller_default": "Consumibles de fabricación ($/día-hombre)",
+        "tarifa_consumible_dh_obra_default": "Consumibles de montaje ($/día-hombre)",
+    }
+    valor_mostrado = float(valor or 0) * (100 if es_porcentaje else 1)
+    return f"""
+    <div>
+        <label>{etiquetas[campo]}{" (%)" if es_porcentaje else ""}</label>
+        <input type="number" step="any" name="{campo}" value="{valor_mostrado:.2f}">
+    </div>
+    """
+
+
 def _form_datos_generales(titulo_pagina, datos=None, boton_texto="Guardar"):
     datos = datos or {}
     return f"""
@@ -288,6 +321,27 @@ def _form_datos_generales(titulo_pagina, datos=None, boton_texto="Guardar"):
                 </div>
                 <label>Tipo de cambio de referencia</label>
                 <input type="number" step="0.0001" name="tipo_cambio_referencia" value="{datos.get('tipo_cambio_referencia') if datos.get('tipo_cambio_referencia') is not None else ''}">
+                <h3>Valores por defecto de este presupuesto</h3>
+                <p class="muted">Los porcentajes se aplican a las secciones nuevas; las tarifas se usan en las líneas sin tarifa guardada. Los cambios no modifican otros presupuestos ni las secciones ya creadas.</p>
+                <h4>Fabricación</h4>
+                <div class="grid3">
+                    {_campo_config_presupuesto('gg_pct_default_fab', datos.get('gg_pct_default_fab'))}
+                    {_campo_config_presupuesto('beneficio_pct_default_fab', datos.get('beneficio_pct_default_fab'))}
+                    {_campo_config_presupuesto('imp_pct_default_fab', datos.get('imp_pct_default_fab'))}
+                </div>
+                <h4>Montaje</h4>
+                <div class="grid3">
+                    {_campo_config_presupuesto('gg_pct_default_mon', datos.get('gg_pct_default_mon'))}
+                    {_campo_config_presupuesto('beneficio_pct_default_mon', datos.get('beneficio_pct_default_mon'))}
+                    {_campo_config_presupuesto('imp_pct_default_mon', datos.get('imp_pct_default_mon'))}
+                </div>
+                <h4>Tarifas de mano de obra y consumibles</h4>
+                <div class="grid2">
+                    {_campo_config_presupuesto('tarifa_dh_taller_default', datos.get('tarifa_dh_taller_default'))}
+                    {_campo_config_presupuesto('tarifa_dh_obra_default', datos.get('tarifa_dh_obra_default'))}
+                    {_campo_config_presupuesto('tarifa_consumible_dh_taller_default', datos.get('tarifa_consumible_dh_taller_default'))}
+                    {_campo_config_presupuesto('tarifa_consumible_dh_obra_default', datos.get('tarifa_consumible_dh_obra_default'))}
+                </div>
                 <button type="submit" class="btn">{boton_texto}</button>
             </form>
         </div>
@@ -301,7 +355,7 @@ def _crear_tareas_estandar(db, presupuesto_id):
     """Autocrea las tareas habituales (Fabricación + Montaje, en 0) de
     TAREAS_ESTANDAR al crear un presupuesto nuevo. Si usan o no cada una
     depende del proyecto; acá solo quedan predeterminadas y listas."""
-    config = obtener_config(db)
+    config = obtener_config_presupuesto(db, presupuesto_id)
     for orden, nombre in enumerate(TAREAS_ESTANDAR, start=1):
         tarea_id = crear_tarea(db, presupuesto_id, nombre, orden=orden, tipo=nombre)
         try:
@@ -322,11 +376,14 @@ def vista_crear_presupuesto():
             fecha=(request.form.get("fecha") or "").strip() or None,
             tipo_cambio_referencia=request.form.get("tipo_cambio_referencia") or None,
             numero_presupuesto=(request.form.get("numero_presupuesto") or "").strip() or None,
+            config_presupuesto=_config_presupuesto_desde_form(request.form),
         )
         _crear_tareas_estandar(db, presupuesto_id)
         return redirect(f"/modulo/presupuestos/{presupuesto_id}")
 
-    return _form_datos_generales("Nuevo presupuesto", boton_texto="Crear presupuesto")
+    return _form_datos_generales(
+        "Nuevo presupuesto", datos=obtener_config(_db()), boton_texto="Crear presupuesto"
+    )
 
 
 @presupuestos_bp.route("/<int:presupuesto_id>/editar", methods=["GET", "POST"])
@@ -346,6 +403,7 @@ def vista_editar_presupuesto(presupuesto_id):
             fecha=(request.form.get("fecha") or "").strip() or None,
             tipo_cambio_referencia=request.form.get("tipo_cambio_referencia") or None,
             numero_presupuesto=(request.form.get("numero_presupuesto") or "").strip() or None,
+            config_presupuesto=_config_presupuesto_desde_form(request.form),
         )
         return redirect(f"/modulo/presupuestos/{presupuesto_id}")
 
@@ -394,7 +452,10 @@ def vista_crear_tarea(presupuesto_id):
         orden = int(request.form.get("orden") or 0)
         tarea_id = crear_tarea(db, presupuesto_id, nombre, orden=orden, tipo=tipo_tarea)
         try:
-            crear_secciones_tarea(db, tarea_id, obtener_config(db), tipos=tipos, nombre_tarea=tipo_tarea)
+            crear_secciones_tarea(
+                db, tarea_id, obtener_config_presupuesto(db, presupuesto_id),
+                tipos=tipos, nombre_tarea=tipo_tarea,
+            )
         except ValueError:
             eliminar_tarea(db, tarea_id)
     return redirect(f"/modulo/presupuestos/{presupuesto_id}")
@@ -677,7 +738,7 @@ def vista_detalle_presupuesto(presupuesto_id):
 
     function cargarCatalogos() {{
         return Promise.all([
-            fetch(`${{API}}/config`).then(r => r.json()).catch(() => ({{}})),
+            fetch(`${{API}}/presupuestos/${{PRESUPUESTO_ID}}/config`).then(r => r.json()),
             fetch(`${{API}}/equipos`).then(r => r.json()).catch(() => ({{equipos: []}})),
             fetch(`${{API}}/esquemas-pintura`).then(r => r.json()).catch(() => ({{esquemas: []}})),
             fetch(`${{API}}/perfiles`).then(r => r.json()).catch(() => ({{perfiles: []}})),
@@ -893,11 +954,11 @@ def vista_detalle_presupuesto(presupuesto_id):
         let soloLectura = "";
         if (campo.name === "tarifa_dh") {{
             if (val === "") {{
-                if (rubro === "mano_obra") {{
-                    valorInicial = seccionTipo === "FABRICACION" ? (CONFIG_DEFAULTS.tarifa_dh_taller_default || 0) : (CONFIG_DEFAULTS.tarifa_dh_obra_default || 0);
-                }} else if (rubro === "consumibles") {{
-                    valorInicial = seccionTipo === "FABRICACION" ? (CONFIG_DEFAULTS.tarifa_consumible_dh_taller_default || 0) : (CONFIG_DEFAULTS.tarifa_consumible_dh_obra_default || 0);
-                }}
+                const claveTarifa = rubro === "consumibles"
+                    ? "tarifa_consumible_dh"
+                    : "tarifa_dh";
+                const lugarTarifa = seccionTipo === "FABRICACION" ? "taller" : "obra";
+                valorInicial = CONFIG_DEFAULTS[`${{claveTarifa}}_${{lugarTarifa}}_default`] || 0;
             }}
             if (rubro === "consumibles") {{ soloLectura = `readonly title='Costo unitario prefijado (no editable)'`; }}
         }}
