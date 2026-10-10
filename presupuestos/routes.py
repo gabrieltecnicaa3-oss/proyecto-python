@@ -136,10 +136,10 @@ def api_listar_perfiles():
         try:
             rows = db.execute(
                 """
-                SELECT id, COALESCE(codigo, ''), COALESCE(descripcion, ''), COALESCE(categoria, ''), COALESCE(kg_per_m, 0)
+                SELECT id, COALESCE(descripcion, ''), COALESCE(categoria, ''), COALESCE(kg_per_m, 0)
                 FROM articulos_sum
                 WHERE COALESCE(activo, 1) = 1
-                ORDER BY COALESCE(codigo, ''), COALESCE(descripcion, '')
+                ORDER BY COALESCE(descripcion, '')
                 """
             ).fetchall()
         except Exception:
@@ -147,9 +147,9 @@ def api_listar_perfiles():
         perfiles = [
             {
                 "id": r[0],
-                "label": (f"{r[1]} - {r[2]}" if r[1] else r[2]) or f"Perfil #{r[0]}",
-                "categoria": r[3] or "",
-                "kg_m": r[4] or 0,
+                "label": r[1] or f"Perfil #{r[0]}",
+                "categoria": r[2] or "",
+                "kg_m": r[3] or 0,
             }
             for r in rows
         ]
@@ -674,7 +674,7 @@ def _resumen_recursos_con_nombres(db, presupuesto_id):
                 f"SELECT id, COALESCE(descripcion, ''), COALESCE(codigo, '') FROM articulos_sum WHERE id IN ({placeholders})",
                 tuple(perfil_ids),
             ).fetchall()
-            nombres_perfil = {r[0]: (r[2] or r[1]) for r in rows}
+            nombres_perfil = {r[0]: (r[1] or r[2]) for r in rows}
         except Exception:
             nombres_perfil = {}
     for m in resumen["materiales"]:

@@ -927,20 +927,20 @@ def articulos():
 
     filas = "".join(
         "<tr>"
-        "<td>{id}</td><td>{cod}</td><td><b>{desc}</b></td><td>{unid}</td><td style='text-align:right'>{kgm}</td><td style='text-align:right'>{m2m}</td><td>{cat}</td>"
+        "<td>{id}</td><td><b>{desc}</b></td><td>{unid}</td><td style='text-align:right'>{kgm}</td><td style='text-align:right'>{m2m}</td><td>{cat}</td>"
         "<td>{act}</td>"
         "<td>"
         "<a class='b bl sm' href='/modulo/suministros/articulos/{id}/editar'>Editar</a>"
         "<form method='post' action='/modulo/suministros/articulos/{id}/toggle' style='display:inline'>"
         "<button class='b sm {cls}' onclick=\"return confirm('Confirmar?')\">{txt}</button>"
         "</form></td></tr>".format(
-            id=int(r[0]), cod=_e(r[1]), desc=_e(r[2]), unid=_e(r[3]),
+            id=int(r[0]), desc=_e(r[2]), unid=_e(r[3]),
             kgm="{:.3f}".format(float(r[6])) if r[6] else "—",
             m2m="{:.4f}".format(float(r[7])) if r[7] else "—",
             cat=_e(r[4]), act="Si" if r[5] else "No",
             cls="rd" if r[5] else "gn", txt="Desactivar" if r[5] else "Activar")
         for r in rows
-    ) or "<tr><td colspan='9'>Sin articulos cargados.</td></tr>"
+    ) or "<tr><td colspan='8'>Sin articulos cargados.</td></tr>"
 
     body = (
         "<h2>Lista de Materiales</h2>"
@@ -952,7 +952,7 @@ def articulos():
         "<a class='b gr' href='/modulo/suministros'>Dashboard</a>"
         "<div class='card' style='margin-top:12px'>"
         "<table class='hl'><thead><tr>"
-        "<th>ID</th><th>Codigo</th><th>Descripcion</th><th>Unidad</th><th>Kg/m</th><th>M2/m</th><th>Categoria</th><th>Activo</th><th>Acciones</th>"
+        "<th>ID</th><th>Descripcion</th><th>Unidad</th><th>Kg/m</th><th>M2/m</th><th>Categoria</th><th>Activo</th><th>Acciones</th>"
         "</tr></thead><tbody>{filas}</tbody></table></div>"
     ).format(filas=filas)
     return _page("Lista de Materiales", body)
