@@ -40,3 +40,8 @@ ARMADOS*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Archivos auxiliares de SQLite
+*.db-shm
+*.db-wal
+*.db-journal
