@@ -11,6 +11,7 @@ calculo_presupuesto.py y acá solo se invoca, nunca se reescribe.
 from flask import request, jsonify
 
 from db_utils import get_db
+from catalogo_materiales import sincronizar_catalogo_materiales
 
 from . import presupuestos_bp
 from .constants import ESTADOS_PRESUPUESTO, TIPOS_SECCION, rubro_valido
@@ -64,6 +65,7 @@ def _db():
     """get_db() + migración idempotente, igual que `_ensure_tables` en el resto del proyecto."""
     db = get_db()
     ensure_tablas_presupuestos(db)
+    sincronizar_catalogo_materiales(db)
     return db
 
 
@@ -143,21 +145,17 @@ def api_listar_esquemas_pintura():
 
 @presupuestos_bp.route("/api/perfiles", methods=["GET"])
 def api_listar_perfiles():
-    """Lista de perfiles (articulos_sum, Compras) para el combo de materiales.
-    Sin FK dura entre módulos: si la tabla no existe todavía, devuelve vacío."""
+    """Lista del catalogo compartido con Compras para el combo de materiales."""
     try:
         db = _db()
-        try:
-            rows = db.execute(
-                """
-                SELECT id, COALESCE(descripcion, ''), COALESCE(categoria, ''), COALESCE(kg_per_m, 0)
-                FROM articulos_sum
-                WHERE COALESCE(activo, 1) = 1
-                ORDER BY COALESCE(descripcion, '')
-                """
-            ).fetchall()
-        except Exception:
-            rows = []
+        rows = db.execute(
+            """
+            SELECT id, COALESCE(descripcion, ''), COALESCE(categoria, ''), COALESCE(kg_per_m, 0)
+            FROM articulos_sum
+            WHERE COALESCE(activo, 1) = 1
+            ORDER BY COALESCE(descripcion, '')
+            """
+        ).fetchall()
         perfiles = [
             {
                 "id": r[0],

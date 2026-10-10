@@ -21,10 +21,7 @@ import os
 import csv
 import io
 
-try:
-    from articulos_seed import ARTICULOS_SEED
-except Exception:
-    ARTICULOS_SEED = []
+from catalogo_materiales import sincronizar_catalogo_materiales
 
 try:
     import openpyxl
@@ -342,18 +339,8 @@ def _ensure_tables(db):
         db.execute("DELETE FROM proveedores")
         for _n in PROVEEDORES_EXCEL:
             db.execute("INSERT INTO proveedores (nombre, activo) VALUES (?,1)", (_n,))
-    # Auto-seed articulos_sum si la tabla está vacía (primera vez en producción MySQL)
-    if ARTICULOS_SEED:
-        _art_count = db.execute("SELECT COUNT(*) FROM articulos_sum").fetchone()[0]
-        if _art_count == 0:
-            for _cod, _desc, _unid, _cat, _act, _kg in ARTICULOS_SEED:
-                try:
-                    db.execute(
-                        "INSERT INTO articulos_sum (codigo,descripcion,unidad,categoria,activo,kg_per_m) VALUES (?,?,?,?,?,?)",
-                        (_cod, _desc, _unid, _cat, _act, _kg))
-                except Exception:
-                    pass
     db.commit()
+    sincronizar_catalogo_materiales(db)
 
 # ═══════════════════════════ HELPERS ═══════════════════════════
 
@@ -3102,4 +3089,3 @@ def oc_recepcion(oc_id):
         num=_e(oc[1]), oc_id=oc_id, prov=_e(oc[2]), est=_badge(oc[3]),
         remito_prov=_e(oc[4]), opts_sups=opts_sups, filas=filas)
     return _page("Recepcion", body)
-

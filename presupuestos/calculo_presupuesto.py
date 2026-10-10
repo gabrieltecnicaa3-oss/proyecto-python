@@ -252,6 +252,7 @@ def calcular_seccion_fabricacion(items, perfiles_por_id=None, tipo_cambio_refere
     # acumulado hasta su posición (pintura puede crearse con un id menor que
     # las líneas de materiales, así que no puede depender del orden).
     peso_total_materiales_perfiles = 0.0
+    m2_total_materiales_perfiles = 0.0
     m2_total_materiales_chapa = 0.0
     m2_total_materiales_grating = 0.0
     m2_total_materiales_pintura = 0.0
@@ -260,6 +261,7 @@ def calcular_seccion_fabricacion(items, perfiles_por_id=None, tipo_cambio_refere
             perfil = perfiles_por_id.get((item.get("datos") or {}).get("perfil_id"), {})
             calc_perfil = calcular_materiales_perfil(item.get("datos") or {}, perfil, tipo_cambio_referencia)
             peso_total_materiales_perfiles += calc_perfil["peso"]
+            m2_total_materiales_perfiles += calc_perfil["m2"]
             m2_total_materiales_pintura += calc_perfil["m2"]
         elif item.get("rubro") == "materiales" and item.get("tipo_item") == "chapa":
             perfil = perfiles_por_id.get((item.get("datos") or {}).get("perfil_id"), {})
@@ -332,6 +334,8 @@ def calcular_seccion_fabricacion(items, perfiles_por_id=None, tipo_cambio_refere
             calc = calcular_placas(datos, peso_total_materiales_perfiles, tipo_cambio_referencia)
             resultado["subtotal"] = calc["subtotal"]
             resultado["peso"] = calc["peso"]
+            resultado["m2"] = 0.05 * m2_total_materiales_perfiles
+            acumulado_m2_materiales += resultado["m2"]
             acumulado_materiales_total += calc["subtotal"]
         elif rubro == "materiales" and tipo_item == "no_listado":
             subtotal = calcular_materiales_no_listado(datos, tipo_cambio_referencia)

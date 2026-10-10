@@ -183,6 +183,34 @@ def test_bulones_usa_todos_los_materiales_aunque_se_carguen_despues():
     assert _close(items_resueltos[0]["subtotal"], 40.0), items_resueltos[0]
 
 
+def test_m2_placas_es_cinco_por_ciento_del_total_de_perfiles():
+    placas = {"rubro": "materiales", "tipo_item": "porcentaje",
+              "datos": {"porcentaje": 0.15, "precio_unitario_kg": 2.0}}
+    perfil = {"rubro": "materiales", "tipo_item": "perfil",
+              "datos": {"perfil_id": 1, "cantidad": 10, "largo_mm": 6000,
+                        "precio_unitario_kg": 2.0}}
+    chapa = {"rubro": "materiales", "tipo_item": "chapa",
+             "datos": {"cantidad": 2, "largo_mm": 2000, "precio_unitario_m2": 5.0}}
+    pintura = {"rubro": "pintura", "datos": {"precio_unitario_m2": 20.0}}
+    perfiles = {1: {"kg_m": 5.0, "m2_m": 0.3}}
+
+    for items in ([placas, perfil, perfil, chapa, pintura],
+                  [perfil, chapa, pintura, perfil, placas]):
+        resueltos, resumen = calcular_seccion_fabricacion(items, perfiles)
+        resultado_placas = next(it for it in resueltos if it.get("tipo_item") == "porcentaje")
+        resultado_pintura = next(it for it in resueltos if it["rubro"] == "pintura")
+        assert _close(resultado_placas["m2"], 0.05 * 36.0)
+        assert _close(resultado_placas["peso"], 0.15 * 600.0)
+        assert _close(resultado_placas["subtotal"], 180.0)
+        assert _close(resumen["m2_total_materiales"], 36.0 + 1.8 + 4.0)
+        assert _close(resultado_pintura["subtotal"], 20.0 * 40.0)
+
+    resueltos, resumen = calcular_seccion_fabricacion([placas, chapa], perfiles)
+    assert _close(resueltos[0]["m2"], 0.0)
+    assert _close(resumen["m2_total_materiales"], 4.0)
+    assert "m2" not in placas
+
+
 def test_seccion_fabricacion_chapa_y_tornillos():
     # Tornillos (igual que Placas) usa el m2 TOTAL de la sección, sin
     # importar su posición en la lista.

@@ -741,7 +741,10 @@ def vista_detalle_presupuesto(presupuesto_id):
             fetch(`${{API}}/presupuestos/${{PRESUPUESTO_ID}}/config`).then(r => r.json()),
             fetch(`${{API}}/equipos`).then(r => r.json()).catch(() => ({{equipos: []}})),
             fetch(`${{API}}/esquemas-pintura`).then(r => r.json()).catch(() => ({{esquemas: []}})),
-            fetch(`${{API}}/perfiles`).then(r => r.json()).catch(() => ({{perfiles: []}})),
+            fetch(`${{API}}/perfiles`).then(r => r.json().then(j => {{
+                if (!r.ok || j.error) throw new Error(j.error || "No se pudo cargar el catálogo de materiales.");
+                return j;
+            }})),
         ]).then(([config, equipos, esquemas, perfiles]) => {{
             CONFIG_DEFAULTS = config || {{}};
             EQUIPOS = (equipos || {{}}).equipos || [];
@@ -758,6 +761,8 @@ def vista_detalle_presupuesto(presupuesto_id):
     }}
     cargarCatalogos().then(() => {{
         if (TAREAS_IDS.length) seleccionarTarea(TAREAS_IDS[0]);
+    }}).catch(err => {{
+        document.getElementById("tarea-contenido").textContent = "Error al cargar los catálogos: " + err.message;
     }});
 
     function fmtMoney(v) {{
@@ -1127,7 +1132,7 @@ def vista_detalle_presupuesto(presupuesto_id):
             <td>${{descCtl}}</td>
             ${{celdas}}
             <td style="text-align:right;"><span id="kg-item-${{item.id}}">${{fmtNum(item.peso || 0, 1)}}</span></td>
-            <td style="text-align:right;"><span id="m2-item-${{item.id}}">${{tipoItem === "perfil" ? fmtNum(item.m2 || 0, 2) : "–"}}</span></td>
+            <td style="text-align:right;"><span id="m2-item-${{item.id}}">${{fmtNum(item.m2 || 0, 2)}}</span></td>
             <td style="text-align:right;font-weight:700;"><span id="subtotal-item-${{item.id}}">${{fmtMoney(item.subtotal)}}</span></td>
             <td><button type="button" class="btn btn-icon btn-danger" onclick="eliminarLinea(${{item.id}}, ${{tareaId}})">✕</button></td>
         </tr>`;

@@ -156,6 +156,20 @@ creados. Las secciones nuevas toman los porcentajes por defecto del presupuesto.
 
 ### 2.3 Tabla existente que se reutiliza (no crear)
 
+El catálogo compartido `articulos_sum` se sincroniza desde
+`catalogo_local_importar.csv`, exportado de la base local: 1.155 descripciones
+únicas (1.094 perfiles, 29 chapas y 32 grating). Los 1.156 registros locales
+incluyen un duplicado idéntico de `TUBO 120x140x6,35`.
+
+La sincronización se ejecuta al acceder a Presupuestos o Suministros, una vez
+por versión del archivo. Conserva IDs, códigos y estado activo de los artículos
+existentes; actualiza unidad, categoría, kg/m y m²/m por descripción (ignorando
+mayúsculas y espacios exteriores), y agrega los faltantes. No elimina artículos
+adicionales ni modifica referencias de pedidos, compras o presupuestos.
+Los nombres distintos, incluidos posibles LPN expresados en pulgadas, no se
+fusionan automáticamente: requieren verificar la equivalencia antes de reasignar
+referencias. Los cambios manuales posteriores no se sobrescriben al recargar.
+
 **`catalogo_perfiles`** (módulo de Compras): `id`, `nombre`, `kg_m`, `m2_m`. El módulo de Presupuestos solo la referencia por FK desde `items_costo.datos.perfil_id`. Debe poder expandirse desde Compras sin que Presupuestos requiera cambios.
 
 ### 2.4 Generalización — familias de materiales
@@ -183,6 +197,13 @@ Cada catálogo nuevo (`catalogo_chapas`, `catalogo_zingueria`, `catalogo_grating
 ## 3. Motor de cálculo — fórmulas exactas
 
 ### 3.1 Fabricación — por rubro
+
+Los m² de Placas (`materiales` / tipo `porcentaje`) se calculan automáticamente
+como `0.05 × Σ m2` de todas las líneas de perfiles de la misma sección,
+independientemente del orden de carga. Este 5% es fijo y no depende del
+porcentaje editable usado para calcular su peso. Los m² de placas se muestran
+en su fila y se incluyen en el total de m² de materiales; no modifican la base
+del cálculo de pintura.
 
 | Rubro | `datos` (JSON) | Fórmula de `subtotal` |
 |---|---|---|
