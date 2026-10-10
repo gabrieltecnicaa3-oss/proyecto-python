@@ -6583,14 +6583,34 @@ def admin_aplicar_m2_per_m():
     existentes, faltantes = [], []
     for descripcion, m2 in valores:
         fila_db = db.execute(
-            "SELECT id FROM articulos_sum WHERE LOWER(TRIM(descripcion)) = LOWER(TRIM(?))", (descripcion,)
+            "SELECT id, descripcion, COALESCE(codigo, '') FROM articulos_sum WHERE LOWER(TRIM(descripcion)) = LOWER(TRIM(?))",
+            (descripcion,),
         ).fetchone()
-        (existentes if fila_db else faltantes).append((int(fila_db[0]) if fila_db else None, descripcion, m2))
+        # Los redondos se cargaron antes como "RD D 6,35"; el nombre correcto es "D 6,35".
+        renombrar = False
+        if not fila_db:
+            fila_db = db.execute(
+                "SELECT id, descripcion, COALESCE(codigo, '') FROM articulos_sum WHERE LOWER(TRIM(descripcion)) = LOWER(TRIM(?))",
+                ("RD " + descripcion,),
+            ).fetchone()
+            renombrar = bool(fila_db)
+        if fila_db:
+            existentes.append((int(fila_db[0]), descripcion, m2, renombrar, str(fila_db[2] or "").strip(), str(fila_db[1] or "").strip()))
+        else:
+            faltantes.append((None, descripcion, m2))
 
     aplicado = request.method == "POST"
+    renombrados = sum(1 for e in existentes if e[3])
     if aplicado:
-        for art_id, _, m2 in existentes:
-            db.execute("UPDATE articulos_sum SET m2_per_m = ? WHERE id = ?", (m2, art_id))
+        for art_id, descripcion, m2, renombrar, codigo, descripcion_vieja in existentes:
+            if renombrar:
+                nuevo_codigo = descripcion if codigo == descripcion_vieja else codigo
+                db.execute(
+                    "UPDATE articulos_sum SET descripcion = ?, codigo = ?, m2_per_m = ? WHERE id = ?",
+                    (descripcion, nuevo_codigo or None, m2, art_id),
+                )
+            else:
+                db.execute("UPDATE articulos_sum SET m2_per_m = ? WHERE id = ?", (m2, art_id))
         db.commit()
 
     boton = "" if aplicado else (
@@ -6607,6 +6627,7 @@ def admin_aplicar_m2_per_m():
         <h2>{titulo}</h2>
         <p>Artículos de la lista que {'se actualizaron' if aplicado else 'se van a actualizar'}: <b>{len(existentes)}</b></p>
         <p>Filas del archivo sin artículo correspondiente: <b>{len(faltantes)}</b></p>
+        <p>Redondos que {'se renombraron' if aplicado else 'se van a renombrar'} de "RD D ..." a "D ...": <b>{renombrados}</b></p>
         {sin_match}
         {boton}
         <p><a href="/modulo/suministros/articulos">Ir a la Lista de Materiales</a></p>
