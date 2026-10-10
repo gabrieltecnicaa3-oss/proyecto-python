@@ -48,6 +48,32 @@ def _columna_existe(db, tabla, columna):
         raise
 
 
+def _actualizar_referencias_articulos(db, cambios):
+    for tabla in ("items_op", "items_oc"):
+        if cambios and _columna_existe(db, tabla, "articulo_id"):
+            for anterior, nuevo in cambios.items():
+                db.execute(
+                    f"UPDATE {tabla} SET articulo_id = ? WHERE articulo_id = ?",
+                    (nuevo, anterior),
+                )
+    if cambios and _columna_existe(db, "items_costo", "perfil_id"):
+        for item_id, perfil_id, datos_json in db.execute(
+            "SELECT id, perfil_id, datos FROM items_costo"
+        ).fetchall():
+            datos = json.loads(datos_json)
+            anterior = datos.get("perfil_id")
+            if isinstance(anterior, str) and anterior.isdigit():
+                anterior = int(anterior)
+            if anterior in cambios:
+                datos["perfil_id"] = cambios[anterior]
+            if perfil_id in cambios or anterior in cambios:
+                db.execute(
+                    "UPDATE items_costo SET perfil_id = ?, datos = ? WHERE id = ?",
+                    (cambios.get(perfil_id, perfil_id),
+                     json.dumps(datos, ensure_ascii=False), item_id),
+                )
+
+
 def _eliminar_lpn_pulgadas(db):
     version = "lpn-pulgadas-a-mm-v1"
     if db.execute(
@@ -70,32 +96,44 @@ def _eliminar_lpn_pulgadas(db):
         cambios.update({articulo_id: ids_mm[0] for articulo_id in ids_pulgadas})
 
     try:
-        for tabla in ("items_op", "items_oc"):
-            if cambios and _columna_existe(db, tabla, "articulo_id"):
-                for anterior, nuevo in cambios.items():
-                    db.execute(
-                        f"UPDATE {tabla} SET articulo_id = ? WHERE articulo_id = ?",
-                        (nuevo, anterior),
-                    )
-        if cambios and _columna_existe(db, "items_costo", "perfil_id"):
-            for item_id, perfil_id, datos_json in db.execute(
-                "SELECT id, perfil_id, datos FROM items_costo"
-            ).fetchall():
-                datos = json.loads(datos_json)
-                anterior = datos.get("perfil_id")
-                nuevo = cambios.get(anterior)
-                if nuevo is None and isinstance(anterior, str) and anterior.isdigit():
-                    nuevo = cambios.get(int(anterior))
-                if nuevo is not None:
-                    datos["perfil_id"] = nuevo
-                if perfil_id in cambios or nuevo is not None:
-                    db.execute(
-                        "UPDATE items_costo SET perfil_id = ?, datos = ? WHERE id = ?",
-                        (cambios.get(perfil_id, perfil_id),
-                         json.dumps(datos, ensure_ascii=False), item_id),
-                    )
+        _actualizar_referencias_articulos(db, cambios)
         for anterior in cambios:
             db.execute("DELETE FROM articulos_sum WHERE id = ?", (anterior,))
+        db.execute(
+            "INSERT INTO catalogo_materiales_versiones (version) VALUES (?)", (version,)
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _limpiar_categoria_tubos(db):
+    version = "limpieza-tubos-circulares-v1"
+    if db.execute(
+        "SELECT version FROM catalogo_materiales_versiones WHERE version = ?", (version,)
+    ).fetchone():
+        return
+    articulos = db.execute("SELECT id, categoria FROM articulos_sum").fetchall()
+    # Comparar en Python evita que MySQL confunda la categoria antigua con
+    # el nuevo nombre por su collation insensible a mayusculas.
+    eliminar = {
+        articulo_id: None for articulo_id, categoria in articulos
+        if (categoria or "").strip() == "TUBO CIRCULAR"
+    }
+    renombrar = [
+        articulo_id for articulo_id, categoria in articulos
+        if (categoria or "").strip().casefold() == "tubos"
+    ]
+    try:
+        _actualizar_referencias_articulos(db, eliminar)
+        for articulo_id in eliminar:
+            db.execute("DELETE FROM articulos_sum WHERE id = ?", (articulo_id,))
+        for articulo_id in renombrar:
+            db.execute(
+                "UPDATE articulos_sum SET categoria = ? WHERE id = ?",
+                ("Tubo circular", articulo_id),
+            )
         db.execute(
             "INSERT INTO catalogo_materiales_versiones (version) VALUES (?)", (version,)
         )
@@ -118,6 +156,7 @@ def sincronizar_catalogo_materiales(db):
         "SELECT version FROM catalogo_materiales_versiones WHERE version = ?", (version,)
     ).fetchone():
         _eliminar_lpn_pulgadas(db)
+        _limpiar_categoria_tubos(db)
         return
 
     db.execute("""
@@ -145,6 +184,9 @@ def sincronizar_catalogo_materiales(db):
     try:
         for fila in filas:
             descripcion = fila["descripcion"].strip()
+            categoria = fila["categoria"]
+            if categoria.strip().casefold() == "tubos":
+                categoria = "Tubo circular"
             kg_m = float(fila["kg_per_m"]) if fila["kg_per_m"] else None
             m2_m = float(fila["m2_per_m"]) if fila["m2_per_m"] else None
             ids = existentes.get(descripcion.casefold(), [])
@@ -155,14 +197,14 @@ def sincronizar_catalogo_materiales(db):
                         SET unidad = ?, categoria = ?,
                             kg_per_m = ?, m2_per_m = ?
                         WHERE id = ?
-                    """, (fila["unidad"], fila["categoria"], kg_m, m2_m, articulo_id))
+                    """, (fila["unidad"], categoria, kg_m, m2_m, articulo_id))
             else:
                 cursor = db.execute("""
                     INSERT INTO articulos_sum (
                         codigo, descripcion, unidad, categoria, activo, kg_per_m, m2_per_m
                     ) VALUES (?, ?, ?, ?, 1, ?, ?)
                 """, (fila["codigo"] or None, descripcion, fila["unidad"],
-                      fila["categoria"], kg_m, m2_m))
+                      categoria, kg_m, m2_m))
                 existentes[descripcion.casefold()] = [cursor.lastrowid]
 
         db.execute(
@@ -173,3 +215,4 @@ def sincronizar_catalogo_materiales(db):
         db.rollback()
         raise
     _eliminar_lpn_pulgadas(db)
+    _limpiar_categoria_tubos(db)

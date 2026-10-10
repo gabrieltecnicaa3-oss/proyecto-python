@@ -173,6 +173,16 @@ de eliminar las filas en pulgadas. Esta migración se ejecuta una sola vez y
 revierte las reasignaciones si falla. Otros nombres distintos no se fusionan.
 Los cambios manuales posteriores no se sobrescriben al recargar.
 
+La categoría `Tubos` del archivo se importa como `Tubo circular` (180 artículos).
+Una migración adicional elimina los artículos restantes de la categoría antigua
+`TUBO CIRCULAR` y luego renombra `Tubos` a `Tubo circular`, conservando los IDs
+de estos últimos. Antes de eliminar, deja en NULL sus vínculos en pedidos,
+compras y presupuestos (incluido `datos.perfil_id`), sin borrar líneas ni cambiar
+sus demás datos o subtotales guardados. Si se recalcula un presupuesto que usaba
+un perfil eliminado, es necesario seleccionar un nuevo material del catálogo.
+La limpieza distingue el nombre antiguo en mayúsculas del nuevo nombre,
+es transaccional y se ejecuta una sola vez incluso con el catálogo ya importado.
+
 **`catalogo_perfiles`** (módulo de Compras): `id`, `nombre`, `kg_m`, `m2_m`. El módulo de Presupuestos solo la referencia por FK desde `items_costo.datos.perfil_id`. Debe poder expandirse desde Compras sin que Presupuestos requiera cambios.
 
 ### 2.4 Generalización — familias de materiales

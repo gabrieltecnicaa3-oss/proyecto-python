@@ -28,6 +28,9 @@ class CatalogoMaterialesTests(unittest.TestCase):
             WHERE categoria NOT LIKE 'CH %' AND categoria NOT LIKE 'GRA %'
               AND COALESCE(m2_per_m, 0) <= 0
         """).fetchone()[0], 0)
+        self.assertEqual(self.db.execute("""
+            SELECT COUNT(*) FROM articulos_sum WHERE categoria = 'Tubo circular'
+        """).fetchone()[0], 180)
         with CATALOGO_PATH.open(encoding="utf-8-sig", newline="") as archivo:
             for fila in csv.DictReader(archivo, delimiter=";"):
                 valores = self.db.execute("""
@@ -35,7 +38,8 @@ class CatalogoMaterialesTests(unittest.TestCase):
                     FROM articulos_sum WHERE descripcion = ?
                 """, (fila["descripcion"],)).fetchone()
                 self.assertEqual(valores, (
-                    fila["unidad"], fila["categoria"],
+                    fila["unidad"],
+                    "Tubo circular" if fila["categoria"] == "Tubos" else fila["categoria"],
                     float(fila["kg_per_m"]) if fila["kg_per_m"] else None,
                     float(fila["m2_per_m"]) if fila["m2_per_m"] else None,
                 ))
@@ -80,7 +84,7 @@ class CatalogoMaterialesTests(unittest.TestCase):
         ).fetchone()[0], 9)
         self.assertEqual(self.db.execute(
             "SELECT COUNT(*) FROM catalogo_materiales_versiones"
-        ).fetchone()[0], 2)
+        ).fetchone()[0], 3)
         self.assertEqual(self.db.execute(
             "SELECT COUNT(*) FROM articulos_sum"
         ).fetchone()[0], 1155)
@@ -99,6 +103,126 @@ class CatalogoMaterialesTests(unittest.TestCase):
         self.assertEqual(len(perfiles), 1155)
         self.assertEqual(sum(p["categoria"].startswith("CH ") for p in perfiles), 29)
         self.assertEqual(sum(p["categoria"].startswith("GRA ") for p in perfiles), 32)
+        self.assertEqual(sum(p["categoria"] == "Tubo circular" for p in perfiles), 180)
+        self.assertFalse(any(p["categoria"] in ("Tubos", "TUBO CIRCULAR") for p in perfiles))
+
+    def test_limpieza_tubos_desvincula_sin_borrar_lineas_y_renombra(self):
+        import json
+
+        sincronizar_catalogo_materiales(self.db)
+        self.db.execute("PRAGMA foreign_keys = ON")
+        self.db.execute("""
+            DELETE FROM catalogo_materiales_versiones
+            WHERE version = 'limpieza-tubos-circulares-v1'
+        """)
+        anterior = self.db.execute("""
+            INSERT INTO articulos_sum (descripcion, categoria)
+            VALUES ('Tubo historico pulgadas', 'TUBO CIRCULAR')
+        """).lastrowid
+        conservar = self.db.execute("""
+            INSERT INTO articulos_sum (descripcion, categoria, kg_per_m, m2_per_m)
+            VALUES ('Tubo adicional mm', ' tubos ', 7, 0.5)
+        """).lastrowid
+        for tabla in ("items_op", "items_oc"):
+            self.db.execute(f"""
+                CREATE TABLE {tabla} (
+                    articulo_id INTEGER REFERENCES articulos_sum(id),
+                    descripcion TEXT, cantidad REAL
+                )
+            """)
+            self.db.execute(
+                f"INSERT INTO {tabla} VALUES (?, 'Tubo historico pulgadas', 4)", (anterior,)
+            )
+            self.db.execute(
+                f"INSERT INTO {tabla} VALUES (?, 'Tubo adicional mm', 2)", (conservar,)
+            )
+        self.db.execute("""
+            CREATE TABLE items_costo (
+                id INTEGER PRIMARY KEY,
+                perfil_id INTEGER REFERENCES articulos_sum(id),
+                datos TEXT, subtotal REAL
+            )
+        """)
+        datos = {"perfil_id": str(anterior), "cantidad": 4,
+                 "descripcion": "Tubo historico pulgadas", "precio_unitario_kg": 3}
+        self.db.execute(
+            "INSERT INTO items_costo VALUES (1, ?, ?, 123)",
+            (anterior, json.dumps(datos)),
+        )
+        self.db.execute(
+            "INSERT INTO items_costo VALUES (2, NULL, ?, 456)",
+            (json.dumps({"perfil_id": anterior, "cantidad": 1}),),
+        )
+        self.db.execute(
+            "INSERT INTO items_costo VALUES (3, ?, ?, 789)",
+            (anterior, json.dumps({"perfil_id": conservar})),
+        )
+        self.db.commit()
+        sincronizar_catalogo_materiales(self.db)
+        self.assertIsNone(self.db.execute(
+            "SELECT id FROM articulos_sum WHERE id = ?", (anterior,)
+        ).fetchone())
+        self.assertEqual(self.db.execute("""
+            SELECT categoria, kg_per_m, m2_per_m FROM articulos_sum WHERE id = ?
+        """, (conservar,)).fetchone(), ("Tubo circular", 7, 0.5))
+        for tabla in ("items_op", "items_oc"):
+            self.assertEqual(self.db.execute(f"SELECT * FROM {tabla}").fetchall(), [
+                (None, "Tubo historico pulgadas", 4),
+                (conservar, "Tubo adicional mm", 2),
+            ])
+        items = self.db.execute(
+            "SELECT perfil_id, datos, subtotal FROM items_costo ORDER BY id"
+        ).fetchall()
+        datos["perfil_id"] = None
+        self.assertEqual((items[0][0], json.loads(items[0][1]), items[0][2]),
+                         (None, datos, 123))
+        self.assertEqual(json.loads(items[1][1]), {"perfil_id": None, "cantidad": 1})
+        self.assertEqual((items[2][0], json.loads(items[2][1]), items[2][2]),
+                         (None, {"perfil_id": conservar}, 789))
+        self.assertEqual(self.db.execute("PRAGMA foreign_key_check").fetchall(), [])
+        self.db.execute(
+            "UPDATE articulos_sum SET m2_per_m = 9 WHERE id = ?", (conservar,)
+        )
+        self.db.commit()
+        sincronizar_catalogo_materiales(self.db)
+        self.assertEqual(self.db.execute(
+            "SELECT categoria, m2_per_m FROM articulos_sum WHERE id = ?", (conservar,)
+        ).fetchone(), ("Tubo circular", 9))
+
+    def test_limpieza_tubos_fallida_revierte_borrado_y_referencias(self):
+        sincronizar_catalogo_materiales(self.db)
+        self.db.execute("""
+            DELETE FROM catalogo_materiales_versiones
+            WHERE version = 'limpieza-tubos-circulares-v1'
+        """)
+        anterior = self.db.execute("""
+            INSERT INTO articulos_sum (descripcion, categoria)
+            VALUES ('Tubo obsoleto', 'TUBO CIRCULAR')
+        """).lastrowid
+        self.db.execute("CREATE TABLE items_op (articulo_id INTEGER)")
+        self.db.execute("INSERT INTO items_op VALUES (?)", (anterior,))
+        self.db.execute("""
+            INSERT INTO articulos_sum (descripcion, categoria)
+            VALUES ('Tubo propio', 'Tubos')
+        """)
+        self.db.execute("""
+            CREATE TRIGGER impedir_renombre BEFORE UPDATE ON articulos_sum
+            WHEN OLD.descripcion = 'Tubo propio'
+            BEGIN SELECT RAISE(ABORT, 'no renombrar'); END
+        """)
+        self.db.commit()
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "no renombrar"):
+            sincronizar_catalogo_materiales(self.db)
+        self.assertEqual(self.db.execute(
+            "SELECT articulo_id FROM items_op"
+        ).fetchone()[0], anterior)
+        self.assertEqual(self.db.execute(
+            "SELECT categoria FROM articulos_sum WHERE id = ?", (anterior,)
+        ).fetchone()[0], "TUBO CIRCULAR")
+        self.assertIsNone(self.db.execute("""
+            SELECT version FROM catalogo_materiales_versiones
+            WHERE version = 'limpieza-tubos-circulares-v1'
+        """).fetchone())
 
     def test_fallo_revierte_datos_y_no_marca_version(self):
         sincronizar_catalogo_materiales(self.db)
