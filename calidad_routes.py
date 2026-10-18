@@ -848,8 +848,8 @@ def calidad_despacho():
         try:
             _ins_cur = db.execute(
                 """
-                INSERT INTO control_despacho (ot_id, obra, fecha, responsable, conforme, observaciones, detalle_control)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO control_despacho (ot_id, obra, fecha, responsable, conforme, observaciones, detalle_control, fecha_creacion)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 (ot_id_doc, obra, fecha, responsable, resultado_general, "", detalle_control_json),
             )

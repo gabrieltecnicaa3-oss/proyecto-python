@@ -897,6 +897,25 @@ def init_db():
             except Exception:
                 pass
 
+        if 'fecha_creacion' not in despacho_columns:
+            try:
+                db.execute("ALTER TABLE control_despacho ADD COLUMN fecha_creacion DATETIME")
+                db.commit()
+            except Exception:
+                cursor = db.execute("PRAGMA table_info(control_despacho)")
+                despacho_columns = {row[1] for row in cursor.fetchall()}
+                if 'fecha_creacion' not in despacho_columns:
+                    raise
+
+        db.execute(
+            """
+            UPDATE control_despacho
+            SET fecha_creacion = fecha
+            WHERE fecha_creacion IS NULL AND fecha IS NOT NULL
+            """
+        )
+        db.commit()
+
         cursor = db.execute("PRAGMA table_info(remitos)")
         remitos_columns = {row[1] for row in cursor.fetchall()}
 
