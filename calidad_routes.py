@@ -1807,7 +1807,7 @@ def calidad_despacho_historial():
     ).fetchall()
 
     obras_disp = db.execute(
-        "SELECT DISTINCT TRIM(obra) FROM control_despacho WHERE obra IS NOT NULL ORDER BY obra"
+        "SELECT DISTINCT TRIM(obra) AS obra FROM control_despacho WHERE obra IS NOT NULL ORDER BY obra"
     ).fetchall()
     opciones_obra = '<option value="">Todas las obras</option>'
     for (o,) in obras_disp:
